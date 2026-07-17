@@ -1,0 +1,42 @@
+{
+  "run_id_prefix": "archero",
+  "dry_run": true,
+  "adb": {
+    "serial": null,
+    "screenshot_dir": "screenshots/raw",
+    "normalized_screenshot_dir": "screenshots/normalized",
+    "tap_timeout_seconds": 3
+  },
+  "screens": {
+    "home": {
+      "template": "templates/home.png",
+      "threshold": 0.85
+    },
+    "guild_home": {
+      "template": "templates/guild_home.png",
+      "threshold": 0.85
+    },
+    "guild_ranking": {
+      "template": "templates/guild_ranking.png",
+      "threshold": 0.85
+    }
+  },
+  "regions": {
+    "ranking_rows": {
+      "x": 100,
+      "y": 350,
+      "width": 900,
+      "height": 1300
+    },
+    "profile_user_id": {
+      "x": 530,
+      "y": 280,
+      "width": 380,
+      "height": 70
+    }
+  },
+  "ocr": {
+    "min_auto_confidence": 95,
+    "min_history_confidence": 80
+  }
+}

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+screenshots/
+logs/
+data/
+.pytest_cache/
+result
+result-*
+.next/
+web/.next/
+web/node_modules/
+web/.env*.local

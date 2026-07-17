@@ -1,0 +1,12 @@
+[Unit]
+Description=Archero guild observer
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=archero-bot
+WorkingDirectory=/opt/archero-observer
+EnvironmentFile=-/etc/archero-observer/secrets.env
+ExecStart=/opt/archero-observer/.venv/bin/python -m observer.run --config /etc/archero-observer/config.json
+TimeoutStartSec=45min
+
