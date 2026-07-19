@@ -38,6 +38,7 @@ def migrate_import_reports(
     apply_schema: bool = False,
     schema_path: Path = Path("observer/storage/schema.sql"),
     dry_run: bool = False,
+    with_ocr: bool = False,
     strict: bool = False,
 ) -> list[MigratedImport]:
     selected_dates = list(dates or [])
@@ -63,8 +64,14 @@ def migrate_import_reports(
         member_paths = _existing_paths(report.member_screenshots, strict=strict, warnings=warnings)
         boss_paths = _existing_paths(report.boss_screenshots, strict=strict, warnings=warnings)
 
-        member_metrics = _extract_member_metrics(member_paths, roster, sample_data_path.exists(), strict=strict, warnings=warnings)
-        boss_rankings = _extract_boss_rankings(boss_paths, roster, strict=strict, warnings=warnings)
+        if with_ocr:
+            member_metrics = _extract_member_metrics(member_paths, roster, sample_data_path.exists(), strict=strict, warnings=warnings)
+            boss_rankings = _extract_boss_rankings(boss_paths, roster, strict=strict, warnings=warnings)
+        else:
+            member_metrics = []
+            boss_rankings = []
+            if member_paths or boss_paths:
+                warnings.append("OCR skipped; rerun with --with-ocr to migrate extracted metrics and boss rankings")
         daily_boss_rankings = {report.date: boss_rankings} if boss_rankings else {}
 
         if not dry_run:
@@ -195,7 +202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--date", action="append", default=[], help="Import only this YYYY-MM-DD report. Can be repeated.")
     parser.add_argument("--apply-schema", action="store_true", help="Apply observer/storage/schema.sql before migrating.")
     parser.add_argument("--schema", type=Path, default=Path("observer/storage/schema.sql"))
-    parser.add_argument("--dry-run", action="store_true", help="Read reports and OCR screenshots without writing to PostgreSQL.")
+    parser.add_argument("--dry-run", action="store_true", help="Read reports without writing to PostgreSQL.")
+    parser.add_argument("--with-ocr", action="store_true", help="Re-run OCR on referenced screenshots to migrate extracted metrics and boss rankings.")
     parser.add_argument("--strict", action="store_true", help="Fail on missing screenshots or extraction errors.")
     args = parser.parse_args(argv)
 
@@ -208,6 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             apply_schema=args.apply_schema,
             schema_path=args.schema,
             dry_run=args.dry_run,
+            with_ocr=args.with_ocr,
             strict=args.strict,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:

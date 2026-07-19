@@ -240,7 +240,9 @@ docker compose up -d postgres
 set -a; source .env; set +a
 ```
 
-`ARCHERO_DATABASE_URL` est prioritaire. `DATABASE_URL` est accepte en fallback.
+Par defaut le PostgreSQL Docker est expose sur `127.0.0.1:55440` pour eviter les conflits avec un PostgreSQL local deja installe. Le port peut etre change avec `ARCHERO_POSTGRES_PORT`.
+
+`ARCHERO_DATABASE_URL` est prioritaire. `DATABASE_URL` est accepte en fallback. Les valeurs de `.env.example` correspondent a `docker-compose.yml`: base `archero_observer`, user `archero`, mot de passe `archero_dev_password`.
 
 ### Migration JSON vers DB
 
@@ -264,7 +266,13 @@ nix develop -c python -B -m observer.storage.migrate_json --date 2026-07-19
 
 La commande relit les rapports JSON, retrouve les screenshots references, relance l'extraction OCR disponible, puis persiste les membres, screenshots, snapshots et scores boss dans PostgreSQL. Elle est relancable: un meme rapport reutilise son batch existant au lieu d'en creer un nouveau.
 
-Le `--dry-run` relance aussi l'OCR pour estimer ce qui serait migre. Sur plusieurs captures, il peut prendre du temps; la sortie JSON contient un champ `warnings` quand des screenshots ou dependances OCR manquent.
+Par defaut la migration ne relance pas l'OCR, pour rester rapide et importer la structure de base. Pour migrer aussi les metriques extraites et les rankings boss depuis les screenshots, ajoute `--with-ocr`:
+
+```bash
+nix develop -c python -B -m observer.storage.migrate_json --with-ocr
+```
+
+Le `--with-ocr` peut prendre du temps sur plusieurs captures. La sortie JSON contient un champ `warnings` quand des screenshots ou dependances OCR manquent.
 
 ## Deploiement homelab
 

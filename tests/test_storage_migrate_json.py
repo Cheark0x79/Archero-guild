@@ -70,7 +70,7 @@ class StorageMigrateJsonTests(unittest.TestCase):
                 patch("observer.storage.migrate_json.extract_boss_rankings_from_screenshots", return_value=[boss_ranking]),
                 patch("observer.storage.migrate_json.persist_import_report") as persist,
             ):
-                result = migrate_import_reports(imports_root=imports_root, sample_data_path=sample_data, dry_run=True)
+                result = migrate_import_reports(imports_root=imports_root, sample_data_path=sample_data, dry_run=True, with_ocr=True)
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].date, "2026-07-16")
@@ -79,6 +79,25 @@ class StorageMigrateJsonTests(unittest.TestCase):
         self.assertFalse(result[0].persisted)
         self.assertEqual(result[0].warnings, [])
         persist.assert_not_called()
+
+    def test_migrate_import_reports_skips_ocr_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            imports_root = root / "data" / "imports"
+            imports_root.mkdir(parents=True)
+            raw_dir = root / "screenshots" / "raw" / "2026-07-16"
+            raw_dir.mkdir(parents=True)
+            (raw_dir / "guild-members-001.png").write_bytes(b"member")
+            payload = _report_payload(member_path=str(raw_dir / "guild-members-001.png"))
+            payload["boss_screenshots"] = []
+            (imports_root / "2026-07-16.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            with patch("observer.storage.migrate_json.extract_member_metrics_from_screenshots") as extract:
+                result = migrate_import_reports(imports_root=imports_root, dry_run=True)
+
+        self.assertEqual(result[0].member_metrics, 0)
+        self.assertIn("OCR skipped", result[0].warnings[0])
+        extract.assert_not_called()
 
     def test_migrate_import_reports_requires_dsn_when_not_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
