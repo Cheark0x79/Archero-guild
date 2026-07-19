@@ -175,6 +175,7 @@ def _ocr_variants(
     whitelist: str | None = None,
     psm_values: tuple[int, ...] = (7,),
     languages: tuple[str, ...] = ("eng",),
+    high_threshold: bool = False,
 ) -> list[str]:
     try:
         from PIL import Image, ImageOps  # type: ignore[import-not-found]
@@ -194,6 +195,8 @@ def _ocr_variants(
         base.point(lambda pixel: 255 if pixel > 120 else 0),
         base.point(lambda pixel: 255 if pixel > 160 else 0),
     ]
+    if high_threshold:
+        variants.append(base.point(lambda pixel: 255 if pixel > 200 else 0))
     texts: list[str] = []
     for prepared in variants:
         for psm in psm_values:
@@ -240,7 +243,19 @@ def _clean_raw_name(raw_name: str) -> str:
     allowed = r"A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff"
     cleaned = re.sub(rf"^[^{allowed}]+", "", cleaned)
     cleaned = re.sub(rf"[^{allowed}]+$", "", cleaned)
-    return cleaned
+    tokens = re.findall(rf"[{allowed}]+", cleaned)
+    if not tokens:
+        return ""
+    useful_tokens = [token for token in tokens if _name_signal_length(token) >= 2]
+    if len(useful_tokens) == 1:
+        return useful_tokens[0]
+    if len(useful_tokens) > 1:
+        ordered = sorted(useful_tokens, key=_name_signal_length, reverse=True)
+        if _name_signal_length(ordered[0]) >= 10 and _name_signal_length(ordered[0]) >= _name_signal_length(ordered[1]) * 2:
+            return ordered[0]
+        if all(re.fullmatch(r"[A-Za-z0-9]+", token) for token in useful_tokens):
+            return ""
+    return " ".join(useful_tokens or tokens)
 
 
 def _display_name_for_match(match: tuple[object, str] | None, fallback_raw_name: str) -> str | None:
@@ -463,7 +478,7 @@ def _extract_podium_rankings(image: object, source_name: str, roster: Sequence[o
     for rank, name_rects, damage_rect in specs:
         raw_name_candidates: list[str] = []
         for name_rect in name_rects:
-            raw_name_candidates.extend(_ocr_variants(_crop(image, name_rect), pytesseract, psm_values=(7, 8, 13)))
+            raw_name_candidates.extend(_ocr_variants(_crop(image, name_rect), pytesseract, psm_values=(7, 8, 13), high_threshold=True))
         raw_name = _best_text(raw_name_candidates)
         damage_text = _read_boss_damage_text(_crop(image, damage_rect), pytesseract)
         match = _match_roster_name(raw_name_candidates, roster)

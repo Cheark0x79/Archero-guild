@@ -219,3 +219,7 @@ L'objectif est qu'une meme capture, traitee avec le meme profil, donne toujours 
 ## Base de donnees
 
 Le schema initial est dans `observer/storage/schema.sql`. `docker-compose.yml` fournit uniquement PostgreSQL pour le developpement local. Le mot de passe inclus est un exemple de developpement et ne doit pas etre reutilise en production.
+
+## Deploiement homelab
+
+Le plan cible pour une VM dediee Proxmox, l'exposition via Cloudflare, les backups, le monitoring, la securite et les mises a jour est documente dans [`docs/deployment-plan.md`](docs/deployment-plan.md).

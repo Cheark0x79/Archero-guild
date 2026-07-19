@@ -71,6 +71,11 @@ class GuildBossDamageTests(unittest.TestCase):
 
     def test_cleans_noisy_boss_names(self) -> None:
         self.assertEqual(_useful_raw_name("] GjjTigerTiger »"), "GjjTigerTiger")
+        self.assertEqual(_useful_raw_name("] Blacksynde “ 传"), "Blacksynde")
+        self.assertEqual(_useful_raw_name("I? Brandontrandon tff"), "Brandontrandon")
+
+    def test_rejects_multi_token_podium_noise(self) -> None:
+        self.assertIsNone(_useful_raw_name("E'OJMOIM————‘—.._O‘Uln,—.—J.,u‘{lvﬂJ'”ﬂ.I"))
 
     def test_keeps_repeated_character_from_reliable_ocr_name(self) -> None:
         class Entry:
