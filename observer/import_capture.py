@@ -154,6 +154,15 @@ def import_capture_day(
     )
     write_report(report, report_path)
 
+    from observer.storage.persistence import persist_import_if_configured
+
+    persist_import_if_configured(
+        report,
+        roster=roster,
+        extracted_metrics=extracted_metrics,
+        daily_boss_rankings=daily_boss_rankings,
+    )
+
     if update_front:
         update_sample_data(sample_data_path, report, extracted_metrics, previous_metrics, previous_date, daily_metrics, daily_boss_rankings)
 

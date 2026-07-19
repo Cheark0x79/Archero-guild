@@ -220,6 +220,10 @@ L'objectif est qu'une meme capture, traitee avec le meme profil, donne toujours 
 
 Le schema initial est dans `observer/storage/schema.sql`. `docker-compose.yml` fournit uniquement PostgreSQL pour le developpement local. Le mot de passe inclus est un exemple de developpement et ne doit pas etre reutilise en production.
 
+Quand `ARCHERO_DATABASE_URL` ou `DATABASE_URL` est defini, `archero-import` continue d'ecrire le rapport JSON dans `data/imports`, puis persiste aussi l'import dans PostgreSQL. Sans variable DB, le workflow reste local et fonctionne comme avant.
+
+Le dashboard lit `/api/dashboard-data`. Cet endpoint exporte les donnees PostgreSQL si la DB est configuree et lisible, sinon il renvoie automatiquement les donnees locales de `web/sample-data.js`.
+
 ## Deploiement homelab
 
 Le plan cible pour une VM dediee Proxmox, l'exposition via Cloudflare, les backups, le monitoring, la securite et les mises a jour est documente dans [`docs/deployment-plan.md`](docs/deployment-plan.md).

@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  captures,
-  changes,
-  dailyBossRawSnapshots,
-  dailyRawSnapshots,
-  guildRoster,
-  memberSnapshots,
-  previousMemberSnapshots,
-  rules as defaultRules,
+  captures as localCaptures,
+  changes as localChanges,
+  dailyBossRawSnapshots as localDailyBossRawSnapshots,
+  dailyRawSnapshots as localDailyRawSnapshots,
+  guildRoster as localGuildRoster,
+  memberSnapshots as localMemberSnapshots,
+  previousMemberSnapshots as localPreviousMemberSnapshots,
+  rules as localDefaultRules,
 } from "../../sample-data.js";
 import {
   activityLabel,
@@ -30,9 +30,35 @@ import {
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
 const CHECK_VALIDATION_STORAGE_KEY = "archero-observer-check-validation";
-const members = mergeRosterMetrics(guildRoster, memberSnapshots);
-const currentMembers = members.filter((member) => !isFormerStatus(member.status));
-const currentPlayerIds = new Set(currentMembers.filter((member) => member.playerId).map((member) => member.playerId));
+let captures = localCaptures;
+let changes = localChanges;
+let dailyBossRawSnapshots = localDailyBossRawSnapshots;
+let dailyRawSnapshots = localDailyRawSnapshots;
+let guildRoster = localGuildRoster;
+let memberSnapshots = localMemberSnapshots;
+let previousMemberSnapshots = localPreviousMemberSnapshots;
+let defaultRules = localDefaultRules;
+let members = mergeRosterMetrics(guildRoster, memberSnapshots);
+
+function applyDashboardData(data) {
+  captures = objectOrDefault(data.captures, localCaptures);
+  changes = arrayOrDefault(data.changes, localChanges);
+  dailyBossRawSnapshots = arrayOrDefault(data.dailyBossRawSnapshots, localDailyBossRawSnapshots);
+  dailyRawSnapshots = arrayOrDefault(data.dailyRawSnapshots, localDailyRawSnapshots);
+  guildRoster = arrayOrDefault(data.guildRoster, localGuildRoster);
+  memberSnapshots = arrayOrDefault(data.memberSnapshots, localMemberSnapshots);
+  previousMemberSnapshots = arrayOrDefault(data.previousMemberSnapshots, localPreviousMemberSnapshots);
+  defaultRules = { ...localDefaultRules, ...(data.rules && typeof data.rules === "object" ? data.rules : {}) };
+  members = mergeRosterMetrics(guildRoster, memberSnapshots);
+}
+
+function arrayOrDefault(value, fallback) {
+  return Array.isArray(value) ? value : fallback;
+}
+
+function objectOrDefault(value, fallback) {
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...fallback, ...value } : fallback;
+}
 const BOSS_ROTATION = [
   { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian", icon: "TG", image: "/bosses/treant-guardian.png", stats: { atk: 200, def: 200, spd: 10 } },
   { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon", icon: "FD", image: "/bosses/fire-dragon.png", stats: { atk: 180, def: 200, spd: 10 } },
@@ -73,6 +99,7 @@ const routeMeta = {
 
 export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null }) {
   const [rules, setRules] = useStoredRules();
+  const [dataVersion, setDataVersion] = useState(0);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState({ key: null, direction: "asc" });
@@ -80,6 +107,24 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const [annotations, setAnnotations] = useState(() =>
     Object.fromEntries(members.map((member) => [memberKey(member), { notes: [], warnings: [...(member.warnings ?? [])] }])),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/dashboard-data", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload?.data) return;
+        applyDashboardData(payload.data);
+        if (!window.localStorage.getItem(RULES_STORAGE_KEY)) {
+          setRules(normalizeRules({ ...defaultRules, currentDate: currentImportDate() }));
+        }
+        setDataVersion((version) => version + 1);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
@@ -89,7 +134,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   return (
     <div className="app-shell">
       <Sidebar activeRoute={activeRoute} />
-      <main className="main">
+      <main className="main" data-version={dataVersion}>
         <header className="topbar">
           <div>
             <h1>{selectedMember?.name ?? title}</h1>
@@ -667,7 +712,7 @@ function Dashboard({ rules }) {
     ["Boss tries", formatNumber(summary.bossAttacks), deltaDetail(summary.bossAttacksDelta)],
     ["Watch list", summary.watchCount, "Automatic rules"],
   ];
-  const watched = currentMembers
+  const watched = currentMembersList()
     .map((member) => ({ member, evaluation: evaluateMember(member, rules) }))
     .filter(({ member, evaluation }) => member.metricsVerified && ["warning", "danger"].includes(evaluation.severity))
     .slice(0, 5);
@@ -1938,7 +1983,7 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
 
 function Rankings() {
   const groups = [
-    { title: "Top donation", subtitle: "Latest snapshot ranking", rows: topBy(currentMembers, "contribution7d"), valueKey: "contribution7d", formatter: formatCompact },
+    { title: "Top donation", subtitle: "Latest snapshot ranking", rows: topBy(currentMembersList(), "contribution7d"), valueKey: "contribution7d", formatter: formatCompact },
     { title: "Top boss damage", subtitle: "Best single-day boss damage", rows: topBossDamageRecords(), valueKey: "bossDamageToday", formatter: formatBossDamageText },
     { title: "Top progression", subtitle: "Latest captured day vs previous capture", rows: topDailyPowerProgression(), valueKey: "powerDelta", formatter: signedCompact },
   ];
@@ -1967,6 +2012,7 @@ function Rankings() {
 }
 
 function HistoryView({ annotations }) {
+  const currentMembers = currentMembersList();
   const capturedMembers = currentMembers.filter((member) => member.metricsVerified);
   const maxContribution = Math.max(...capturedMembers.map((member) => member.contribution7d ?? 0), 1);
   const rows = [...capturedMembers].sort((a, b) => (b.contribution7d ?? 0) - (a.contribution7d ?? 0));
@@ -2913,7 +2959,7 @@ function topBossDamageRecords(limit = 5) {
 function topDailyPowerProgression(limit = 5) {
   const latestDate = memberHistoryDates(members).at(-1);
   if (!latestDate) return [];
-  return currentMembers
+  return currentMembersList()
     .map((member) => memberSnapshotForDate(member, latestDate))
     .filter((member) => typeof member.powerDelta === "number")
     .sort((left, right) => right.powerDelta - left.powerDelta || left.name.localeCompare(right.name))
@@ -3168,7 +3214,15 @@ function isFormerStatus(status) {
 }
 
 function isCurrentPlayerId(playerId) {
-  return typeof playerId === "string" && currentPlayerIds.has(playerId);
+  return typeof playerId === "string" && currentPlayerIds().has(playerId);
+}
+
+function currentMembersList() {
+  return members.filter((member) => !isFormerStatus(member.status));
+}
+
+function currentPlayerIds() {
+  return new Set(currentMembersList().filter((member) => member.playerId).map((member) => member.playerId));
 }
 
 function filterBossDayToCurrentMembers(day) {
