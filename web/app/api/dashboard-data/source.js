@@ -140,18 +140,32 @@ function localPayload() {
   };
 }
 
-function mergeWithLocalFallback(data, fallback) {
+export function mergeWithLocalFallback(data, fallback) {
   return {
     captures: { ...fallback.captures, ...(data.captures ?? {}) },
     changes: arrayOrFallback(data.changes, fallback.changes),
     dailyBossRawSnapshots: arrayOrFallback(data.dailyBossRawSnapshots, fallback.dailyBossRawSnapshots),
     dailyRawSnapshots: arrayOrFallback(data.dailyRawSnapshots, fallback.dailyRawSnapshots),
-    guildRoster: arrayOrFallback(data.guildRoster, fallback.guildRoster),
+    guildRoster: rosterOrFallback(data.guildRoster, fallback.guildRoster),
     memberSnapshots: arrayOrFallback(data.memberSnapshots, fallback.memberSnapshots),
     previousMemberSnapshots: arrayOrFallback(data.previousMemberSnapshots, fallback.previousMemberSnapshots),
     rules: { ...fallback.rules, ...(data.rules ?? {}) },
     ocrQueue: arrayOrFallback(data.ocrQueue, fallback.ocrQueue),
   };
+}
+
+function rosterOrFallback(value, fallback) {
+  if (!Array.isArray(value) || value.length === 0) return fallback;
+  const fallbackById = new Map((fallback ?? []).filter((member) => member.playerId).map((member) => [member.playerId, member]));
+  return value.map((member) => {
+    const local = member.playerId ? fallbackById.get(member.playerId) : null;
+    if (!local) return member;
+    return {
+      ...member,
+      discordName: member.discordName ?? local.discordName,
+      discordLinked: Boolean(member.discordLinked || local.discordLinked),
+    };
+  });
 }
 
 function arrayOrFallback(value, fallback) {
