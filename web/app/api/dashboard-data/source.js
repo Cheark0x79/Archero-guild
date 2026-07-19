@@ -160,11 +160,14 @@ function rosterOrFallback(value, fallback) {
   return value.map((member) => {
     const local = member.playerId ? fallbackById.get(member.playerId) : null;
     if (!local) return member;
-    return {
+    const merged = {
       ...member,
       discordName: member.discordName ?? local.discordName,
       discordLinked: Boolean(member.discordLinked || local.discordLinked),
     };
+    const searchAliases = member.searchAliases ?? local.searchAliases;
+    if (searchAliases) merged.searchAliases = searchAliases;
+    return merged;
   });
 }
 

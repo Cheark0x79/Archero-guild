@@ -198,6 +198,25 @@ test("filterMembers searches name history and status", () => {
   assert.equal(filterMembers([{ ...member, status: "kicked" }], rules, "", "former").length, 1);
 });
 
+test("filterMembers matches normalized names and search aliases", () => {
+  const rows = mergeRosterMetrics(
+    [
+      {
+        playerId: "120015522",
+        name: "Mundõ",
+        discordName: "Mundo",
+        discordLinked: true,
+        searchAliases: ["Moon"],
+      },
+    ],
+    [],
+  );
+
+  assert.equal(filterMembers(rows, rules, "Mundo", "all").length, 1);
+  assert.equal(filterMembers(rows, rules, "Mundõ", "all").length, 1);
+  assert.equal(filterMembers(rows, rules, "Moon", "all").length, 1);
+});
+
 test("sortMembers sorts discord linked members first by default direction", () => {
   const rows = [
     { ...member, name: "MissingDiscord", discordLinked: false },

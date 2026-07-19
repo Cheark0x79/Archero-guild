@@ -194,7 +194,7 @@ export function buildSummary(members, rules) {
 }
 
 export function filterMembers(members, rules, query, statusFilter) {
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = normalizeSearchText(query);
 
   return members.filter((member) => {
     if (isFormerMember(member) && statusFilter !== "former") return false;
@@ -205,9 +205,12 @@ export function filterMembers(members, rules, query, statusFilter) {
       member.name,
       member.discordName ?? "",
       member.discord ?? "",
+      ...(member.searchAliases ?? []),
       ...member.previousNames,
     ]
       .join(" ")
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
       .toLowerCase();
 
     const matchesQuery = normalizedQuery.length === 0 || searchable.includes(normalizedQuery);
@@ -370,6 +373,7 @@ export function mergeRosterMetrics(roster, snapshots) {
       discord: snapshot?.discord ?? "",
       discordName: entry.discordName ?? entry.name,
       discordLinked: Boolean(entry.discordLinked),
+      searchAliases: entry.searchAliases ?? snapshot?.searchAliases ?? [],
       role: snapshot?.role ?? "member",
       joinedAt: entry.joinedAt ?? snapshot?.joinedAt ?? null,
       leftAt: entry.leftAt ?? snapshot?.leftAt ?? null,
@@ -427,6 +431,14 @@ function bossTriesRequired(rules) {
 
 function isFormerMember(member) {
   return ["inactive", "left", "kicked"].includes(member.status);
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
 }
 
 export function lineChartPath(values, width, height, padding = 22) {

@@ -3044,9 +3044,7 @@ function memberHistoryDates(memberRows) {
 function memberSnapshotForDate(member, date) {
   const row = dailyHistory(member).find((historyRow) => historyRow.date === date);
   if (!row) {
-    const latestDate = memberHistoryDates(members).at(-1);
-    const wasCapturedBefore = dailyHistory(member).some((historyRow) => historyRow.date < date);
-    const status = isFormerStatus(member.status) || (date === latestDate && wasCapturedBefore) ? "kicked" : member.status;
+    const status = member.status;
     return {
       ...member,
       status,
@@ -3062,7 +3060,7 @@ function memberSnapshotForDate(member, date) {
       bossDamageDelta: null,
       lastActivityDays: null,
       lastSeenAt: null,
-      verificationNote: status === "kicked" ? `Missing from latest import on ${date}` : `No capture on ${date}`,
+      verificationNote: isFormerStatus(status) ? `Missing from latest import on ${date}` : `No capture on ${date}`,
     };
   }
   return {
