@@ -31,6 +31,8 @@ import {
 const RULES_STORAGE_KEY = "archero-observer-rules";
 const CHECK_VALIDATION_STORAGE_KEY = "archero-observer-check-validation";
 const members = mergeRosterMetrics(guildRoster, memberSnapshots);
+const currentMembers = members.filter((member) => !isFormerStatus(member.status));
+const currentPlayerIds = new Set(currentMembers.filter((member) => member.playerId).map((member) => member.playerId));
 const BOSS_ROTATION = [
   { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian", icon: "TG", image: "/bosses/treant-guardian.png", stats: { atk: 200, def: 200, spd: 10 } },
   { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon", icon: "FD", image: "/bosses/fire-dragon.png", stats: { atk: 180, def: 200, spd: 10 } },
@@ -80,7 +82,8 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   );
 
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
-  const selectedMember = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
+  const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
+  const selectedMember = selectedMemberCandidate && !isFormerStatus(selectedMemberCandidate.status) ? selectedMemberCandidate : null;
   const [title, subtitle] = routeMeta[activeRoute];
 
   return (
@@ -650,8 +653,8 @@ function Dashboard({ rules }) {
   const donationDates = donationStats.map((day) => formatShortDate(day.date));
   const checkDays = buildCheckDays();
   const latestCheckDay = checkDays.at(-1);
-  const currentBossDay = Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null;
-  const bossRows = currentBossDay?.rows?.filter((row) => typeof row.bossDamageToday === "number") ?? [];
+  const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
+  const bossRows = currentBossDay?.rows?.filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number") ?? [];
   const topBoss = [...bossRows].sort((left, right) => (right.bossDamageToday ?? 0) - (left.bossDamageToday ?? 0))[0] ?? null;
   const dashboardStatus = buildDashboardStatus(latestCheckDay, currentBossDay, validatedRows);
   const kickedCandidates = buildKickedCandidates(dashboardStatus.captureDate);
@@ -664,7 +667,7 @@ function Dashboard({ rules }) {
     ["Boss tries", formatNumber(summary.bossAttacks), deltaDetail(summary.bossAttacksDelta)],
     ["Watch list", summary.watchCount, "Automatic rules"],
   ];
-  const watched = members
+  const watched = currentMembers
     .map((member) => ({ member, evaluation: evaluateMember(member, rules) }))
     .filter(({ member, evaluation }) => member.metricsVerified && ["warning", "danger"].includes(evaluation.severity))
     .slice(0, 5);
@@ -1189,21 +1192,43 @@ function BossRankingPanel({ title, subtitle, rows, valueKey, showDate = false, s
 }
 
 function BossAllTimePanel({ rows }) {
+  const [exporting, setExporting] = useState(false);
   const podium = rows.slice(0, 3);
   const remaining = rows.slice(3);
 
+  async function exportRankingImage() {
+    setExporting(true);
+    try {
+      await exportBossAllTimeRanking(rows);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <section className="panel boss-alltime-panel">
-      <PanelHeading title="All-time ranking" subtitle="Best single-day boss score for each guild member." />
+      <PanelHeading
+        title="All-time ranking"
+        subtitle="Best single-day boss score for each guild member."
+        action={
+          <button className="secondary-button compact-action" type="button" disabled={exporting || rows.length === 0} onClick={exportRankingImage}>
+            {exporting ? "Exporting..." : "Export image"}
+          </button>
+        }
+      />
       <div className="boss-podium">
         {podium.map((row, index) => (
           <article className={`boss-podium-card rank-${index + 1}`} key={`podium-${row.playerId}`}>
-            <span className="rank-number">{index + 1}</span>
-            <div>
+            <div className="boss-medal">{index + 1}</div>
+            <BossIcon boss={row.boss} />
+            <div className="boss-podium-copy">
               <strong>{row.name}</strong>
-              <small>{[row.date, row.bossName].filter(Boolean).join(" - ")}</small>
+              <small>
+                <span>{row.bossName}</span>
+                <span>{row.date}</span>
+              </small>
             </div>
-            <span>{formatBossDamageText(row.damage)}</span>
+            <span className="boss-podium-score">{formatBossDamageText(row.damage)}</span>
           </article>
         ))}
       </div>
@@ -1223,7 +1248,12 @@ function BossAllTimePanel({ rows }) {
               <tr key={`alltime-${row.playerId}-${row.date}`}>
                 <td>{index + 4}</td>
                 <td>{row.name}</td>
-                <td>{row.bossName}</td>
+                <td>
+                  <span className="boss-table-boss">
+                    <BossIcon boss={row.boss} />
+                    <span>{row.bossName}</span>
+                  </span>
+                </td>
                 <td>{row.date}</td>
                 <td>{formatBossDamageText(row.damage)}</td>
               </tr>
@@ -1233,6 +1263,212 @@ function BossAllTimePanel({ rows }) {
       </div>
     </section>
   );
+}
+
+async function exportBossAllTimeRanking(rows) {
+  const exportRows = rows.map((row, index) => ({ ...row, rank: index + 1 }));
+  const width = 1800;
+  const margin = 64;
+  const rowHeight = 70;
+  const headerHeight = 128;
+  const podiumTop = 170;
+  const podiumHeight = 280;
+  const tableTop = podiumTop + podiumHeight + 54;
+  const tableHeaderHeight = 58;
+  const footerHeight = 56;
+  const height = tableTop + tableHeaderHeight + exportRows.length * rowHeight + footerHeight + margin;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const images = await loadBossExportImages(exportRows);
+  drawExportBackground(ctx, width, height);
+  drawExportHeader(ctx, exportRows.length);
+
+  const podium = exportRows.slice(0, 3);
+  const podiumCards = [
+    { row: podium[1], rankClass: 2, x: margin, y: podiumTop + 42, w: 500, h: 210 },
+    { row: podium[0], rankClass: 1, x: 590, y: podiumTop, w: 620, h: 252 },
+    { row: podium[2], rankClass: 3, x: 1236, y: podiumTop + 42, w: 500, h: 210 },
+  ];
+  for (const card of podiumCards) {
+    if (card.row) drawExportPodiumCard(ctx, card, images.get(card.row.bossKey));
+  }
+
+  drawExportTable(ctx, exportRows, images, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
+  downloadCanvas(canvas, `archero-boss-all-time-ranking-${currentIsoDate()}.png`);
+}
+
+async function loadBossExportImages(rows) {
+  const byKey = new Map();
+  const bosses = new Map(rows.filter((row) => row.boss?.image).map((row) => [row.bossKey, row.boss]));
+  await Promise.all(
+    [...bosses.values()].map(
+      (boss) =>
+        new Promise((resolve) => {
+          const image = new Image();
+          image.onload = () => {
+            byKey.set(boss.key, image);
+            resolve();
+          };
+          image.onerror = () => resolve();
+          image.src = boss.image;
+        }),
+    ),
+  );
+  return byKey;
+}
+
+function drawExportBackground(ctx, width, height) {
+  ctx.fillStyle = "#f2f5f8";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#fbfcfd";
+  roundedRect(ctx, 32, 32, width - 64, height - 64, 18);
+  ctx.fill();
+  ctx.strokeStyle = "#c8d2dc";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawExportHeader(ctx, rowCount) {
+  drawText(ctx, "Archero Guild", 64, 74, { size: 26, weight: 800, color: "#435062" });
+  drawText(ctx, "All-time boss ranking", 64, 124, { size: 48, weight: 900, color: "#111a25" });
+  drawText(ctx, `Best single-day boss score for ${rowCount} guild member${rowCount > 1 ? "s" : ""}.`, 64, 164, { size: 24, weight: 600, color: "#4b5b6d" });
+  drawText(ctx, currentIsoDate(), 1736, 124, { size: 22, weight: 800, color: "#435062", align: "right" });
+}
+
+function drawExportPodiumCard(ctx, { row, rankClass, x, y, w, h }, image) {
+  const palette = {
+    1: { fill: "#fff0c9", border: "#eca900", medal: "#ffbd24", orb: "#d9d0ba" },
+    2: { fill: "#e9eef4", border: "#aeb9c5", medal: "#dfe7ef", orb: "#ccd7e5" },
+    3: { fill: "#f7e4d5", border: "#c78355", medal: "#e8ad7b", orb: "#d8cbc7" },
+  }[rankClass];
+
+  ctx.fillStyle = palette.fill;
+  roundedRect(ctx, x, y, w, h, 12);
+  ctx.fill();
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.save();
+  roundedRect(ctx, x, y, w, h, 12);
+  ctx.clip();
+  ctx.fillStyle = palette.orb;
+  ctx.globalAlpha = 0.6;
+  ctx.beginPath();
+  ctx.arc(x + w - 68, y + h + 18, 112, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  ctx.fillStyle = palette.medal;
+  roundedRect(ctx, x + 24, y + 24, 54, 54, 12);
+  ctx.fill();
+  drawText(ctx, String(row.rank), x + 51, y + 61, { size: 26, weight: 900, align: "center", color: "#101820" });
+
+  drawBossExportImage(ctx, image, x + (rankClass === 1 ? 104 : 118), y + 24, rankClass === 1 ? 96 : 70);
+  drawText(ctx, row.name, x + 24, y + h - (rankClass === 1 ? 106 : 88), { size: rankClass === 1 ? 34 : 30, weight: 900, color: "#101820", maxWidth: w - 48 });
+  drawText(ctx, `${row.bossName}  ${row.date}`, x + 24, y + h - (rankClass === 1 ? 68 : 54), { size: 18, weight: 800, color: "#435062", maxWidth: w - 48 });
+  drawText(ctx, formatBossDamageText(row.damage), x + w - 24, y + h - (rankClass === 1 ? 34 : 24), { size: rankClass === 1 ? 44 : 38, weight: 950, align: "right", color: "#101820" });
+}
+
+function drawExportTable(ctx, rows, images, x, y, w, headerHeight, rowHeight) {
+  roundedRect(ctx, x, y, w, headerHeight + rows.length * rowHeight, 12);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.strokeStyle = "#c8d2dc";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const columns = {
+    rank: x + 90,
+    member: x + 210,
+    boss: x + 690,
+    date: x + 1190,
+    score: x + w - 28,
+  };
+  drawText(ctx, "Rank", columns.rank, y + 38, { size: 17, weight: 900, color: "#435062", align: "right" });
+  drawText(ctx, "Member", columns.member, y + 38, { size: 17, weight: 900, color: "#435062" });
+  drawText(ctx, "Boss", columns.boss, y + 38, { size: 17, weight: 900, color: "#435062" });
+  drawText(ctx, "Date", columns.date, y + 38, { size: 17, weight: 900, color: "#435062" });
+  drawText(ctx, "Score", columns.score, y + 38, { size: 17, weight: 900, color: "#435062", align: "right" });
+
+  ctx.strokeStyle = "#c8d2dc";
+  drawLine(ctx, x, y + headerHeight, x + w, y + headerHeight);
+
+  rows.forEach((row, index) => {
+    const rowY = y + headerHeight + index * rowHeight;
+    if (index % 2 === 1) {
+      ctx.fillStyle = "#f7f9fb";
+      ctx.fillRect(x + 1, rowY, w - 2, rowHeight);
+    }
+    drawLine(ctx, x, rowY + rowHeight, x + w, rowY + rowHeight);
+    drawText(ctx, String(row.rank), columns.rank, rowY + 43, { size: 20, weight: 800, color: "#111a25", align: "right" });
+    drawText(ctx, row.name, columns.member, rowY + 43, { size: 22, weight: 800, color: "#111a25", maxWidth: 380 });
+    drawBossExportImage(ctx, images.get(row.bossKey), columns.boss, rowY + 14, 40);
+    drawText(ctx, row.bossName, columns.boss + 54, rowY + 43, { size: 20, weight: 700, color: "#111a25", maxWidth: 360 });
+    drawText(ctx, row.date, columns.date, rowY + 43, { size: 20, weight: 700, color: "#111a25" });
+    drawText(ctx, formatBossDamageText(row.damage), columns.score, rowY + 43, { size: 21, weight: 850, color: "#111a25", align: "right" });
+  });
+}
+
+function drawBossExportImage(ctx, image, x, y, size) {
+  if (!image) {
+    ctx.fillStyle = "#e5ebf2";
+    roundedRect(ctx, x, y, size, size, 10);
+    ctx.fill();
+    return;
+  }
+  const ratio = Math.min(size / image.naturalWidth, size / image.naturalHeight);
+  const drawWidth = image.naturalWidth * ratio;
+  const drawHeight = image.naturalHeight * ratio;
+  ctx.drawImage(image, x + (size - drawWidth) / 2, y + (size - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function drawText(ctx, text, x, y, { size, weight = 400, color = "#111a25", align = "left", maxWidth = null }) {
+  ctx.font = `${weight} ${size}px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = "alphabetic";
+  const value = maxWidth ? ellipsizeCanvasText(ctx, String(text), maxWidth) : String(text);
+  ctx.fillText(value, x, y);
+}
+
+function ellipsizeCanvasText(ctx, value, maxWidth) {
+  if (ctx.measureText(value).width <= maxWidth) return value;
+  let result = value;
+  while (result.length > 1 && ctx.measureText(`${result}...`).width > maxWidth) {
+    result = result.slice(0, -1);
+  }
+  return `${result}...`;
+}
+
+function drawLine(ctx, x1, y1, x2, y2) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+function roundedRect(ctx, x, y, width, height, radius) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + safeRadius, y);
+  ctx.arcTo(x + width, y, x + width, y + height, safeRadius);
+  ctx.arcTo(x + width, y + height, x, y + height, safeRadius);
+  ctx.arcTo(x, y + height, x, y, safeRadius);
+  ctx.arcTo(x, y, x + width, y, safeRadius);
+  ctx.closePath();
+}
+
+function downloadCanvas(canvas, filename) {
+  const link = document.createElement("a");
+  link.download = filename;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
 }
 
 function BossDailyRankingPanel({ days }) {
@@ -1702,7 +1938,7 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
 
 function Rankings() {
   const groups = [
-    { title: "Top donation", subtitle: "Latest snapshot ranking", rows: topBy(members, "contribution7d"), valueKey: "contribution7d", formatter: formatCompact },
+    { title: "Top donation", subtitle: "Latest snapshot ranking", rows: topBy(currentMembers, "contribution7d"), valueKey: "contribution7d", formatter: formatCompact },
     { title: "Top boss damage", subtitle: "Best single-day boss damage", rows: topBossDamageRecords(), valueKey: "bossDamageToday", formatter: formatBossDamageText },
     { title: "Top progression", subtitle: "Latest captured day vs previous capture", rows: topDailyPowerProgression(), valueKey: "powerDelta", formatter: signedCompact },
   ];
@@ -1731,11 +1967,10 @@ function Rankings() {
 }
 
 function HistoryView({ annotations }) {
-  const currentMembers = members.filter((member) => !["inactive", "left", "kicked"].includes(member.status));
   const capturedMembers = currentMembers.filter((member) => member.metricsVerified);
   const maxContribution = Math.max(...capturedMembers.map((member) => member.contribution7d ?? 0), 1);
   const rows = [...capturedMembers].sort((a, b) => (b.contribution7d ?? 0) - (a.contribution7d ?? 0));
-  const warnings = members.flatMap((member) => (annotations[memberKey(member)]?.warnings ?? []).map((warning) => ({ member, warning })));
+  const warnings = currentMembers.flatMap((member) => (annotations[memberKey(member)]?.warnings ?? []).map((warning) => ({ member, warning })));
   return (
     <div className="dashboard-grid">
       <section className="panel chart-panel wide">
@@ -2338,8 +2573,8 @@ function buildDashboardStatus(latestCheckDay, currentBossDay, validatedRows) {
   const captureDate = latestCheckDay?.date ?? currentBossDay?.date ?? null;
   const reviewedRows = rows.filter((row) => checkReviewStatus(validatedRows, latestCheckDay?.date, row.reviewId));
   const invalidRows = rows.filter((row) => checkReviewStatus(validatedRows, latestCheckDay?.date, row.reviewId) === "invalid");
-  const bossRows = currentBossDay?.rows ?? [];
-  const bossMatched = bossRows.filter((row) => row.playerId).length;
+  const bossRows = currentBossDay?.rows?.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)) ?? [];
+  const bossMatched = bossRows.filter((row) => isCurrentPlayerId(row.playerId)).length;
   return {
     captureDate,
     totalRows: rows.length,
@@ -2364,7 +2599,7 @@ function buildCheckRows(snapshots, date) {
   const snapshotsById = new Map(snapshots.map((snapshot) => [snapshot.playerId, snapshot]));
   const currentRolesById = new Map(memberSnapshots.map((snapshot) => [snapshot.playerId, snapshot.role]));
   return guildRoster
-    .filter((entry) => entry.playerId && snapshotsById.has(entry.playerId))
+    .filter((entry) => isCurrentPlayerId(entry.playerId) && snapshotsById.has(entry.playerId))
     .map((entry) => {
       const snapshot = snapshotsById.get(entry.playerId);
       return {
@@ -2383,14 +2618,13 @@ function buildCheckRows(snapshots, date) {
 }
 
 function buildDailyPowerStats() {
-  const activePlayerIds = new Set(guildRoster.filter((entry) => entry.playerId && entry.status !== "kicked").map((entry) => entry.playerId));
   const dailyStats = Array.isArray(dailyRawSnapshots)
     ? dailyRawSnapshots
         .slice()
         .sort((left, right) => left.date.localeCompare(right.date))
         .map((day) => {
           const powers = (day.rows ?? [])
-            .filter((row) => activePlayerIds.has(row.playerId) && typeof row.power === "number")
+            .filter((row) => isCurrentPlayerId(row.playerId) && typeof row.power === "number")
             .map((row) => row.power);
           return powers.length > 0
             ? {
@@ -2407,7 +2641,7 @@ function buildDailyPowerStats() {
   if (dailyStats.length > 0) return dailyStats;
 
   const currentPowers = memberSnapshots
-    .filter((member) => activePlayerIds.has(member.playerId) && typeof member.power === "number")
+    .filter((member) => isCurrentPlayerId(member.playerId) && typeof member.power === "number")
     .map((member) => member.power);
   if (currentPowers.length === 0) {
     return (captures.averagePower8w ?? []).map((value, index) => ({
@@ -2434,12 +2668,11 @@ function medianNumber(values) {
 }
 
 function buildDailyDonationStats() {
-  const activePlayerIds = new Set(guildRoster.filter((entry) => entry.playerId && entry.status !== "kicked").map((entry) => entry.playerId));
   return (Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots : [])
     .slice()
     .sort((left, right) => left.date.localeCompare(right.date))
     .map((day) => {
-      const rows = (day.rows ?? []).filter((row) => activePlayerIds.has(row.playerId) && typeof row.contribution7d === "number");
+      const rows = (day.rows ?? []).filter((row) => isCurrentPlayerId(row.playerId) && typeof row.contribution7d === "number");
       return rows.length > 0
         ? {
             date: day.date,
@@ -2468,7 +2701,7 @@ function checkRoleFor(playerId, rawRole, currentRolesById) {
 }
 
 function buildBossCheckRows(rows, date) {
-  return rows.map((row) => ({
+  return rows.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)).map((row) => ({
     captureType: "boss",
     reviewId: row.source,
     playerId: row.playerId ?? null,
@@ -2524,7 +2757,7 @@ function sourceFromVerification(value) {
 
 function buildBossDashboardData() {
   const dates = Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.map((day) => day.date).sort((left, right) => left.localeCompare(right)) : [];
-  const rosterNames = new Map(guildRoster.filter((entry) => entry.playerId).map((entry) => [entry.playerId, entry.name]));
+  const rosterNames = new Map(guildRoster.filter((entry) => isCurrentPlayerId(entry.playerId)).map((entry) => [entry.playerId, entry.name]));
   const playersById = new Map();
   const latestDate = dates.at(-1) ?? currentIsoDate();
   const activeBoss = bossForDate(latestDate);
@@ -2532,7 +2765,7 @@ function buildBossDashboardData() {
   for (const day of dailyBossRawSnapshots ?? []) {
     const boss = bossForDate(day.date);
     for (const row of day.rows ?? []) {
-      if (!row.playerId || typeof row.bossDamageToday !== "number") continue;
+      if (!isCurrentPlayerId(row.playerId) || typeof row.bossDamageToday !== "number") continue;
       const current = playersById.get(row.playerId) ?? {
         playerId: row.playerId,
         name: row.name ?? rosterNames.get(row.playerId) ?? row.playerId,
@@ -2658,7 +2891,7 @@ function topBossDamageRecords(limit = 5) {
   const bestByPlayer = new Map();
   for (const day of Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : []) {
     for (const row of day.rows ?? []) {
-      if (!row.playerId || !row.name || typeof row.bossDamageToday !== "number") continue;
+      if (!isCurrentPlayerId(row.playerId) || !row.name || typeof row.bossDamageToday !== "number") continue;
       const previous = bestByPlayer.get(row.playerId);
       if (!previous || row.bossDamageToday > previous.bossDamageToday) {
         bestByPlayer.set(row.playerId, {
@@ -2680,7 +2913,7 @@ function topBossDamageRecords(limit = 5) {
 function topDailyPowerProgression(limit = 5) {
   const latestDate = memberHistoryDates(members).at(-1);
   if (!latestDate) return [];
-  return members
+  return currentMembers
     .map((member) => memberSnapshotForDate(member, latestDate))
     .filter((member) => typeof member.powerDelta === "number")
     .sort((left, right) => right.powerDelta - left.powerDelta || left.name.localeCompare(right.name))
@@ -2699,6 +2932,7 @@ function bossBestDayRecords(players) {
             damage: best.damage,
             bossKey: best.bossKey,
             bossName: best.bossName,
+            boss: bossForKey(best.bossKey),
           }
         : null;
     })
@@ -2931,6 +3165,18 @@ function rowStateClass(evaluation) {
 
 function isFormerStatus(status) {
   return ["inactive", "left", "kicked"].includes(status);
+}
+
+function isCurrentPlayerId(playerId) {
+  return typeof playerId === "string" && currentPlayerIds.has(playerId);
+}
+
+function filterBossDayToCurrentMembers(day) {
+  if (!day) return null;
+  return {
+    ...day,
+    rows: (day.rows ?? []).filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)),
+  };
 }
 
 function formatOptionalNumber(value) {

@@ -1206,43 +1206,120 @@ th.numeric {
 
 .boss-alltime-panel {
   display: grid;
-  gap: 16px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: calc(100vh - 112px);
 }
 
 .boss-podium {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr) minmax(0, 0.92fr);
+  grid-template-areas: "second first third";
   align-items: end;
-  gap: 12px;
+  gap: 14px;
+  padding-top: 8px;
 }
 
 .boss-podium-card {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  min-height: 118px;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+  gap: 10px 12px;
+  min-height: 168px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-2);
-  padding: 14px;
+  background:
+    linear-gradient(135deg, oklch(99% 0.003 250), var(--surface-2));
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.boss-podium-card::after {
+  position: absolute;
+  right: -24px;
+  bottom: -40px;
+  width: 150px;
+  height: 150px;
+  border-radius: 999px;
+  background: oklch(85% 0.035 250 / 42%);
+  content: "";
+  pointer-events: none;
 }
 
 .boss-podium-card.rank-1 {
-  min-height: 148px;
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  grid-area: first;
+  min-height: 206px;
+  border-color: oklch(75% 0.16 82);
+  background:
+    linear-gradient(135deg, oklch(99% 0.012 85), oklch(91% 0.065 82));
 }
 
-.boss-podium-card > span:last-child {
-  grid-column: 1 / -1;
-  justify-self: end;
-  font-size: 22px;
+.boss-podium-card.rank-2 {
+  grid-area: second;
+  border-color: oklch(77% 0.018 250);
+  background:
+    linear-gradient(135deg, oklch(99% 0.002 250), oklch(90% 0.014 250));
+}
+
+.boss-podium-card.rank-3 {
+  grid-area: third;
+  min-height: 154px;
+  border-color: oklch(70% 0.09 58);
+  background:
+    linear-gradient(135deg, oklch(98% 0.008 58), oklch(89% 0.045 58));
+}
+
+.boss-podium-card .boss-icon {
+  position: relative;
+  z-index: 1;
+  width: 64px;
+  height: 64px;
+  background: transparent;
+}
+
+.boss-podium-card.rank-1 .boss-icon {
+  width: 82px;
+  height: 82px;
+}
+
+.boss-medal {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
   font-weight: 900;
+  box-shadow: 0 2px 8px oklch(20% 0.025 250 / 10%);
 }
 
-.boss-podium-card strong,
-.boss-podium-card small {
+.boss-podium-card.rank-1 .boss-medal {
+  background: oklch(82% 0.16 82);
+}
+
+.boss-podium-card.rank-2 .boss-medal {
+  background: oklch(91% 0.012 250);
+}
+
+.boss-podium-card.rank-3 .boss-medal {
+  background: oklch(78% 0.09 58);
+}
+
+.boss-podium-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.boss-podium-copy strong,
+.boss-podium-copy small {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -1250,13 +1327,34 @@ th.numeric {
   white-space: nowrap;
 }
 
-.boss-podium-card strong {
-  font-size: 18px;
+.boss-podium-copy strong {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 900;
 }
 
-.boss-podium-card small {
+.boss-podium-copy small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   color: var(--muted);
   font-size: 12px;
+  font-weight: 800;
+}
+
+.boss-podium-score {
+  position: relative;
+  z-index: 1;
+  grid-column: 1 / -1;
+  align-self: end;
+  justify-self: end;
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 950;
+}
+
+.boss-podium-card.rank-1 .boss-podium-score {
+  font-size: 34px;
 }
 
 .boss-ranking-row {
@@ -1270,10 +1368,11 @@ th.numeric {
 }
 
 .boss-table-wrap {
-  max-height: 540px;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
+  background: var(--surface);
 }
 
 .boss-ranking-table {
@@ -1286,7 +1385,7 @@ th.numeric {
 .boss-ranking-table th,
 .boss-ranking-table td {
   border-bottom: 1px solid var(--line);
-  padding: 10px 12px;
+  padding: 12px 14px;
   text-align: left;
   white-space: nowrap;
 }
@@ -1310,6 +1409,29 @@ th.numeric {
 
 .boss-ranking-table tr:last-child td {
   border-bottom: 0;
+}
+
+.boss-ranking-table tbody tr {
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.boss-ranking-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.boss-table-boss {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.boss-table-boss .boss-icon {
+  width: 34px;
+  height: 34px;
+  background: transparent;
 }
 
 .boss-ranking-row > div {
@@ -2484,7 +2606,23 @@ th.numeric {
 
   .boss-podium {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "first"
+      "second"
+      "third";
     align-items: stretch;
+  }
+
+  .boss-podium-card,
+  .boss-podium-card.rank-1,
+  .boss-podium-card.rank-3 {
+    min-height: 142px;
+  }
+
+  .boss-podium-card.rank-1 .boss-icon,
+  .boss-podium-card .boss-icon {
+    width: 58px;
+    height: 58px;
   }
 
   .boss-by-boss-grid {

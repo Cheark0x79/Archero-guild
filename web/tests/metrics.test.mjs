@@ -194,6 +194,8 @@ test("filterMembers searches name history and status", () => {
   assert.equal(rows.length, 1);
   assert.equal(filterMembers([member], rules, "missing", "active").length, 0);
   assert.equal(filterMembers([{ ...member, metricsVerified: false }], rules, "", "review").length, 1);
+  assert.equal(filterMembers([{ ...member, status: "kicked" }], rules, "", "all").length, 0);
+  assert.equal(filterMembers([{ ...member, status: "kicked" }], rules, "", "former").length, 1);
 });
 
 test("sortMembers sorts discord linked members first by default direction", () => {

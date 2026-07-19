@@ -197,6 +197,8 @@ export function filterMembers(members, rules, query, statusFilter) {
   const normalizedQuery = query.trim().toLowerCase();
 
   return members.filter((member) => {
+    if (isFormerMember(member) && statusFilter !== "former") return false;
+
     const evaluation = evaluateMember(member, rules);
     const searchable = [
       member.playerId,
