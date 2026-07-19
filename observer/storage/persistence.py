@@ -216,7 +216,7 @@ def _replace_boss_results(
     for day, rankings in daily_boss_rankings.items():
         boss_key = _boss_key_for_date(day)
         cursor.execute("DELETE FROM boss_daily_results WHERE capture_date = %s", (day,))
-        for index, ranking in enumerate(rankings):
+        for index, ranking in enumerate(_dedupe_boss_rankings(rankings)):
             if not ranking.name and not ranking.player_id:
                 continue
             screenshot_id = _screenshot_id_for_source(screenshots_by_path, ranking.source)
@@ -244,6 +244,34 @@ def _replace_boss_results(
                     _json(asdict(ranking)),
                 ),
             )
+
+
+def _dedupe_boss_rankings(rankings: Sequence[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
+    unique_rankings: list[ExtractedBossRanking] = []
+    rank_positions: dict[int, int] = {}
+    for ranking in rankings:
+        if ranking.boss_rank is None:
+            unique_rankings.append(ranking)
+            continue
+
+        existing_index = rank_positions.get(ranking.boss_rank)
+        if existing_index is None:
+            rank_positions[ranking.boss_rank] = len(unique_rankings)
+            unique_rankings.append(ranking)
+            continue
+
+        if _boss_ranking_quality(ranking) > _boss_ranking_quality(unique_rankings[existing_index]):
+            unique_rankings[existing_index] = ranking
+    return unique_rankings
+
+
+def _boss_ranking_quality(ranking: ExtractedBossRanking) -> tuple[int, int, int, int]:
+    return (
+        1 if ranking.player_id else 0,
+        1 if ranking.name else 0,
+        1 if ranking.boss_damage_today is not None else 0,
+        len(ranking.raw_name or ""),
+    )
 
 
 def _boss_key_for_date(date: str) -> str:
