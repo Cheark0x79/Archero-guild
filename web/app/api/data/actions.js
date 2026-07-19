@@ -20,10 +20,7 @@ export function projectRoot() {
 
 export async function runObserverModule(moduleName, args = []) {
   const cwd = projectRoot();
-  const env = {
-    ...process.env,
-    PYTHONPATH: [cwd, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
-  };
+  const env = observerEnv();
 
   return new Promise((resolve) => {
     const child = spawn("python", ["-B", "-m", moduleName, ...args], {
@@ -58,6 +55,15 @@ export async function runObserverModule(moduleName, args = []) {
       });
     });
   });
+}
+
+export function observerEnv(extra = {}) {
+  const cwd = projectRoot();
+  return {
+    ...process.env,
+    ...extra,
+    PYTHONPATH: [cwd, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+  };
 }
 
 export async function runCommand(command, args = []) {
@@ -153,7 +159,7 @@ export function resolveScreenshotPath(relativePath) {
   return resolved;
 }
 
-function parseJsonOutput(stdout) {
+export function parseJsonOutput(stdout) {
   try {
     return JSON.parse(stdout);
   } catch {

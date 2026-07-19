@@ -1938,6 +1938,50 @@ th.numeric {
   background: var(--danger);
 }
 
+.sync-job-card {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.sync-job-card div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sync-job-card strong {
+  color: var(--ink);
+}
+
+.sync-job-card span,
+.sync-job-card small {
+  color: var(--muted);
+}
+
+.sync-job-card span {
+  text-align: right;
+}
+
+.sync-job-card meter {
+  width: 100%;
+  height: 10px;
+}
+
+.sync-job-card.failed {
+  border-color: oklch(78% 0.09 25);
+}
+
+.sync-job-card.failed small {
+  color: oklch(38% 0.14 25);
+  white-space: pre-wrap;
+}
+
 .data-log {
   display: grid;
   gap: 8px;

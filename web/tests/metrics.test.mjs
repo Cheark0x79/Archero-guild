@@ -198,7 +198,7 @@ test("filterMembers searches name history and status", () => {
   assert.equal(filterMembers([{ ...member, status: "kicked" }], rules, "", "former").length, 1);
 });
 
-test("filterMembers matches normalized names and search aliases", () => {
+test("filterMembers matches normalized names", () => {
   const rows = mergeRosterMetrics(
     [
       {
@@ -206,7 +206,6 @@ test("filterMembers matches normalized names and search aliases", () => {
         name: "Mundõ",
         discordName: "Mundo",
         discordLinked: true,
-        searchAliases: ["Moon"],
       },
     ],
     [],
@@ -214,7 +213,6 @@ test("filterMembers matches normalized names and search aliases", () => {
 
   assert.equal(filterMembers(rows, rules, "Mundo", "all").length, 1);
   assert.equal(filterMembers(rows, rules, "Mundõ", "all").length, 1);
-  assert.equal(filterMembers(rows, rules, "Moon", "all").length, 1);
 });
 
 test("sortMembers sorts discord linked members first by default direction", () => {

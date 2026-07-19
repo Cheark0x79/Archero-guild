@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { hasDashboardActionHeader, runObserverModule } from "../actions.js";
+import { hasDashboardActionHeader } from "../actions.js";
+import { startImportJob } from "./jobs.js";
 
 export async function POST(request) {
   if (!hasDashboardActionHeader(request)) {
@@ -14,6 +15,10 @@ export async function POST(request) {
   }
 
   const date = typeof payload.date === "string" && payload.date.trim() ? payload.date.trim() : null;
-  const result = await runObserverModule("observer.import_capture", date ? [date] : []);
-  return NextResponse.json(result.ok ? { ok: true, import: result.data } : { ok: false, error: result.error }, { status: result.status });
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ ok: false, error: "date must use YYYY-MM-DD format" }, { status: 400 });
+  }
+
+  const result = startImportJob(date);
+  return NextResponse.json({ ok: true, job: result.job, alreadyRunning: result.alreadyRunning }, { status: result.alreadyRunning ? 202 : 201 });
 }

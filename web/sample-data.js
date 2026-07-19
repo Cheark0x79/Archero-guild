@@ -45,7 +45,7 @@ export const guildRoster = [
   { playerId: "119958074", name: "KwanHKrait" },
   { playerId: "119978858", name: "Light810" },
   { playerId: "119994043", name: "llsv", discordLinked: true },
-  { playerId: "120015522", name: "Mundõ", discordName: "Mundo", discordLinked: true, searchAliases: ["Moon"] },
+  { playerId: "120015522", name: "Mundõ", discordName: "Mundo", discordLinked: true },
   { playerId: null, name: "Nostureguy", status: "kicked", leftAt: "2026-07-15" },
   { playerId: "119982936", name: "Pignouf", discordLinked: true },
   { playerId: "119947555", name: "PRAVDA" },

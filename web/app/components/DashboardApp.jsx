@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   captures as localCaptures,
   changes as localChanges,
@@ -234,10 +234,20 @@ function DataView() {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
+  const [importJob, setImportJob] = useState(null);
+  const reportedImportJobs = useRef(new Set());
+  const importRunning = importJob && ["queued", "running"].includes(importJob.status);
 
   useEffect(() => {
     refreshAdbStatus();
+    refreshImportJobStatus();
   }, []);
+
+  useEffect(() => {
+    if (!importRunning) return undefined;
+    const timer = window.setInterval(() => refreshImportJobStatus(importJob.id), 30_000);
+    return () => window.clearInterval(timer);
+  }, [importRunning, importJob?.id]);
 
   async function refreshAdbStatus() {
     setAdbStatus((current) => ({ ...current, checking: true }));
@@ -333,39 +343,71 @@ function DataView() {
 
   async function importDay() {
     const date = importDate.trim();
-    setSyncSteps(markSyncStep(buildSyncSteps(), 0, "running"));
-    setBusyAction("import");
+    setSyncSteps(importJobToSteps({ status: "queued", stepIndex: 0, detail: "Starting import job." }));
+    setBusyAction("import-start");
     try {
-      setSyncSteps(markSyncStep(buildSyncSteps(), 1, "running"));
       const response = await fetch("/api/data/import", {
         method: "POST",
         headers: dataActionHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(date ? { date } : {}),
       });
-      setSyncSteps(markSyncStep(buildSyncSteps(), 2, "running"));
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) {
-        setSyncSteps(markSyncStep(buildSyncSteps(), 2, "error"));
+        setSyncSteps(markSyncStep(buildSyncSteps(), 0, "error"));
         addDataMessage(setMessages, {
           action: "import",
           status: "error",
-          title: "Synchronize failed",
+          title: "Synchronize did not start",
           detail: payload.error ?? `HTTP ${response.status}`,
         });
         return;
       }
-      setSyncSteps(buildSyncSteps("done"));
-      addDataMessage(setMessages, dataSuccessMessage("import", payload));
+      setImportJob(payload.job);
+      setSyncSteps(importJobToSteps(payload.job));
+      addDataMessage(setMessages, {
+        action: "import",
+        status: payload.alreadyRunning ? "warning" : "success",
+        title: payload.alreadyRunning ? "Synchronize already running" : "Synchronize started",
+        detail: importJobDetail(payload.job),
+      });
+      refreshImportJobStatus(payload.job.id);
     } catch (error) {
-      setSyncSteps(markSyncStep(buildSyncSteps(), 2, "error"));
+      setSyncSteps(markSyncStep(buildSyncSteps(), 0, "error"));
       addDataMessage(setMessages, {
         action: "import",
         status: "error",
-        title: "Synchronize failed",
+        title: "Synchronize did not start",
         detail: error instanceof Error ? error.message : "Unexpected browser error",
       });
     } finally {
       setBusyAction(null);
+    }
+  }
+
+  async function refreshImportJobStatus(id = null) {
+    const suffix = id ? `?id=${encodeURIComponent(id)}` : "";
+    try {
+      const response = await fetch(`/api/data/import/status${suffix}`, { headers: dataActionHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false || !payload.job) return;
+      setImportJob(payload.job);
+      setSyncSteps(importJobToSteps(payload.job));
+      if (["succeeded", "failed"].includes(payload.job.status) && !reportedImportJobs.current.has(payload.job.id)) {
+        reportedImportJobs.current.add(payload.job.id);
+        addDataMessage(
+          setMessages,
+          payload.job.status === "succeeded"
+            ? dataSuccessMessage("import", { import: payload.job.result })
+            : {
+                action: "import",
+                status: "error",
+                title: "Synchronize failed",
+                detail: payload.job.error ?? payload.job.stderrTail ?? "Import stopped without an error message.",
+              },
+        );
+      }
+    } catch {
+      // Keep the last known job state; the next poll can recover.
     }
   }
 
@@ -493,14 +535,26 @@ function DataView() {
             <span>Capture date</span>
             <input value={importDate} onChange={(event) => setImportDate(event.target.value)} placeholder="YYYY-MM-DD" inputMode="numeric" />
           </label>
-          <button className="primary-button" type="button" disabled={busyAction !== null} onClick={importDay}>
-            {busyAction === "import" ? "Synchronizing..." : "Synchronize"}
+          <button className="primary-button" type="button" disabled={busyAction === "import-start" || importRunning} onClick={importDay}>
+            {busyAction === "import-start" ? "Starting..." : importRunning ? "Synchronizing..." : "Synchronize"}
           </button>
           <button className="secondary-button" type="button" onClick={() => window.location.reload()}>
             Reload dashboard
           </button>
         </div>
         <SyncSteps steps={syncSteps} />
+        {importJob ? (
+          <div className={`sync-job-card ${importJob.status}`}>
+            <div>
+              <strong>{importJob.status === "failed" ? "Import failed" : importJob.status === "succeeded" ? "Import complete" : "Import running"}</strong>
+              <span>{importJobDetail(importJob)}</span>
+            </div>
+            <meter min="0" max="100" value={importJob.progress ?? 0}>
+              {importJob.progress ?? 0}%
+            </meter>
+            <small>{importJob.status === "failed" ? importJob.error ?? importJob.stderrTail : "Status refreshes every 30 seconds."}</small>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel data-log-panel">
@@ -673,6 +727,23 @@ function buildSyncSteps(status = "idle") {
 
 function markSyncStep(steps, index, status) {
   return steps.map((step, stepIndex) => ({ ...step, status: stepIndex === index ? status : stepIndex < index ? "done" : "idle" }));
+}
+
+function importJobToSteps(job) {
+  if (!job) return buildSyncSteps();
+  if (job.status === "succeeded") return buildSyncSteps("done");
+  const index = Math.max(0, Math.min(3, job.stepIndex ?? 0));
+  return buildSyncSteps().map((step, stepIndex) => ({
+    ...step,
+    status: job.status === "failed" && stepIndex === index ? "error" : stepIndex < index ? "done" : stepIndex === index ? "running" : "idle",
+  }));
+}
+
+function importJobDetail(job) {
+  if (!job) return "";
+  const percent = typeof job.progress === "number" ? `${Math.round(job.progress)}%` : "progress unknown";
+  const date = job.date ? `${job.date} · ` : "";
+  return `${date}${percent} · ${job.detail ?? job.phase ?? job.status}`;
 }
 
 function dataKindLabel(kind) {

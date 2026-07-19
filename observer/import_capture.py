@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -85,19 +87,20 @@ def import_capture_day(
     if not raw_dir.exists():
         raise FileNotFoundError(raw_dir)
 
+    progress("find_raw", f"Reading raw screenshots for {capture_date}.", 4)
     member_paths = capture_paths(raw_dir, "guild-members")
     boss_paths = capture_paths(raw_dir, "guild-boss")
     if not member_paths and not boss_paths:
         raise ValueError(f"no guild capture screenshots found in {raw_dir}")
 
-    member_screenshots = [
-        ImportedScreenshot(path=str(path), kind="guild-members", row_count=len(detect_member_rows(path)))
-        for path in member_paths
-    ]
-    boss_screenshots = [
-        ImportedScreenshot(path=str(path), kind="guild-boss", row_count=len(detect_boss_ranking_rows(path)))
-        for path in boss_paths
-    ]
+    member_screenshots = []
+    for index, path in enumerate(member_paths, start=1):
+        progress("detect_members", f"Detecting guild rows in {path.name} ({index}/{len(member_paths)}).", 8 + _portion(index, len(member_paths), 18))
+        member_screenshots.append(ImportedScreenshot(path=str(path), kind="guild-members", row_count=len(detect_member_rows(path))))
+    boss_screenshots = []
+    for index, path in enumerate(boss_paths, start=1):
+        progress("detect_boss", f"Detecting boss rows in {path.name} ({index}/{len(boss_paths)}).", 26 + _portion(index, len(boss_paths), 12))
+        boss_screenshots.append(ImportedScreenshot(path=str(path), kind="guild-boss", row_count=len(detect_boss_ranking_rows(path))))
     detected_member_rows = sum(item.row_count or 0 for item in member_screenshots)
     detected_boss_rows = sum(item.row_count or 0 for item in boss_screenshots)
     captured_at_value = captured_at or default_captured_at(capture_date)
@@ -113,16 +116,20 @@ def import_capture_day(
     else:
         roster = []
     if member_paths and sample_data_path.exists():
+        progress("extract_current_members", f"Extracting current guild metrics from {len(member_paths)} screenshot(s).", 40)
         extracted_metrics = extract_member_metrics_from_screenshots(member_paths, roster)
         previous_date = previous_capture_date(raw_root, capture_date)
         if previous_date is not None:
             previous_member_paths = capture_paths(raw_root / previous_date, "guild-members")
             if previous_member_paths:
+                progress("extract_daily_members", f"Extracting previous guild metrics for {previous_date}.", 48)
                 previous_metrics = extract_member_metrics_from_screenshots(previous_member_paths, roster)
-        for day in capture_dates(raw_root, until=capture_date):
+        guild_days = capture_dates(raw_root, until=capture_date)
+        for index, day in enumerate(guild_days, start=1):
             day_member_paths = capture_paths(raw_root / day, "guild-members")
             if not day_member_paths:
                 continue
+            progress("extract_daily_members", f"Building guild history for {day} ({index}/{len(guild_days)}).", 50 + _portion(index, len(guild_days), 18))
             if day == capture_date:
                 daily_metrics[day] = extracted_metrics
             elif day == previous_date:
@@ -130,10 +137,12 @@ def import_capture_day(
             else:
                 daily_metrics[day] = extract_member_metrics_from_screenshots(day_member_paths, roster)
     if boss_paths and sample_data_path.exists():
-        for day in capture_dates(raw_root, until=capture_date):
+        boss_days = capture_dates(raw_root, until=capture_date)
+        for index, day in enumerate(boss_days, start=1):
             day_boss_paths = capture_paths(raw_root / day, "guild-boss")
             if not day_boss_paths:
                 continue
+            progress("extract_boss", f"Extracting boss rankings for {day} ({index}/{len(boss_days)}).", 68 + _portion(index, len(boss_days), 16))
             try:
                 daily_boss_rankings[day] = extract_boss_rankings_from_screenshots(day_boss_paths, roster)
             except (GuildBossDetectionError, OSError):
@@ -152,10 +161,12 @@ def import_capture_day(
         report_path=str(report_path),
         front_updated=update_front,
     )
+    progress("write_report", f"Writing import report {report_path}.", 84)
     write_report(report, report_path)
 
     from observer.storage.persistence import persist_import_if_configured
 
+    progress("persist_database", "Persisting import into PostgreSQL when configured.", 88)
     persist_import_if_configured(
         report,
         roster=roster,
@@ -164,14 +175,29 @@ def import_capture_day(
     )
 
     if update_front:
+        progress("update_front", "Updating dashboard sample data file.", 94)
         update_sample_data(sample_data_path, report, extracted_metrics, previous_metrics, previous_date, daily_metrics, daily_boss_rankings)
 
+    progress("done", "Import finished.", 100)
     return report
 
 
 def write_report(report: ImportReport, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(asdict(report), indent=2) + "\n", encoding="utf-8")
+
+
+def progress(phase: str, message: str, progress_value: int) -> None:
+    if os.environ.get("ARCHERO_PROGRESS") != "1":
+        return
+    payload = {"phase": phase, "message": message, "progress": progress_value}
+    print(f"__ARCHERO_PROGRESS__{json.dumps(payload, ensure_ascii=False)}", file=sys.stderr, flush=True)
+
+
+def _portion(index: int, total: int, size: int) -> int:
+    if total <= 0:
+        return 0
+    return round((index / total) * size)
 
 
 def update_sample_data(
