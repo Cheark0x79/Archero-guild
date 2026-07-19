@@ -20,7 +20,7 @@ def export_dashboard_payload(dsn: str) -> dict[str, Any]:
         raise RuntimeError("psycopg is required to export dashboard data from PostgreSQL") from exc
 
     with psycopg.connect(dsn, row_factory=dict_row) as connection:
-        return {
+        payload = {
             "captures": _captures(connection),
             "guildRoster": _guild_roster(connection),
             "memberSnapshots": _member_snapshots(connection),
@@ -31,6 +31,7 @@ def export_dashboard_payload(dsn: str) -> dict[str, Any]:
             "changes": [],
             "ocrQueue": [],
         }
+    return _jsonable(payload)
 
 
 def _captures(connection) -> dict[str, Any]:
@@ -160,9 +161,23 @@ def _rules(connection) -> dict[str, Any]:
 def _iso(value: Any) -> str | None:
     if value is None:
         return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8")
     if isinstance(value, (date, datetime)):
         return value.isoformat()
     return str(value)
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8")
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:

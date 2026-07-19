@@ -56,6 +56,33 @@ def persist_import_report(
 def _upsert_capture_batch(cursor, report: ImportReport) -> int:
     cursor.execute(
         """
+        SELECT batch_id
+        FROM import_reports
+        WHERE capture_date = %s AND report_path = %s AND batch_id IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (report.date, report.report_path),
+    )
+    existing = cursor.fetchone()
+    if existing:
+        batch_id = int(existing[0])
+        cursor.execute(
+            """
+            UPDATE capture_batches
+            SET captured_at = %s,
+                imported_at = %s,
+                source = 'manual',
+                status = 'imported',
+                notes = %s::jsonb
+            WHERE id = %s
+            """,
+            (report.captured_at, report.captured_at, _json({"raw_dir": report.raw_dir}), batch_id),
+        )
+        return batch_id
+
+    cursor.execute(
+        """
         INSERT INTO capture_batches (capture_date, captured_at, imported_at, source, status, notes)
         VALUES (%s, %s, %s, 'manual', 'imported', %s::jsonb)
         RETURNING id

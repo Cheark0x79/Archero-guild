@@ -2,6 +2,8 @@ import re
 import unittest
 from pathlib import Path
 
+from observer.storage.export_json import _jsonable
+
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "observer" / "storage" / "schema.sql"
 
@@ -59,6 +61,9 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertIn("boss_daily_results_rank_uidx", schema)
         self.assertIn("ON boss_daily_results (capture_date, boss_key, boss_rank)", schema)
         self.assertIn("WHERE boss_rank IS NOT NULL", schema)
+
+    def test_export_normalizes_database_bytes_to_text(self) -> None:
+        self.assertEqual(_jsonable({"name": b"Mund\xc3\xb5", "rows": [b"active"]}), {"name": "Mundõ", "rows": ["active"]})
 
 
 if __name__ == "__main__":

@@ -224,6 +224,48 @@ Quand `ARCHERO_DATABASE_URL` ou `DATABASE_URL` est defini, `archero-import` cont
 
 Le dashboard lit `/api/dashboard-data`. Cet endpoint exporte les donnees PostgreSQL si la DB est configuree et lisible, sinon il renvoie automatiquement les donnees locales de `web/sample-data.js`.
 
+### Configuration locale
+
+Deux exemples sont fournis:
+
+- `.env.example` pour les commandes Python lancees depuis la racine du projet;
+- `web/.env.local.example` pour les routes serveur Next.js du dashboard.
+
+Pour un test local avec PostgreSQL:
+
+```bash
+cp .env.example .env
+cp web/.env.local.example web/.env.local
+docker compose up -d postgres
+set -a; source .env; set +a
+```
+
+`ARCHERO_DATABASE_URL` est prioritaire. `DATABASE_URL` est accepte en fallback.
+
+### Migration JSON vers DB
+
+Les rapports existants dans `data/imports/*.json` peuvent etre rejoues vers PostgreSQL:
+
+```bash
+nix develop -c python -B -m observer.storage.migrate_json --apply-schema
+```
+
+Pour verifier sans ecrire en DB:
+
+```bash
+nix develop -c python -B -m observer.storage.migrate_json --dry-run
+```
+
+Pour migrer une seule date:
+
+```bash
+nix develop -c python -B -m observer.storage.migrate_json --date 2026-07-19
+```
+
+La commande relit les rapports JSON, retrouve les screenshots references, relance l'extraction OCR disponible, puis persiste les membres, screenshots, snapshots et scores boss dans PostgreSQL. Elle est relancable: un meme rapport reutilise son batch existant au lieu d'en creer un nouveau.
+
+Le `--dry-run` relance aussi l'OCR pour estimer ce qui serait migre. Sur plusieurs captures, il peut prendre du temps; la sortie JSON contient un champ `warnings` quand des screenshots ou dependances OCR manquent.
+
 ## Deploiement homelab
 
 Le plan cible pour une VM dediee Proxmox, l'exposition via Cloudflare, les backups, le monitoring, la securite et les mises a jour est documente dans [`docs/deployment-plan.md`](docs/deployment-plan.md).
