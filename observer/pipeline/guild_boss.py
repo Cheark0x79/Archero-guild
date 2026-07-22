@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Sequence
@@ -104,7 +104,7 @@ def _normalize_boss_damage_text(value: str) -> str:
 
 
 def _read_boss_damage_text(image: object, pytesseract: object) -> str | None:
-    texts = _ocr_variants(image, pytesseract, whitelist="0123456789.,BbMm")
+    texts = _ocr_variants(image, pytesseract, whitelist="0123456789.,BbMmTt")
     candidates: list[tuple[int, str]] = []
     for text in texts:
         normalized = _damage_text_from_ocr(text)
@@ -120,17 +120,23 @@ def _read_boss_damage_text(image: object, pytesseract: object) -> str | None:
     counts: dict[tuple[int, str], int] = {}
     for candidate in candidates:
         counts[candidate] = counts.get(candidate, 0) + 1
-    return sorted(counts.items(), key=lambda item: (item[1], item[0][0]), reverse=True)[0][0][1]
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0][0]))[0][0][1]
 
 
 def _damage_text_from_ocr(value: str) -> str | None:
     normalized = value.replace(",", ".")
-    matches = list(re.finditer(r"(\d+(?:\.\d+)?|\.\d+)\s*([BbMm])", normalized))
+    matches = list(re.finditer(r"(\d+(?:\.\d+)?|\.\d+)\s*([BbMmTt])", normalized))
     if not matches:
-        return None
+        unitless = list(re.finditer(r"(\d+\.\d{2})8(?!\d)", normalized))
+        if not unitless:
+            return None
+        return f"{unitless[-1].group(1)}B"
     match = matches[-1]
     unit = match.group(2).upper()[0]
     amount = match.group(1)
+    extra_unit_digit = re.fullmatch(r"(\d+\.\d{2})8", amount)
+    if extra_unit_digit is not None:
+        amount = extra_unit_digit.group(1)
     if amount.startswith("."):
         amount = f"0{amount}"
     return f"{amount}{unit}"
@@ -352,7 +358,7 @@ def extract_boss_rankings_from_screenshots(paths: list[Path], roster: Sequence[o
                 if ranking.boss_rank is not None:
                     previous_rank = ranking.boss_rank
                 rankings.append(ranking)
-    return rankings
+    return _repair_rank_damage_order(rankings)
 
 
 def _source_name(path: Path) -> str:
@@ -421,6 +427,53 @@ def _extract_list_ranking(
     )
 
 
+def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
+    repaired = list(rankings)
+    ranked_indexes = sorted(
+        [
+            index
+            for index, ranking in enumerate(repaired)
+            if ranking.boss_rank is not None and ranking.boss_damage_today is not None
+        ],
+        key=lambda index: repaired[index].boss_rank or 0,
+    )
+    previous_damage: int | None = None
+    for index in ranked_indexes:
+        ranking = repaired[index]
+        current_damage = ranking.boss_damage_today
+        if previous_damage is not None and current_damage is not None and current_damage > previous_damage:
+            replacement = _downgraded_damage_text(ranking.damage_text, previous_damage)
+            if replacement is not None:
+                repaired[index] = replace(
+                    ranking,
+                    damage_text=replacement,
+                    boss_damage_today=parse_boss_damage(replacement),
+                )
+                current_damage = repaired[index].boss_damage_today
+        if current_damage is not None:
+            previous_damage = current_damage
+    return repaired
+
+
+def _downgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?|\.\d+)([TtBbMm])", damage_text or "")
+    if match is None:
+        return None
+    amount = match.group(1)
+    unit = match.group(2).upper()
+    candidates = []
+    if unit == "T":
+        candidates = ["B", "M"]
+    elif unit == "B":
+        candidates = ["M"]
+    for candidate_unit in candidates:
+        candidate = f"{amount}{candidate_unit}"
+        parsed = parse_boss_damage(candidate)
+        if parsed is not None and parsed <= maximum:
+            return candidate
+    return None
+
+
 def _boss_name_candidates(image: object, row: BossRankingRow, pytesseract: object, *, languages: tuple[str, ...]) -> list[str]:
     crops = [
         row.fields.name,
@@ -471,7 +524,7 @@ def _extract_podium_rankings(image: object, source_name: str, roster: Sequence[o
         (
             3,
             [Rect(round(width * 0.731), round(height * 0.280), round(width * 0.205), round(height * 0.028))],
-            Rect(round(width * 0.73), round(height * 0.328), round(width * 0.21), round(height * 0.044)),
+            Rect(round(width * 0.71), round(height * 0.328), round(width * 0.20), round(height * 0.040)),
         ),
     ]
     rankings: list[ExtractedBossRanking] = []

@@ -1,7 +1,8 @@
 import unittest
+from unittest.mock import patch
 
 from observer.pipeline.guild_boss import ExtractedBossRanking
-from observer.storage.persistence import _dedupe_boss_rankings
+from observer.storage.persistence import _dedupe_boss_rankings, persist_import_if_configured
 
 
 class StoragePersistenceTests(unittest.TestCase):
@@ -24,6 +25,21 @@ class StoragePersistenceTests(unittest.TestCase):
 
         self.assertEqual(len(rankings), 2)
 
+    def test_persist_import_if_configured_skips_unavailable_database(self) -> None:
+        with (
+            patch("observer.storage.persistence.persist_import_report", side_effect=RuntimeError("connection refused")),
+            patch("observer.storage.persistence._is_database_unavailable", return_value=True),
+        ):
+            persisted = persist_import_if_configured(
+                _import_report(),
+                roster=[],
+                extracted_metrics=[],
+                daily_boss_rankings={},
+                dsn="postgresql://archero@127.0.0.1:55440/archero_observer",
+            )
+
+        self.assertFalse(persisted)
+
 
 def _boss_ranking(*, rank: int | None, name: str | None, player_id: str | None, damage: int | None, raw_name: str | None) -> ExtractedBossRanking:
     return ExtractedBossRanking(
@@ -36,6 +52,23 @@ def _boss_ranking(*, rank: int | None, name: str | None, player_id: str | None, 
         raw_name=raw_name,
         damage_text=None,
         boss_damage_today=damage,
+    )
+
+
+def _import_report():
+    from observer.import_capture import ImportReport
+
+    return ImportReport(
+        date="2026-07-21",
+        captured_at="2026-07-21T00:00:00+02:00",
+        raw_dir="screenshots/raw/2026-07-21",
+        member_screenshots=[],
+        boss_screenshots=[],
+        detected_member_rows=0,
+        detected_boss_rows=0,
+        extracted_member_metrics=0,
+        report_path="data/imports/2026-07-21.json",
+        front_updated=True,
     )
 
 

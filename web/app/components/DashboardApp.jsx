@@ -25,7 +25,6 @@ import {
   mergeRosterMetrics,
   newMemberDay,
   sortMembers,
-  topBy,
 } from "../../metrics.js";
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
@@ -245,7 +244,7 @@ function DataView() {
 
   useEffect(() => {
     if (!importRunning) return undefined;
-    const timer = window.setInterval(() => refreshImportJobStatus(importJob.id), 30_000);
+    const timer = window.setInterval(() => refreshImportJobStatus(importJob.id), 5_000);
     return () => window.clearInterval(timer);
   }, [importRunning, importJob?.id]);
 
@@ -402,7 +401,7 @@ function DataView() {
                 action: "import",
                 status: "error",
                 title: "Synchronize failed",
-                detail: payload.job.error ?? payload.job.stderrTail ?? "Import stopped without an error message.",
+                detail: payload.job.error ?? "Import stopped without an error message.",
               },
         );
       }
@@ -451,9 +450,9 @@ function DataView() {
       setUploadResult(payload.upload);
       addDataMessage(setMessages, {
         action: "upload",
-        status: "success",
-        title: `${label} uploaded`,
-        detail: `${payload.upload.path} · index ${payload.upload.index}`,
+        status: payload.duplicate ? "warning" : "success",
+        title: payload.duplicate ? `${label} already exists` : `${label} uploaded`,
+        detail: payload.duplicate ? `${payload.upload.path} already matches this PNG.` : `${payload.upload.path} · index ${payload.upload.index}`,
       });
     } catch (error) {
       addDataMessage(setMessages, {
@@ -529,7 +528,7 @@ function DataView() {
       </section>
 
       <section className="panel data-import-panel">
-        <PanelHeading title="Synchronize front" subtitle="Read raw screenshots, run OCR/import, and refresh the dashboard data file." />
+        <PanelHeading title="Synchronize data" subtitle="Runs OCR/import on the server. The job continues if this page is reloaded." />
         <div className="data-import-row">
           <label className="data-date-field">
             <span>Capture date</span>
@@ -538,8 +537,8 @@ function DataView() {
           <button className="primary-button" type="button" disabled={busyAction === "import-start" || importRunning} onClick={importDay}>
             {busyAction === "import-start" ? "Starting..." : importRunning ? "Synchronizing..." : "Synchronize"}
           </button>
-          <button className="secondary-button" type="button" onClick={() => window.location.reload()}>
-            Reload dashboard
+          <button className="secondary-button" type="button" disabled={busyAction === "import-start"} onClick={() => refreshImportJobStatus(importJob?.id)}>
+            Refresh status
           </button>
         </div>
         <SyncSteps steps={syncSteps} />
@@ -552,13 +551,15 @@ function DataView() {
             <meter min="0" max="100" value={importJob.progress ?? 0}>
               {importJob.progress ?? 0}%
             </meter>
-            <small>{importJob.status === "failed" ? importJob.error ?? importJob.stderrTail : "Status refreshes every 30 seconds."}</small>
+            <small>{importJob.status === "failed" ? importJob.error : `Updated ${formatDateTime(importJob.updatedAt)}. Status refreshes every 5 seconds while running.`}</small>
           </div>
-        ) : null}
+        ) : (
+          <p className="muted">No import job is currently known by the server.</p>
+        )}
       </section>
 
       <section className="panel data-log-panel">
-        <PanelHeading title="Action log" subtitle="Latest manual capture and import results from this browser session." />
+        <PanelHeading title="Action log" subtitle="Latest manual capture and import messages for this browser session." />
         <div className="data-log">
           {messages.length === 0 ? (
             <p className="muted">No manual action has run yet.</p>
@@ -764,9 +765,10 @@ function Dashboard({ rules }) {
   const powerStats = buildDailyPowerStats();
   const medianPowerSeries = powerStats.map((day) => day.median);
   const powerDates = powerStats.map((day) => formatShortDate(day.date));
-  const donationStats = filterDatedChartRows(buildDailyDonationStats(), donationRange);
+  const weeklyDonationStats = buildWeeklyDonationStats();
+  const donationStats = filterDatedChartRows(weeklyDonationStats, donationRange);
   const donationSeries = donationStats.map((day) => day.total);
-  const donationDates = donationStats.map((day) => formatShortDate(day.date));
+  const donationDates = donationStats.map((day) => formatWeekLabel(day.date));
   const checkDays = buildCheckDays();
   const latestCheckDay = checkDays.at(-1);
   const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
@@ -862,12 +864,12 @@ function Dashboard({ rules }) {
       </div>
       <div className="dashboard-grid">
         <ChartPanel
-          title="Donation"
-          subtitle="Daily guild total from captured days"
+          title="Weekly donation peak"
+          subtitle="Best captured donation total per week"
           action={<DashboardRangeSelector value={donationRange} onChange={setDonationRange} />}
           values={donationSeries}
           xLabels={donationDates}
-          label="Donation"
+          label="Weekly donation"
           value={formatOptionalNumber(donationSeries.at(-1))}
           showPoints
           pointValueMode="auto"
@@ -2019,6 +2021,7 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
           <PanelHeading title="Boss damage graph" subtitle="Guild boss damage from first captured snapshot to latest" action={<RangeSelector chart="mi" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.mi)} dataKey="bossDamage" formatter={formatBossDamageText} emptyText="No boss damage captured for this member yet." />
         </section>
+        <MemberBossPersonalBests member={member} />
         <section className="panel wide">
           <PanelHeading title="Daily history" subtitle="Captured days in the current week." />
           <HistoryTable rows={weeklyHistory} />
@@ -2052,9 +2055,42 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
   );
 }
 
+function MemberBossPersonalBests({ member }) {
+  const rows = memberBossPersonalBests(member);
+  const recordedCount = rows.filter((row) => row.record).length;
+  return (
+    <section className="panel wide">
+      <PanelHeading title="PB by boss" subtitle={`${recordedCount}/${BOSS_ROTATION.length} bosses with a recorded personal best.`} />
+      <div className="member-boss-pb-grid">
+        {rows.map(({ boss, record }) => (
+          <article className={record ? "member-boss-pb-card" : "member-boss-pb-card empty"} key={boss.key}>
+            <header>
+              <BossIcon boss={boss} />
+              <div>
+                <h3>{boss.name}</h3>
+                <span className="muted">{boss.dayLabel}</span>
+              </div>
+            </header>
+            {record ? (
+              <div className="member-boss-pb-score">
+                <strong>{formatBossDamageText(record.damage, record.damageText)}</strong>
+                <span>{record.date}</span>
+                <small>{record.rank ? `Game rank ${record.rank}` : "No game rank"}</small>
+              </div>
+            ) : (
+              <p className="muted">No record yet.</p>
+            )}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function Rankings() {
+  const latestWeeklyDonation = latestWeeklyDonationLeaders();
   const groups = [
-    { title: "Top donation", subtitle: "Latest snapshot ranking", rows: topBy(currentMembersList(), "contribution7d"), valueKey: "contribution7d", formatter: formatCompact },
+    { title: "Top donation", subtitle: latestWeeklyDonation.label, rows: latestWeeklyDonation.rows, valueKey: "peak", formatter: formatCompact },
     { title: "Top boss damage", subtitle: "Best single-day boss damage", rows: topBossDamageRecords(), valueKey: "bossDamageToday", formatter: formatBossDamageText },
     { title: "Top progression", subtitle: "Latest captured day vs previous capture", rows: topDailyPowerProgression(), valueKey: "powerDelta", formatter: signedCompact },
   ];
@@ -2084,22 +2120,22 @@ function Rankings() {
 
 function HistoryView({ annotations }) {
   const currentMembers = currentMembersList();
-  const capturedMembers = currentMembers.filter((member) => member.metricsVerified);
-  const maxContribution = Math.max(...capturedMembers.map((member) => member.contribution7d ?? 0), 1);
-  const rows = [...capturedMembers].sort((a, b) => (b.contribution7d ?? 0) - (a.contribution7d ?? 0));
+  const latestWeeklyDonation = latestWeeklyDonationLeaders(12);
+  const maxContribution = Math.max(...latestWeeklyDonation.rows.map((member) => member.peak ?? 0), 1);
+  const rows = latestWeeklyDonation.rows;
   const warnings = currentMembers.flatMap((member) => (annotations[memberKey(member)]?.warnings ?? []).map((warning) => ({ member, warning })));
   return (
     <div className="dashboard-grid">
       <section className="panel chart-panel wide">
-        <PanelHeading title="Donation by member" subtitle="Quick read of weekly targets" />
+        <PanelHeading title="Weekly donation peak" subtitle={latestWeeklyDonation.label} />
         <div className="bar-list">
           {rows.map((member) => (
             <div className="bar-row" key={memberKey(member)}>
               <strong>{member.name}</strong>
               <div className="bar-track" aria-hidden="true">
-                <div className="bar-fill" style={{ width: `${Math.max(2, ((member.contribution7d ?? 0) / maxContribution) * 100)}%` }} />
+                <div className="bar-fill" style={{ width: `${Math.max(2, ((member.peak ?? 0) / maxContribution) * 100)}%` }} />
               </div>
-              <span className="numeric">{formatNumber(member.contribution7d ?? 0)}</span>
+              <span className="numeric">{formatNumber(member.peak ?? 0)}</span>
             </div>
           ))}
         </div>
@@ -2269,7 +2305,7 @@ function ChartPanel({ title, subtitle, badge, action, values, label, value, posi
                 <g key={`${xLabels[index] ?? index}-${values[index]}`}>
                   <circle className="chart-point" cx={point.x} cy={point.y} r={pointRadius} />
                   {shouldShowPointValue(index, points.length, pointValueMode) && (
-                    <text className="chart-value-label" x={point.x} y={Math.max(18, point.y - 12)} textAnchor={chartPointTextAnchor(index, points.length)}>
+                    <text className="chart-value-label" x={point.x} y={chartPointValueY(point.y)} textAnchor={chartPointTextAnchor(index, points.length)}>
                       {formatCompact(values[index])}
                     </text>
                   )}
@@ -2299,6 +2335,10 @@ function chartPointTextAnchor(index, pointCount) {
   if (index === 0) return "start";
   if (index === pointCount - 1) return "end";
   return "middle";
+}
+
+function chartPointValueY(pointY) {
+  return pointY < 60 ? pointY + 24 : pointY - 12;
 }
 
 function shouldShowPointValue(index, pointCount, mode) {
@@ -2801,6 +2841,64 @@ function buildDailyDonationStats() {
     .filter(Boolean);
 }
 
+function buildWeeklyDonationStats() {
+  const weeks = weeklyDonationBuckets();
+  return [...weeks.values()]
+    .map((week) => {
+      const peaks = [...week.members.values()];
+      const leader = [...peaks].sort((left, right) => right.peak - left.peak || left.name.localeCompare(right.name))[0] ?? null;
+      return {
+        date: week.weekStart,
+        weekStart: week.weekStart,
+        weekEnd: week.weekEnd,
+        total: peaks.reduce((sum, member) => sum + member.peak, 0),
+        count: peaks.length,
+        leader,
+      };
+    })
+    .sort((left, right) => left.weekStart.localeCompare(right.weekStart));
+}
+
+function latestWeeklyDonationLeaders(limit = 5) {
+  const weeks = buildWeeklyDonationStats();
+  const latest = weeks.at(-1);
+  if (!latest) return { label: "No weekly donation capture", rows: [] };
+  const bucket = weeklyDonationBuckets().get(latest.weekStart);
+  const rows = [...(bucket?.members.values() ?? [])]
+    .sort((left, right) => right.peak - left.peak || left.name.localeCompare(right.name))
+    .slice(0, limit);
+  return {
+    label: `Week of ${formatShortDate(latest.weekStart)} - ${formatShortDate(latest.weekEnd)}`,
+    rows,
+  };
+}
+
+function weeklyDonationBuckets() {
+  const weeks = new Map();
+  const rosterNames = new Map(guildRoster.filter((entry) => isCurrentPlayerId(entry.playerId)).map((entry) => [entry.playerId, entry.name]));
+  for (const day of Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots : []) {
+    const weekStart = weekStartIso(day.date);
+    if (!weekStart) continue;
+    const weekEnd = addDaysIso(weekStart, 6);
+    const week = weeks.get(weekStart) ?? { weekStart, weekEnd, members: new Map() };
+    for (const row of day.rows ?? []) {
+      if (!isCurrentPlayerId(row.playerId) || typeof row.contribution7d !== "number") continue;
+      const previous = week.members.get(row.playerId);
+      if (!previous || row.contribution7d > previous.peak || (row.contribution7d === previous.peak && day.date.localeCompare(previous.date) > 0)) {
+        week.members.set(row.playerId, {
+          playerId: row.playerId,
+          name: rosterNames.get(row.playerId) ?? row.playerId,
+          peak: row.contribution7d,
+          date: day.date,
+          metricsVerified: true,
+        });
+      }
+    }
+    weeks.set(weekStart, week);
+  }
+  return weeks;
+}
+
 function filterDatedChartRows(rows, range) {
   if (range === "all" || rows.length === 0) return rows;
   const latest = Math.max(...rows.map((row) => Date.parse(`${row.date}T00:00:00`)));
@@ -3027,6 +3125,31 @@ function topBossDamageRecords(limit = 5) {
     .slice(0, limit);
 }
 
+function memberBossPersonalBests(member) {
+  if (!member?.playerId) return BOSS_ROTATION.map((boss) => ({ boss, record: null }));
+
+  const bestByBoss = new Map();
+  for (const day of Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : []) {
+    const boss = bossForDate(day.date);
+    for (const row of day.rows ?? []) {
+      if (row.playerId !== member.playerId || typeof row.bossDamageToday !== "number") continue;
+      const previous = bestByBoss.get(boss.key);
+      if (!previous || row.bossDamageToday > previous.damage || (row.bossDamageToday === previous.damage && day.date.localeCompare(previous.date) > 0)) {
+        bestByBoss.set(boss.key, {
+          bossKey: boss.key,
+          bossName: boss.name,
+          date: day.date,
+          damage: row.bossDamageToday,
+          damageText: row.damageText ?? null,
+          rank: row.bossRank ?? null,
+        });
+      }
+    }
+  }
+
+  return BOSS_ROTATION.map((boss) => ({ boss, record: bestByBoss.get(boss.key) ?? null }));
+}
+
 function topDailyPowerProgression(limit = 5) {
   const latestDate = memberHistoryDates(members).at(-1);
   if (!latestDate) return [];
@@ -3208,7 +3331,7 @@ function dailySnapshotHistory(member) {
       power: snapshot.power,
       powerDelta: metricDelta(snapshot.power, previous?.power),
       donation: snapshot.contribution7d,
-      donationDelta: metricDelta(snapshot.contribution7d, previous?.donation),
+      donationDelta: donationDelta(snapshot.contribution7d, previous?.donation, day.date, previous?.date),
       bossAttacks: snapshot.bossAttacks,
       bossAttacksDelta: metricDelta(snapshot.bossAttacks, previous?.bossAttacks),
       bossDamage,
@@ -3236,6 +3359,12 @@ function metricDelta(current, previous) {
   return typeof current === "number" && typeof previous === "number" ? current - previous : null;
 }
 
+function donationDelta(current, previous, currentDate, previousDate) {
+  if (typeof current !== "number" || typeof previous !== "number") return null;
+  if (previousDate && weekStartIso(currentDate) !== weekStartIso(previousDate) && current < previous) return null;
+  return current - previous;
+}
+
 function filterHistoryByRange(rows, range) {
   if (range === "all" || rows.length === 0) return rows;
   const days = range === "1m" ? 30 : 7;
@@ -3249,6 +3378,26 @@ function startOfWeek(date) {
   const day = start.getDay() || 7;
   start.setDate(start.getDate() - day + 1);
   return start;
+}
+
+function weekStartIso(value) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return "";
+  const current = new Date(Date.UTC(year, month - 1, day, 12));
+  const weekday = current.getUTCDay() || 7;
+  current.setUTCDate(current.getUTCDate() - weekday + 1);
+  return current.toISOString().slice(0, 10);
+}
+
+function addDaysIso(value, days) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return value;
+  const current = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return current.toISOString().slice(0, 10);
+}
+
+function formatWeekLabel(value) {
+  return `W ${formatShortDate(value)}`;
 }
 
 function formatShortDate(date) {

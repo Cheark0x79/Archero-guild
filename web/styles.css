@@ -1541,6 +1541,61 @@ th.numeric {
   font-weight: 800;
 }
 
+.member-boss-pb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.member-boss-pb-card {
+  display: grid;
+  align-content: space-between;
+  gap: 14px;
+  min-height: 172px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 12px;
+}
+
+.member-boss-pb-card.empty {
+  background: var(--surface);
+}
+
+.member-boss-pb-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.member-boss-pb-card header .boss-icon {
+  width: 54px;
+  height: 54px;
+}
+
+.member-boss-pb-card h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+
+.member-boss-pb-score {
+  display: grid;
+  gap: 3px;
+}
+
+.member-boss-pb-score strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.member-boss-pb-score span,
+.member-boss-pb-score small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .ranking-list {
   display: grid;
   gap: 8px;
@@ -1952,6 +2007,7 @@ th.numeric {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -1966,6 +2022,7 @@ th.numeric {
 
 .sync-job-card span {
   text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .sync-job-card meter {
@@ -1975,11 +2032,23 @@ th.numeric {
 
 .sync-job-card.failed {
   border-color: oklch(78% 0.09 25);
+  background: oklch(97% 0.018 25);
 }
 
 .sync-job-card.failed small {
   color: oklch(38% 0.14 25);
   white-space: pre-wrap;
+}
+
+.sync-job-card.running,
+.sync-job-card.queued {
+  border-color: oklch(72% 0.11 225);
+  background: oklch(97% 0.018 225);
+}
+
+.sync-job-card.succeeded {
+  border-color: oklch(76% 0.08 155);
+  background: oklch(97% 0.018 155);
 }
 
 .data-log {
@@ -2783,6 +2852,10 @@ th.numeric {
 
   .boss-by-boss-grid,
   .boss-ranking-panel-wide .boss-ranking-list {
+    grid-template-columns: 1fr;
+  }
+
+  .member-boss-pb-grid {
     grid-template-columns: 1fr;
   }
 

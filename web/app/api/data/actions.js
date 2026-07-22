@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -9,6 +11,7 @@ const CAPTURE_LAYOUT = {
   "guild-boss": ["boss", "boss"],
 };
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 export function hasDashboardActionHeader(request) {
   return request.headers.get(DASHBOARD_ACTION_HEADER) === "1";
@@ -21,9 +24,10 @@ export function projectRoot() {
 export async function runObserverModule(moduleName, args = []) {
   const cwd = projectRoot();
   const env = observerEnv();
+  const command = observerPythonCommand(["-B", "-m", moduleName, ...args]);
 
   return new Promise((resolve) => {
-    const child = spawn("python", ["-B", "-m", moduleName, ...args], {
+    const child = spawn(command.file, command.args, {
       cwd,
       env,
       shell: false,
@@ -55,6 +59,23 @@ export async function runObserverModule(moduleName, args = []) {
       });
     });
   });
+}
+
+export function observerPythonCommand(args = []) {
+  const configured = process.env.ARCHERO_PYTHON;
+  if (configured && configured.trim()) {
+    return { file: configured.trim(), args };
+  }
+
+  if (process.env.IN_NIX_SHELL || !hasProjectFlake()) {
+    return { file: "python", args };
+  }
+
+  return { file: "nix", args: ["develop", projectRoot(), "--command", "python", ...args] };
+}
+
+function hasProjectFlake() {
+  return existsSync(path.join(projectRoot(), "flake.nix"));
 }
 
 export function observerEnv(extra = {}) {
@@ -130,12 +151,51 @@ export async function nextUploadPath(kind, date = captureDateToday()) {
   };
 }
 
-export async function writeUploadedPng(file, destination) {
+export async function readUploadedPng(file) {
+  if (typeof file.size === "number" && file.size > MAX_UPLOAD_BYTES) {
+    throw new Error("PNG screenshot is too large");
+  }
   const buffer = Buffer.from(await file.arrayBuffer());
   if (buffer.length < PNG_SIGNATURE.length || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     throw new Error("only PNG screenshots are supported");
   }
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    throw new Error("PNG screenshot is too large");
+  }
+  return {
+    buffer,
+    sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+    size: buffer.length,
+  };
+}
+
+export async function writePngBuffer(buffer, destination) {
   await fs.writeFile(destination, buffer);
+}
+
+export async function findExistingScreenshotByHash(kind, date, sha256) {
+  if (!CAPTURE_KINDS.has(kind)) throw new Error(`unknown capture kind: ${kind}`);
+  if (!validateCaptureDate(date)) throw new Error("date must use YYYY-MM-DD format");
+  if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error("sha256 must be a lowercase hex digest");
+
+  const [subdir, prefix] = CAPTURE_LAYOUT[kind];
+  const dayDir = path.join(projectRoot(), "screenshots", "raw", date, subdir);
+  const entries = await fs.readdir(dayDir).catch(() => []);
+  for (const name of entries.sort()) {
+    if (!new RegExp(`^${prefix}-(\\d{3})\\.png$`).test(name)) continue;
+    const absolutePath = path.join(dayDir, name);
+    const existing = await fs.readFile(absolutePath).catch(() => null);
+    if (!existing) continue;
+    const existingSha256 = crypto.createHash("sha256").update(existing).digest("hex");
+    if (existingSha256 !== sha256) continue;
+    return {
+      absolutePath,
+      index: Number(name.match(/-(\d{3})\.png$/)?.[1] ?? 0),
+      date,
+      sha256,
+    };
+  }
+  return null;
 }
 
 export function relativeProjectPath(absolutePath) {

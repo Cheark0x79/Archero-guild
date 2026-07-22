@@ -19,10 +19,13 @@ export async function loadDashboardData() {
 
   const result = await runObserverModule("observer.storage.export_json");
   if (!result.ok || !result.data || typeof result.data !== "object") {
+    if (result.error) {
+      console.warn("Dashboard database export unavailable; using local dashboard data.");
+    }
     return {
       ok: true,
       source: "local",
-      warning: result.error ?? "Database export unavailable",
+      warning: "Database export unavailable; using local dashboard data.",
       data: fallback,
     };
   }

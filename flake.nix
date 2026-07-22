@@ -24,6 +24,7 @@
           pythonEnv = python.withPackages (
             ps: with ps; [
               pillow
+              psycopg
               pytesseract
             ]
           );
@@ -140,6 +141,7 @@
           pythonEnv = python.withPackages (
             ps: with ps; [
               pillow
+              psycopg
               pytesseract
             ]
           );

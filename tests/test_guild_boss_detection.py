@@ -2,10 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from observer.pipeline.guild_boss import ExtractedBossRanking
 from observer.pipeline.guild_boss import detect_boss_ranking_rows
 from observer.pipeline.guild_boss import _damage_text_from_ocr
 from observer.pipeline.guild_boss import _display_name_for_match
 from observer.pipeline.guild_boss import _match_roster_name
+from observer.pipeline.guild_boss import _repair_rank_damage_order
 from observer.pipeline.guild_boss import _useful_raw_name
 from observer.pipeline.guild_boss import export_boss_ranking_crops
 from observer.pipeline.guild_boss import format_boss_damage
@@ -40,6 +42,31 @@ class GuildBossDamageTests(unittest.TestCase):
     def test_normalizes_noisy_boss_damage_ocr(self) -> None:
         self.assertEqual(_damage_text_from_ocr("5 623.60B"), "623.60B")
         self.assertEqual(_damage_text_from_ocr("13.14B7"), "13.14B")
+        self.assertEqual(_damage_text_from_ocr("2.50T"), "2.50T")
+        self.assertEqual(_damage_text_from_ocr("13.878"), "13.87B")
+        self.assertEqual(_damage_text_from_ocr("13.878B"), "13.87B")
+
+    def test_repairs_rank_damage_unit_when_lower_rank_exceeds_previous(self) -> None:
+        rankings = [
+            ExtractedBossRanking("boss row 0", 0, "list", 27, "119991048", "Surrealism", "Surrealism", "468.31M", 468_310_000),
+            ExtractedBossRanking("boss row 1", 1, "list", 28, "119961249", "Tristonn", "Tristonn", "421.21T", 421_210_000_000_000),
+        ]
+
+        repaired = _repair_rank_damage_order(rankings)
+
+        self.assertEqual(repaired[1].damage_text, "421.21M")
+        self.assertEqual(repaired[1].boss_damage_today, 421_210_000)
+
+    def test_keeps_valid_trillion_top_rank(self) -> None:
+        rankings = [
+            ExtractedBossRanking("boss podium 1", 0, "podium", 1, "119934456", "Sendrock", "Sendrock", "2.50T", 2_500_000_000_000),
+            ExtractedBossRanking("boss podium 2", 1, "podium", 2, "119964574", "godforlin", "godforlin", "623.49B", 623_490_000_000),
+        ]
+
+        repaired = _repair_rank_damage_order(rankings)
+
+        self.assertEqual(repaired[0].damage_text, "2.50T")
+        self.assertEqual(repaired[0].boss_damage_today, 2_500_000_000_000)
 
     def test_does_not_match_tiny_podium_name_noise(self) -> None:
         class Entry:

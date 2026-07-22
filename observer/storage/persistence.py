@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
@@ -25,7 +26,13 @@ def persist_import_if_configured(
     database_url = dsn or database_url_from_env()
     if not database_url:
         return False
-    persist_import_report(database_url, report, roster=roster, extracted_metrics=extracted_metrics, daily_boss_rankings=daily_boss_rankings)
+    try:
+        persist_import_report(database_url, report=report, roster=roster, extracted_metrics=extracted_metrics, daily_boss_rankings=daily_boss_rankings)
+    except Exception as exc:
+        if not _is_database_unavailable(exc):
+            raise
+        print(f"warning: database persistence skipped: {_database_error_message(exc)}", file=sys.stderr)
+        return False
     return True
 
 
@@ -316,3 +323,17 @@ def _json(value: object) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False)
+
+
+def _is_database_unavailable(exc: Exception) -> bool:
+    try:
+        import psycopg
+    except ImportError:
+        return False
+
+    return isinstance(exc, psycopg.OperationalError)
+
+
+def _database_error_message(exc: Exception) -> str:
+    message = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+    return message[:240]

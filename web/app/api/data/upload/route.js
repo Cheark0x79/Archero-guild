@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import {
   CAPTURE_KINDS,
+  MAX_UPLOAD_BYTES,
   captureDateToday,
+  findExistingScreenshotByHash,
   hasDashboardActionHeader,
   nextUploadPath,
+  readUploadedPng,
   relativeProjectPath,
   screenshotUrl,
   validateCaptureDate,
-  writeUploadedPng,
+  writePngBuffer,
 } from "../actions.js";
 
 export async function POST(request) {
@@ -29,18 +32,41 @@ export async function POST(request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ ok: false, error: "PNG screenshot file is required" }, { status: 400 });
   }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json({ ok: false, error: "PNG screenshot is too large" }, { status: 400 });
+  }
 
   try {
+    const upload = await readUploadedPng(file);
+    const duplicate = await findExistingScreenshotByHash(kind, date, upload.sha256);
+    if (duplicate) {
+      const relativePath = relativeProjectPath(duplicate.absolutePath);
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        upload: {
+          path: relativePath,
+          kind,
+          date: duplicate.date,
+          index: duplicate.index,
+          sha256: duplicate.sha256,
+          imageUrl: screenshotUrl(relativePath),
+        },
+      });
+    }
+
     const destination = await nextUploadPath(kind, date);
-    await writeUploadedPng(file, destination.absolutePath);
+    await writePngBuffer(upload.buffer, destination.absolutePath);
     const relativePath = relativeProjectPath(destination.absolutePath);
     return NextResponse.json({
       ok: true,
+      duplicate: false,
       upload: {
         path: relativePath,
         kind,
         date: destination.date,
         index: destination.index,
+        sha256: upload.sha256,
         imageUrl: screenshotUrl(relativePath),
       },
     });

@@ -124,30 +124,13 @@ def import_capture_day(
             if previous_member_paths:
                 progress("extract_daily_members", f"Extracting previous guild metrics for {previous_date}.", 48)
                 previous_metrics = extract_member_metrics_from_screenshots(previous_member_paths, roster)
-        guild_days = capture_dates(raw_root, until=capture_date)
-        for index, day in enumerate(guild_days, start=1):
-            day_member_paths = capture_paths(raw_root / day, "guild-members")
-            if not day_member_paths:
-                continue
-            progress("extract_daily_members", f"Building guild history for {day} ({index}/{len(guild_days)}).", 50 + _portion(index, len(guild_days), 18))
-            if day == capture_date:
-                daily_metrics[day] = extracted_metrics
-            elif day == previous_date:
-                daily_metrics[day] = previous_metrics
-            else:
-                daily_metrics[day] = extract_member_metrics_from_screenshots(day_member_paths, roster)
+        daily_metrics[capture_date] = extracted_metrics
     if boss_paths and sample_data_path.exists():
-        boss_days = capture_dates(raw_root, until=capture_date)
-        for index, day in enumerate(boss_days, start=1):
-            day_boss_paths = capture_paths(raw_root / day, "guild-boss")
-            if not day_boss_paths:
-                continue
-            progress("extract_boss", f"Extracting boss rankings for {day} ({index}/{len(boss_days)}).", 68 + _portion(index, len(boss_days), 16))
-            try:
-                daily_boss_rankings[day] = extract_boss_rankings_from_screenshots(day_boss_paths, roster)
-            except (GuildBossDetectionError, OSError):
-                daily_boss_rankings = {}
-                break
+        progress("extract_boss", f"Extracting boss rankings for {capture_date}.", 76)
+        try:
+            daily_boss_rankings[capture_date] = extract_boss_rankings_from_screenshots(boss_paths, roster)
+        except (GuildBossDetectionError, OSError):
+            daily_boss_rankings = {}
 
     report = ImportReport(
         date=capture_date,
@@ -184,7 +167,7 @@ def import_capture_day(
 
 def write_report(report: ImportReport, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(asdict(report), indent=2) + "\n", encoding="utf-8")
+    _write_text_atomic(output_path, json.dumps(asdict(report), indent=2) + "\n")
 
 
 def progress(phase: str, message: str, progress_value: int) -> None:
@@ -244,7 +227,18 @@ def update_sample_data(
     if change_count != 1:
         raise ValueError(f"could not update capture change entry in {path}")
 
-    path.write_text(content, encoding="utf-8")
+    _write_text_atomic(path, content)
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 def latest_capture_date(raw_root: Path) -> str:

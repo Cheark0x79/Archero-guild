@@ -1,13 +1,18 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
-import { observerEnv, parseJsonOutput, projectRoot } from "../actions.js";
+import fs from "node:fs";
+import path from "node:path";
+import { observerEnv, observerPythonCommand, parseJsonOutput, projectRoot } from "../actions.js";
 
 const PROGRESS_PREFIX = "__ARCHERO_PROGRESS__";
 const MAX_LOG_CHARS = 12000;
+const MAX_RETAINED_JOBS = 10;
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const TERMINAL_STATUSES = new Set(["succeeded", "failed"]);
 
 function state() {
   if (!globalThis.__archeroImportJobs) {
-    globalThis.__archeroImportJobs = {
+    globalThis.__archeroImportJobs = restoreJobsSnapshot(readJobsSnapshot()) ?? {
       jobs: new Map(),
       currentJobId: null,
       latestJobId: null,
@@ -18,7 +23,7 @@ function state() {
 
 export function startImportJob(date) {
   const current = currentImportJob();
-  if (current && ["queued", "running"].includes(current.status)) {
+  if (current && ACTIVE_STATUSES.has(current.status)) {
     return { job: publicJob(current), alreadyRunning: true };
   }
 
@@ -44,6 +49,8 @@ export function startImportJob(date) {
   store.jobs.set(job.id, job);
   store.currentJobId = job.id;
   store.latestJobId = job.id;
+  pruneJobs(store);
+  persistJobsSnapshot(store);
 
   queueMicrotask(() => runImportJob(job));
   return { job: publicJob(job), alreadyRunning: false };
@@ -74,9 +81,9 @@ export function publicJob(job) {
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt,
     result: job.result,
-    error: job.error,
+    error: publicError(job),
     exitCode: job.exitCode,
-    stderrTail: tail(job.stderr),
+    retryable: job.status === "failed",
   };
 }
 
@@ -89,7 +96,8 @@ function runImportJob(job) {
     detail: "Starting observer import command.",
   });
 
-  const child = spawn("python", ["-B", "-m", "observer.import_capture", ...(job.date ? [job.date] : [])], {
+  const command = observerPythonCommand(["-B", "-m", "observer.import_capture", ...(job.date ? [job.date] : [])]);
+  const child = spawn(command.file, command.args, {
     cwd: projectRoot(),
     env: observerEnv({ ARCHERO_PROGRESS: "1" }),
     shell: false,
@@ -131,6 +139,8 @@ function runImportJob(job) {
         finishedAt: new Date().toISOString(),
       });
       if (state().currentJobId === job.id) state().currentJobId = null;
+      pruneJobs(state());
+      persistJobsSnapshot(state());
       return;
     }
     failJob(job, errorFromLogs(job, code), code);
@@ -156,6 +166,7 @@ function stepIndexForPhase(phase) {
 }
 
 function failJob(job, error, code) {
+  console.error("Archero import job failed.", { id: job.id, date: job.date, exitCode: code });
   updateJob(job, {
     status: "failed",
     phase: "failed",
@@ -166,6 +177,8 @@ function failJob(job, error, code) {
     finishedAt: new Date().toISOString(),
   });
   if (state().currentJobId === job.id) state().currentJobId = null;
+  pruneJobs(state());
+  persistJobsSnapshot(state());
 }
 
 function errorFromLogs(job, code) {
@@ -185,12 +198,118 @@ function updateJob(job, patch) {
 
 function touch(job) {
   job.updatedAt = new Date().toISOString();
-}
-
-function tail(value) {
-  return value.length > 3000 ? value.slice(-3000) : value;
+  persistJobsSnapshot(state());
 }
 
 function limitLog(value) {
   return value.length > MAX_LOG_CHARS ? value.slice(-MAX_LOG_CHARS) : value;
 }
+
+function publicError(job) {
+  if (job.status !== "failed") return null;
+  if (typeof job.error !== "string" || !job.error.trim()) {
+    return "Import failed. Check server logs for details.";
+  }
+  if (/Traceback|^\s*File\s+"|ModuleNotFoundError|RuntimeError/im.test(job.error) || job.error.includes("\n")) {
+    return "Import failed. Check server logs for details.";
+  }
+  return job.error.length <= 240 ? job.error : "Import failed. Check server logs for details.";
+}
+
+function pruneJobs(store) {
+  const jobs = [...store.jobs.values()];
+  const terminalJobs = jobs
+    .filter((job) => TERMINAL_STATUSES.has(job.status))
+    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
+  const keepTerminalIds = new Set(terminalJobs.slice(0, MAX_RETAINED_JOBS).map((job) => job.id));
+  for (const job of jobs) {
+    if (ACTIVE_STATUSES.has(job.status) || keepTerminalIds.has(job.id)) continue;
+    store.jobs.delete(job.id);
+  }
+}
+
+function jobsSnapshotPath() {
+  return path.join(projectRoot(), "data", "import-jobs", "state.json");
+}
+
+function readJobsSnapshot() {
+  try {
+    return JSON.parse(fs.readFileSync(jobsSnapshotPath(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function persistJobsSnapshot(store) {
+  try {
+    const filePath = jobsSnapshotPath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(toJobsSnapshot(store), null, 2) + "\n", "utf8");
+  } catch {
+    // Status persistence is best-effort; the in-memory job remains authoritative.
+  }
+}
+
+function toJobsSnapshot(store) {
+  return {
+    currentJobId: store.currentJobId,
+    latestJobId: store.latestJobId,
+    jobs: [...store.jobs.values()].map((job) => {
+      const safeJob = publicJob(job);
+      return {
+        ...safeJob,
+        stdout: "",
+        stderr: "",
+        result: safeJob.result ?? null,
+        exitCode: safeJob.exitCode ?? null,
+      };
+    }),
+  };
+}
+
+function restoreJobsSnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.jobs)) return null;
+
+  const store = {
+    jobs: new Map(),
+    currentJobId: null,
+    latestJobId: typeof snapshot.latestJobId === "string" ? snapshot.latestJobId : null,
+  };
+
+  for (const item of snapshot.jobs) {
+    if (!item || typeof item.id !== "string") continue;
+    const restored = {
+      id: item.id,
+      date: typeof item.date === "string" ? item.date : null,
+      status: ACTIVE_STATUSES.has(item.status) ? "failed" : item.status,
+      phase: ACTIVE_STATUSES.has(item.status) ? "failed" : item.phase,
+      stepIndex: typeof item.stepIndex === "number" ? item.stepIndex : 0,
+      progress: typeof item.progress === "number" ? item.progress : 0,
+      detail: ACTIVE_STATUSES.has(item.status) ? "Import state was interrupted. Start a new synchronization." : item.detail,
+      startedAt: item.startedAt,
+      updatedAt: item.updatedAt,
+      finishedAt: item.finishedAt ?? (ACTIVE_STATUSES.has(item.status) ? new Date().toISOString() : null),
+      stdout: "",
+      stderr: "",
+      result: item.result ?? null,
+      error: ACTIVE_STATUSES.has(item.status) ? "Import state was interrupted. Start a new synchronization." : item.error,
+      exitCode: item.exitCode ?? null,
+    };
+    store.jobs.set(restored.id, restored);
+  }
+
+  if (!store.latestJobId || !store.jobs.has(store.latestJobId)) {
+    store.latestJobId = [...store.jobs.values()].sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))[0]?.id ?? null;
+  }
+  pruneJobs(store);
+  return store;
+}
+
+export const importJobInternalsForTest = {
+  ACTIVE_STATUSES,
+  TERMINAL_STATUSES,
+  publicError,
+  pruneJobs,
+  restoreJobsSnapshot,
+  toJobsSnapshot,
+};
