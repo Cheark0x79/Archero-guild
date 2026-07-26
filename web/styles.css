@@ -2743,12 +2743,13 @@ th.numeric {
 
 .login-panel {
   display: grid;
-  gap: 22px;
-  width: min(420px, 100%);
+  gap: 24px;
+  width: min(400px, 100%);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface);
-  padding: 22px;
+  padding: 28px;
+  box-shadow: var(--shadow);
 }
 
 .login-brand {
@@ -2759,17 +2760,51 @@ th.numeric {
   color: var(--muted);
 }
 
-.login-panel h1 {
-  margin-bottom: 6px;
+.login-panel-heading {
+  display: grid;
+  gap: 6px;
 }
 
-.login-panel p {
+.login-panel-heading h1 {
+  font-size: 26px;
+}
+
+.login-panel-heading p {
   color: var(--muted);
 }
 
 .login-actions {
   display: grid;
-  gap: 10px;
+  gap: 14px;
+}
+
+.login-actions label {
+  display: grid;
+  gap: 6px;
+}
+
+.login-actions label > span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-actions input {
+  min-height: 44px;
+  background: white;
+}
+
+.login-submit {
+  min-height: 44px;
+  margin-top: 4px;
+}
+
+.login-actions .form-error {
+  border: 1px solid oklch(55% 0.18 25 / 24%);
+  border-radius: 8px;
+  background: oklch(96% 0.025 25);
+  color: var(--danger);
+  padding: 9px 11px;
+  font-size: 12px;
 }
 
 .data-warning {

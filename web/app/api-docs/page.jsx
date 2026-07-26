@@ -2,7 +2,7 @@ import ApiDocsClient from "./ApiDocsClient.jsx";
 
 export const metadata = {
   title: "API Docs · Archero Observer",
-  description: "Documentation interactive de l’API Archero Observer pour les intégrations et bots Discord.",
+  description: "Interactive Archero Observer API documentation for integrations and Discord bots.",
 };
 
 export default function ApiDocsPage() {

@@ -1,100 +1,115 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import AppSidebar from "../components/AppSidebar.jsx";
 import styles from "./api-docs.module.css";
 
 const endpoints = [
-  endpoint("System", "GET", "/api/v1/health", "Health check", "Vérifie que l’API est disponible.", false, {}, { status: "ok" }),
-  endpoint("Guild", "GET", "/api/v1/guild", "Guild overview", "Résumé compact de la guilde, de son activité et de la fraîcheur des données.", true, {}, {
+  endpoint("System", "GET", "/api/v1/health", "Health check", "Checks whether the API is available.", false, {}, { status: "ok" }),
+  endpoint("Guild", "GET", "/api/v1/guild", "Guild overview", "Compact summary of the guild, its activity, and data freshness.", true, {}, {
     currentMembers: 38, freeSlots: 2, watchCount: 5, lastImportedAt: "2026-07-22T00:00:00+02:00",
   }),
-  endpoint("Guild", "GET", "/api/v1/rules", "Guild rules", "Seuils utilisés pour la contribution, l’activité, la progression et les boss.", true, {}, {
+  endpoint("Guild", "GET", "/api/v1/rules", "Guild rules", "Thresholds used for contributions, activity, progression, and bosses.", true, {}, {
     maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2, memberCapacity: 40,
   }),
-  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Membres ayant un warning ou une violation critique.", true, {
+  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Members with a warning or critical violation.", true, {
     severity: "[optional query] warning | danger", flag: "[optional query] absence | contribution | boss",
   }, {
     summary: { total: 5, warning: 3, danger: 2 },
     members: [{ playerId: "119974403", name: "Ac1s", severity: "warning", flags: ["Low contribution"] }],
   }),
-  endpoint("Members", "GET", "/api/v1/members", "List members", "Liste paginée et recherche des membres actifs ou anciens.", true, {
-    q: "[optional query] nom ou Player ID",
-    status: "[optional query] active | former | all · défaut: active",
-    limit: "[optional query] 1–100 · défaut: 25",
-    offset: "[optional query] entier positif · défaut: 0",
+  endpoint("Members", "GET", "/api/v1/members", "List members", "Paginated list and search for current or former members.", true, {
+    q: "[optional query] name or Player ID",
+    status: "[optional query] active | former | all · default: active",
+    limit: "[optional query] 1–100 · default: 25",
+    offset: "[optional query] positive integer · default: 0",
   }, [
     { playerId: "119934456", name: "Sendrock", role: "member", power: 10550000, contribution7d: 2280 },
   ]),
-  endpoint("Members", "GET", "/api/v1/members/resolve", "Resolve a member", "Retrouve un membre depuis son Player ID, son nom, un alias ou une faute légère.", true, {
-    q: "[required query] nom, alias ou Player ID",
-    limit: "[optional query] 1–10 suggestions · défaut: 5",
+  endpoint("Members", "GET", "/api/v1/members/resolve", "Resolve a member", "Finds a member by Player ID, name, alias, or a minor typo.", true, {
+    q: "[required query] name, alias, or Player ID",
+    limit: "[optional query] 1–10 suggestions · default: 5",
   }, {
     query: "Sendrok",
     match: { playerId: "119934456", name: "Sendrock", confidence: 0.94, matchedBy: "name", webUrl: "/members/119934456" },
     suggestions: [],
   }),
-  endpoint("Members", "GET", "/api/v1/members/{playerId}", "Member profile", "Profil public et métriques actuelles d’un membre.", true, {
-    playerId: "[required path] Player ID du membre",
+  endpoint("Members", "GET", "/api/v1/members/{playerId}", "Member profile", "Public profile and current metrics for a member.", true, {
+    playerId: "[required path] member Player ID",
   }, {
     playerId: "119934456", name: "Sendrock", role: "member",
     metrics: { power: 10550000, contribution7d: 2280, bossAttacks: 2 },
     evaluation: { status: "Active", severity: "positive", flags: [] },
   }),
-  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Historique quotidien des métriques d’un membre.", true, {
-    playerId: "[required path] Player ID du membre",
-    from: "[optional query] date minimale YYYY-MM-DD",
-    to: "[optional query] date maximale YYYY-MM-DD",
+  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily history of a member's metrics.", true, {
+    playerId: "[required path] member Player ID",
+    from: "[optional query] earliest date in YYYY-MM-DD format",
+    to: "[optional query] latest date in YYYY-MM-DD format",
   }, {
     playerId: "119934456",
     items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2 }],
   }),
-  endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participations et rang du membre pour chacun des sept boss.", true, {
-    playerId: "[required path] Player ID du membre",
+  endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participation, and guild rank for each of the seven bosses.", true, {
+    playerId: "[required path] member Player ID",
   }, {
     member: { playerId: "119934456", name: "Sendrock" },
     globalRecord: { bossName: "Fire Dragon", damage: 923010000000, date: "2026-07-21" },
     recordsByBoss: [{ boss: { key: "fire-dragon", name: "Fire Dragon" }, bestDamage: 923010000000, guildRank: 1, participations: 2 }],
   }),
-  endpoint("Rankings", "GET", "/api/v1/rankings/members", "Member rankings", "Classement par puissance, contribution, progression, attaques ou activité.", true, {
-    metric: "[optional query] power | contribution7d | powerDelta | contributionDelta | bossAttacks | activity · défaut: power",
-    order: "[optional query] asc | desc · défaut: desc (activity: asc)",
-    limit: "[optional query] 1–100 · défaut: 10",
+  endpoint("Rankings", "GET", "/api/v1/rankings/members", "Member rankings", "Rankings by power, contribution, progression, attacks, or activity.", true, {
+    metric: "[optional query] power | contribution7d | powerDelta | contributionDelta | bossAttacks | activity · default: power",
+    order: "[optional query] asc | desc · default: desc (activity: asc)",
+    limit: "[optional query] 1–100 · default: 10",
   }, {
     metric: "power", rows: [{ rank: 1, playerId: "119934456", name: "Sendrock", value: 10550000 }],
   }),
-  endpoint("Bosses", "GET", "/api/v1/bosses", "Boss catalogue", "Rotation des boss, records et détenteurs actuels.", true, {}, [
+  endpoint("Bosses", "GET", "/api/v1/bosses", "Boss catalogue", "Boss rotation, records, and current record holders.", true, {}, [
     { key: "fire-dragon", name: "Fire Dragon", dayLabel: "Tue", bestDamage: 923010000000 },
   ]),
-  endpoint("Bosses", "GET", "/api/v1/boss-results", "Daily boss results", "Dégâts et rangs journaliers, filtrables par date, boss ou membre.", true, {
-    date: "[optional query] YYYY-MM-DD · défaut: toutes les dates",
-    boss: "[optional query] identifiant du boss",
-    playerId: "[optional query] Player ID du membre",
-    limit: "[optional query] 1–100 par journée · défaut: 100",
+  endpoint("Bosses", "GET", "/api/v1/boss-results", "Daily boss results", "Daily damage and rankings, filterable by date, boss, or member.", true, {
+    date: "[optional query] YYYY-MM-DD · default: all dates",
+    boss: "[optional query] boss identifier",
+    playerId: "[optional query] member Player ID",
+    limit: "[optional query] 1–100 per day · default: 100",
   }, [{
     date: "2026-07-22", boss: { key: "flame-demon", name: "Flame Demon" },
     rows: [{ rank: 1, playerId: "119934456", name: "Sendrock", damage: 868570000000, damageText: "868.57B" }],
   }]),
-  endpoint("Bosses", "GET", "/api/v1/rankings/boss/all-time", "All-time records", "Meilleur score historique de chaque membre.", true, {
-    limit: "[optional query] 1–100 · défaut: 10",
+  endpoint("Bosses", "GET", "/api/v1/rankings/boss/all-time", "All-time records", "Best historical score for each member.", true, {
+    limit: "[optional query] 1–100 · default: 10",
   }, [{ playerId: "119934456", name: "Sendrock", damage: 923010000000, bossName: "Fire Dragon" }]),
-  endpoint("Bosses", "GET", "/api/v1/rankings/boss/weekly", "Weekly leaderboard", "Totaux de dégâts sur une semaine.", true, {
-    week: "[optional query] lundi au format YYYY-MM-DD · défaut: dernière semaine",
-    limit: "[optional query] 1–100 · défaut: 10",
+  endpoint("Bosses", "GET", "/api/v1/rankings/boss/weekly", "Weekly leaderboard", "Total damage over one week.", true, {
+    week: "[optional query] Monday in YYYY-MM-DD format · default: latest week",
+    limit: "[optional query] 1–100 · default: 10",
   }, [{ weekStart: "2026-07-20", playerId: "119934456", name: "Sendrock", damage: 1791580000000 }]),
-  endpoint("Bosses", "GET", "/api/v1/rankings/boss/by-boss", "Records by boss", "Records personnels classés pour un boss précis ou pour toute la rotation.", true, {
-    boss: "[optional query] identifiant du boss · défaut: tous les boss",
-    limit: "[optional query] 1–100 par boss · défaut: 10",
+  endpoint("Bosses", "GET", "/api/v1/rankings/boss/by-boss", "Records by boss", "Ranked personal records for one boss or the full rotation.", true, {
+    boss: "[optional query] boss identifier · default: all bosses",
+    limit: "[optional query] 1–100 per boss · default: 10",
   }, [{ boss: { key: "fire-dragon", name: "Fire Dragon" }, rows: [] }]),
 ];
 
 const categories = ["All", "System", "Guild", "Members", "Rankings", "Bosses"];
 
 export default function ApiDocsClient() {
+  const [sessionRole, setSessionRole] = useState(null);
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(endpoints[1].id);
   const [codeMode, setCodeMode] = useState("javascript");
   const [copied, setCopied] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (!cancelled) setSessionRole(payload?.role ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const visibleEndpoints = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -114,25 +129,29 @@ export default function ApiDocsClient() {
   }
 
   return (
-    <main className={styles.page}>
-      <div className={styles.glowOne} />
-      <div className={styles.glowTwo} />
+    <div className="app-shell">
+      <AppSidebar
+        activeRoute="api-docs"
+        sessionRole={sessionRole}
+        checkpointLabel="Documentation"
+        checkpointValue="API v1"
+      />
+      <main className={styles.page}>
+        <div className={styles.glowOne} />
+        <div className={styles.glowTwo} />
 
-      <header className={styles.topbar}>
-        <a className={styles.brand} href="/dashboard" aria-label="Archero Observer dashboard">
-          <span className={styles.brandMark}>AO</span>
-          <span><strong>Archero Guild</strong><small>API documentation</small></span>
-        </a>
-        <nav className={styles.topnav}>
-          <a href="/dashboard">Dashboard</a>
-          <a className={styles.activeNav} href="/api-docs">API Docs</a>
-        </nav>
-        <span className={styles.version}>API v1</span>
-      </header>
+        <header className={styles.pageHeader}>
+          <div>
+            <span>Developer reference</span>
+            <h1>API documentation</h1>
+            <p>Endpoints, authentication and ready-to-use integration examples.</p>
+          </div>
+          <strong>API v1</strong>
+        </header>
 
-      <section className={styles.reference} id="reference">
+        <section className={styles.reference} id="reference">
         <div className={styles.sectionTitle}>
-          <div><span>ROUTES API</span><h2>Choisir une route.</h2></div>
+          <div><span>API ROUTES</span><h2>Choose an endpoint.</h2></div>
           <label className={styles.search}>
             <span>⌕</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search endpoints…" />
@@ -158,7 +177,7 @@ export default function ApiDocsClient() {
                 <b>›</b>
               </button>
             ))}
-            {visibleEndpoints.length === 0 && <p className={styles.empty}>Aucun endpoint ne correspond à cette recherche.</p>}
+            {visibleEndpoints.length === 0 && <p className={styles.empty}>No endpoints match this search.</p>}
           </aside>
 
           <article className={styles.endpointDetail}>
@@ -187,7 +206,7 @@ export default function ApiDocsClient() {
                         <div className={styles.parameterHeading}>
                           <code>{name}</code>
                           <span className={parameterMeta(value).required ? styles.requiredBadge : styles.optionalBadge}>
-                            {parameterMeta(value).required ? "Obligatoire" : "Optionnel"}
+                            {parameterMeta(value).required ? "Required" : "Optional"}
                           </span>
                           <small>{parameterMeta(value).location}</small>
                         </div>
@@ -200,13 +219,13 @@ export default function ApiDocsClient() {
                 <h4>Authentication</h4>
                 {selected.secured
                   ? <p className={styles.authLine}><span>Authorization</span><code>Bearer &lt;api_token&gt;</code></p>
-                  : <p className={styles.muted}>Route publique, aucune clé nécessaire.</p>}
+                  : <p className={styles.muted}>Public endpoint. No API key required.</p>}
                 <h4>Possible responses</h4>
                 <div className={styles.statusList}>
-                  <span><b>200</b> Succès</span>
-                  {Object.values(selected.parameters).some((value) => parameterMeta(value).required || parameterMeta(value).location === "query") && <span><b>400</b> Paramètre invalide</span>}
-                  {selected.path.includes("{playerId}") && <span><b>404</b> Membre introuvable</span>}
-                  {selected.secured && <span><b>401</b> Clé absente ou invalide</span>}
+                  <span><b>200</b> Success</span>
+                  {Object.values(selected.parameters).some((value) => parameterMeta(value).required || parameterMeta(value).location === "query") && <span><b>400</b> Invalid parameter</span>}
+                  {selected.path.includes("{playerId}") && <span><b>404</b> Member not found</span>}
+                  {selected.secured && <span><b>401</b> Missing or invalid API key</span>}
                 </div>
               </section>
 
@@ -224,13 +243,14 @@ export default function ApiDocsClient() {
             </div>
           </article>
         </div>
-      </section>
+        </section>
 
-      <footer className={styles.footer}>
-        <span>Archero Observer API · v1</span>
-        <div><a href="/dashboard">Dashboard</a><a href="/openapi.yaml">OpenAPI YAML</a><a href="/api/v1/health">Status</a></div>
-      </footer>
-    </main>
+        <footer className={styles.footer}>
+          <span>Archero Observer API · v1</span>
+          <div><a href="/dashboard">Dashboard</a><a href="/openapi.yaml">OpenAPI YAML</a><a href="/api/v1/health">Status</a></div>
+        </footer>
+      </main>
+    </div>
   );
 }
 
