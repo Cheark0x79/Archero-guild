@@ -1,0 +1,185 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { authorizeApiRequest } from "../app/api/v1/_lib/auth.js";
+import {
+  bossCatalogFromData,
+  bossDaysFromData,
+  bossRankings,
+  findMember,
+  guildSummaryFromData,
+  memberHistoryFromData,
+  memberBossesFromData,
+  memberRankingsFromData,
+  membersFromData,
+  queryMembers,
+  resolveMemberFromData,
+  rulesFromData,
+  violationsFromData,
+} from "../app/api/v1/_lib/domain.js";
+
+function requestWith(headers = {}) {
+  return { headers: new Headers(headers) };
+}
+
+const data = {
+  captures: { lastCapturedAt: "2026-07-22T10:00:00Z", lastImportedAt: "2026-07-22T10:05:00Z" },
+  guildRoster: [
+    { playerId: "123", name: "Alice", discordLinked: true, status: "active" },
+    { playerId: "456", name: "Bob", status: "left" },
+  ],
+  memberSnapshots: [
+    {
+      playerId: "123",
+      role: "officer",
+      power: 900000,
+      contribution7d: 1200,
+      bossAttacks: 2,
+      lastActivityDays: 0,
+      lastSeenAt: "2026-07-22",
+      metricsVerified: true,
+    },
+  ],
+  dailyBossRawSnapshots: [
+    {
+      date: "2026-07-21",
+      rows: [{ playerId: "123", name: "Alice", bossDamageToday: 5000, bossRank: 1 }],
+    },
+  ],
+  rules: { memberCapacity: 40, maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2 },
+};
+
+test("API authentication accepts bearer and x-api-key credentials", () => {
+  assert.equal(authorizeApiRequest(requestWith(), "").authorized, true);
+  assert.equal(authorizeApiRequest(requestWith(), "secret").reason, "missing_api_key");
+  assert.equal(authorizeApiRequest(requestWith({ authorization: "Bearer secret" }), "secret").authorized, true);
+  assert.equal(authorizeApiRequest(requestWith({ "x-api-key": "second" }), "first, second").authorized, true);
+  assert.equal(authorizeApiRequest(requestWith({ authorization: "Bearer wrong" }), "secret").reason, "invalid_api_key");
+});
+
+test("public members exclude private notes and support search and pagination", () => {
+  const members = membersFromData(data);
+  assert.equal(members[0].name, "Alice");
+  assert.equal(members[0].metrics.power, 900000);
+  assert.equal("officerNote" in members[0], false);
+
+  const result = queryMembers(members, new URLSearchParams({ q: "ali", limit: "1" }));
+  assert.deepEqual(result.items.map((member) => member.playerId), ["123"]);
+  assert.equal(result.pagination.total, 1);
+  assert.equal(findMember(members, "456").name, "Bob");
+});
+
+test("public member filtering validates status and pagination", () => {
+  const members = membersFromData(data);
+  assert.deepEqual(queryMembers(members, new URLSearchParams()).items.map((member) => member.name), ["Alice"]);
+  assert.deepEqual(queryMembers(members, new URLSearchParams({ status: "former" })).items.map((member) => member.name), ["Bob"]);
+  assert.equal(queryMembers(members, new URLSearchParams({ status: "unknown" })).error.code, "invalid_status");
+  assert.equal(queryMembers(members, new URLSearchParams({ limit: "0" })).error.code, "invalid_pagination");
+});
+
+test("guild summary and boss ranking are shaped for bot commands", () => {
+  const summary = guildSummaryFromData(data);
+  assert.equal(summary.currentMembers, 1);
+  assert.equal(summary.discordLinked, 1);
+
+  const ranking = bossRankings(data, "all-time", new URLSearchParams({ limit: "5" }));
+  assert.equal(ranking.items[0].name, "Alice");
+  assert.equal(ranking.items[0].damage, 5000);
+});
+
+test("rules and violations expose actionable guild compliance", () => {
+  assert.equal(rulesFromData(data).minContribution7d, 500);
+  const violatingData = {
+    ...data,
+    memberSnapshots: [{ ...data.memberSnapshots[0], contribution7d: 100, bossAttacks: 0, lastActivityDays: 5 }],
+  };
+  const result = violationsFromData(violatingData, new URLSearchParams());
+  assert.equal(result.summary.total, 1);
+  assert.deepEqual(result.items[0].evaluation.flags, ["Game absence", "Low contribution", "Missed boss"]);
+});
+
+test("member rankings support power, contribution, attacks, deltas, and activity", () => {
+  const result = memberRankingsFromData(data, new URLSearchParams({ metric: "power", limit: "5" }));
+  assert.equal(result.metric, "power");
+  assert.equal(result.order, "desc");
+  assert.deepEqual(result.items[0], {
+    rank: 1,
+    playerId: "123",
+    name: "Alice",
+    role: "officer",
+    value: 900000,
+    lastSeenAt: "2026-07-22",
+    links: {
+      api: "/api/v1/members/123",
+      web: "/members/123",
+    },
+  });
+  assert.equal(memberRankingsFromData(data, new URLSearchParams({ metric: "unknown" })).error.code, "invalid_metric");
+});
+
+test("member rankings can return the lowest donations with their guild positions", () => {
+  const rankingData = {
+    ...data,
+    guildRoster: [
+      ...data.guildRoster,
+      { playerId: "789", name: "Charlie", status: "active" },
+    ],
+    memberSnapshots: [
+      ...data.memberSnapshots,
+      {
+        playerId: "789",
+        role: "member",
+        contribution7d: 100,
+        lastSeenAt: "2026-07-22",
+        metricsVerified: true,
+      },
+    ],
+  };
+  const result = memberRankingsFromData(rankingData, new URLSearchParams({ metric: "contribution7d", order: "asc" }));
+  assert.equal(result.items[0].name, "Charlie");
+  assert.equal(result.items[0].rank, 2);
+  assert.equal(result.items[0].belowMinimum, true);
+  assert.equal(memberRankingsFromData(data, new URLSearchParams({ order: "sideways" })).error.code, "invalid_order");
+});
+
+test("member resolver accepts IDs, normalized names, aliases, and typos", () => {
+  const resolverData = {
+    ...data,
+    guildRoster: [
+      { playerId: "123", name: "Mundõ", discordName: "Mundo", searchAliases: ["Chef"], status: "active" },
+    ],
+  };
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "123" })).match.matchedBy, "playerId");
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mundo" })).match.playerId, "123");
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "chef" })).match.matchedBy, "alias");
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mndo" })).match.playerId, "123");
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams()).error.code, "missing_query");
+});
+
+test("member history and boss results can be filtered", () => {
+  const historicalData = {
+    ...data,
+    dailyRawSnapshots: [
+      { date: "2026-07-21", rows: [{ playerId: "123", power: 800000, contribution7d: 900, bossAttacks: 1 }] },
+      { date: "2026-07-22", rows: [{ playerId: "123", power: 900000, contribution7d: 1200, bossAttacks: 2 }] },
+    ],
+  };
+  const history = memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-07-22" }));
+  assert.deepEqual(history.items.map((row) => row.date), ["2026-07-22"]);
+
+  const bossDays = bossDaysFromData(data, new URLSearchParams({ date: "2026-07-21" }));
+  assert.equal(bossDays.items[0].boss.key, "fire-dragon");
+  assert.equal(bossDays.items[0].rows[0].damage, 5000);
+  assert.equal(bossCatalogFromData(data).length, 7);
+  assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-02-31" })).error.code, "invalid_date");
+  assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-07-22", to: "2026-07-21" })).error.code, "invalid_date_range");
+});
+
+test("member boss profile returns records and guild ranks for every boss", () => {
+  const result = memberBossesFromData(data, "123");
+  assert.equal(result.member.name, "Alice");
+  assert.equal(result.globalRecord.damage, 5000);
+  assert.equal(result.recordsByBoss.length, 7);
+  assert.equal(result.recordsByBoss.find((item) => item.boss.key === "fire-dragon").guildRank, 1);
+  assert.equal(memberBossesFromData(data, "missing"), null);
+});
