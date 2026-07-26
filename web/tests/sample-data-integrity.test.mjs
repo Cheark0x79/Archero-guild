@@ -24,7 +24,12 @@ test("latest member snapshots match the latest raw guild import rows", () => {
     }
   }
 
-  assert.equal(memberSnapshots.filter((row) => row.lastSeenAt === latest.date).length, latest.rows.length);
+  assert.equal(memberSnapshots.filter((row) => row.lastSeenAt === latest.date).length, latest.rows.filter((row) => row.playerId).length);
+  assert.deepEqual(
+    latest.rows.filter((row) => !row.playerId && (!row.name || !row.verificationNote)),
+    [],
+    "unmatched rows must remain reviewable with a name and source",
+  );
   assert.deepEqual(mismatches, []);
 });
 

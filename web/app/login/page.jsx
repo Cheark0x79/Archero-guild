@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 export default function LoginPage() {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -15,7 +16,7 @@ export default function LoginPage() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Login failed");
@@ -36,9 +37,19 @@ export default function LoginPage() {
         </div>
         <div>
           <h1>Sign in</h1>
-          <p>Enter the application password to access the guild dashboard.</p>
+          <p>Enter your account credentials to access the guild dashboard.</p>
         </div>
         <form className="login-actions" onSubmit={submit}>
+          <label>
+            Username
+            <input
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+            />
+          </label>
           <label>
             Password
             <input

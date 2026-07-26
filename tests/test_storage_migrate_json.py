@@ -68,6 +68,10 @@ class StorageMigrateJsonTests(unittest.TestCase):
             with (
                 patch("observer.storage.migrate_json.extract_member_metrics_from_screenshots", return_value=[member_metric]),
                 patch("observer.storage.migrate_json.extract_boss_rankings_from_screenshots", return_value=[boss_ranking]),
+                patch(
+                    "observer.storage.migrate_json.validate_extracted_import",
+                    return_value={"status": "accepted", "warnings": [], "errors": []},
+                ) as validate,
                 patch("observer.storage.migrate_json.persist_import_report") as persist,
             ):
                 result = migrate_import_reports(imports_root=imports_root, sample_data_path=sample_data, dry_run=True, with_ocr=True)
@@ -78,6 +82,8 @@ class StorageMigrateJsonTests(unittest.TestCase):
         self.assertEqual(result[0].boss_rankings, 1)
         self.assertFalse(result[0].persisted)
         self.assertEqual(result[0].warnings, [])
+        validate.assert_called_once()
+        self.assertIn("expected_member_count", validate.call_args.kwargs)
         persist.assert_not_called()
 
     def test_migrate_import_reports_skips_ocr_by_default(self) -> None:

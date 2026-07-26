@@ -106,6 +106,31 @@ class ImportCaptureTests(unittest.TestCase):
                 boss_rankings=[],
             )
 
+    def test_validation_rejects_incomplete_capture_against_full_roster(self) -> None:
+        metrics = [
+            ExtractedMemberMetrics(
+                player_id=str(index),
+                name=f"Member {index}",
+                role="member",
+                power=100_000,
+                donation=100,
+                boss_tries=2,
+                last_activity_days=0,
+                source=f"members.png row {index}",
+                match_score=1,
+                raw_name=f"Member {index}",
+            )
+            for index in range(21)
+        ]
+        with self.assertRaisesRegex(ImportValidationError, "incomplete guild capture"):
+            validate_extracted_import(
+                member_screenshots=[ImportedScreenshot("members.png", "guild-members", 28)],
+                boss_screenshots=[],
+                extracted_metrics=metrics,
+                boss_rankings=[],
+                expected_member_count=38,
+            )
+
     def test_import_lock_rejects_same_day_concurrency(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             imports_root = Path(directory)

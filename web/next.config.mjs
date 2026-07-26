@@ -1,5 +1,5 @@
 const nextConfig = {
-  output: "standalone",
+  ...(process.env.ARCHERO_NEXT_OUTPUT === "default" ? {} : { output: "standalone" }),
   poweredByHeader: false,
   async headers() {
     return [

@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE_NAME, isPublicPath } from "./lib/auth.js";
+import { ADMIN_ROLE, AUTH_COOKIE_NAME, isAdminPath, isPublicPath, roleForSessionToken } from "./lib/auth.js";
 
 export function middleware(request) {
-  const sessionToken = process.env.ARCHERO_ADMIN_SESSION_TOKEN;
-  const authenticated = Boolean(sessionToken) && request.cookies.get(AUTH_COOKIE_NAME)?.value === sessionToken;
+  const role = roleForSessionToken(request.cookies.get(AUTH_COOKIE_NAME)?.value);
+  const authenticated = Boolean(role);
   const { pathname } = request.nextUrl;
 
   if (isPublicPath(pathname)) {
     if (pathname === "/login" && authenticated) return NextResponse.redirect(new URL("/dashboard", request.url));
     return NextResponse.next();
+  }
+
+  if (authenticated && isAdminPath(pathname) && role !== ADMIN_ROLE) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ ok: false, error: "administrator access required" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   if (authenticated) return NextResponse.next();

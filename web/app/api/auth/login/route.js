@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE_NAME } from "../../../../lib/auth.js";
+import { ADMIN_ROLE, AUTH_COOKIE_NAME, USER_ROLE } from "../../../../lib/auth.js";
 import {
   createFailureRateLimiter,
   readLimitedJson,
@@ -17,14 +17,32 @@ function equalSecret(actual, expected) {
 }
 
 export async function POST(request) {
-  const password = process.env.ARCHERO_ADMIN_PASSWORD;
-  const sessionToken = process.env.ARCHERO_ADMIN_SESSION_TOKEN;
-  if (!password || !sessionToken) {
+  const adminAccount = {
+    username: process.env.ARCHERO_ADMIN_USERNAME || "admin",
+    password: process.env.ARCHERO_ADMIN_PASSWORD,
+    sessionToken: process.env.ARCHERO_ADMIN_SESSION_TOKEN,
+    role: ADMIN_ROLE,
+  };
+  const userAccount = {
+    username: process.env.ARCHERO_USER_USERNAME || "viewer",
+    password: process.env.ARCHERO_USER_PASSWORD,
+    sessionToken: process.env.ARCHERO_USER_SESSION_TOKEN,
+    role: USER_ROLE,
+  };
+  const userAccountPartiallyConfigured = Boolean(userAccount.password) !== Boolean(userAccount.sessionToken);
+  const sessionTokensConflict = Boolean(userAccount.sessionToken) && userAccount.sessionToken === adminAccount.sessionToken;
+  const credentialsConflict = Boolean(userAccount.password)
+    && userAccount.username === adminAccount.username
+    && userAccount.password === adminAccount.password;
+  if (!adminAccount.password || !adminAccount.sessionToken || userAccountPartiallyConfigured || sessionTokensConflict || credentialsConflict) {
     return NextResponse.json(
-      { ok: false, error: "admin authentication is not configured on this server" },
+      { ok: false, error: "authentication is not configured on this server" },
       { status: 503 },
     );
   }
+  const accounts = userAccount.password && userAccount.sessionToken
+    ? [adminAccount, userAccount]
+    : [adminAccount];
 
   const clientAddress = requestClientAddress(request);
   const limit = loginLimiter.check(clientAddress);
@@ -49,15 +67,20 @@ export async function POST(request) {
     return NextResponse.json({ ok: false, error: status === 413 ? "request body is too large" : "invalid JSON body" }, { status });
   }
 
-  if (typeof payload.password !== "string" || !equalSecret(payload.password, password)) {
+  const account = accounts.find((candidate) => {
+    const usernameMatches = typeof payload.username === "string" && equalSecret(payload.username, candidate.username);
+    const passwordMatches = typeof payload.password === "string" && equalSecret(payload.password, candidate.password);
+    return usernameMatches && passwordMatches;
+  });
+  if (!account) {
     loginLimiter.recordFailure(clientAddress);
     console.warn("Rejected login attempt.", { clientAddress });
     return NextResponse.json({ ok: false, error: "invalid credentials" }, { status: 401 });
   }
 
   loginLimiter.clear(clientAddress);
-  const response = NextResponse.json({ ok: true });
-  response.cookies.set(AUTH_COOKIE_NAME, sessionToken, {
+  const response = NextResponse.json({ ok: true, role: account.role });
+  response.cookies.set(AUTH_COOKIE_NAME, account.sessionToken, {
     httpOnly: true,
     sameSite: "strict",
     secure: process.env.NODE_ENV === "production",

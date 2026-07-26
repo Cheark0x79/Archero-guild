@@ -58,6 +58,11 @@ def extract_member_metrics_from_screenshots(paths: list[Path], roster: list[Rost
                 extracted_by_player[metrics.player_id] = metrics
 
     for metrics in unmatched_rows:
+        if _raw_name_has_signal(metrics.raw_name):
+            # A readable name that is absent from the roster is probably a new
+            # or renamed member. Never attach it to an unrelated member merely
+            # because their power values happen to be close.
+            continue
         fallback = _match_by_power(metrics.power, roster, set(extracted_by_player))
         if fallback is None:
             continue
@@ -91,7 +96,7 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     role_text = _ocr_text(_relative_crop(image, row.bounds, 0.19, 0.18, 0.28, 0.36), pytesseract)
     parsed_donation = _read_donation(image, row, pytesseract)
     parsed_boss = parse_integer(boss_text)
-    parsed_activity = parse_activity_days(status_text)
+    parsed_activity = _parse_visible_activity_days(status_text)
 
     if match is None:
         return ExtractedMemberMetrics(
@@ -121,6 +126,15 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
         match_score=score,
         raw_name=raw_name,
     )
+
+
+def _parse_visible_activity_days(status_text: str) -> int | None:
+    # The game hides the "last active" duration while a member is currently
+    # online. A visible member row with an empty status area therefore means
+    # active today, not missing data.
+    if not status_text.strip():
+        return 0
+    return parse_activity_days(status_text)
 
 
 def _ocr_text(image: object, pytesseract: object, *, whitelist: str | None = None) -> str:
@@ -281,16 +295,16 @@ def _cluster_spread(candidates: list[int]) -> float:
 def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple[RosterEntry, float, str] | None:
     best: tuple[RosterEntry, float, str] | None = None
     for raw_name in raw_names:
-        normalized = _normalize_match_text(raw_name)
-        for entry in roster:
-            roster_name = _normalize_match_text(entry.name)
-            if not roster_name:
-                continue
-            score = SequenceMatcher(None, roster_name, normalized).ratio()
-            if roster_name in normalized:
-                score = max(score, 0.98)
-            if best is None or score > best[1]:
-                best = (entry, score, raw_name)
+        for normalized in _normalized_name_candidates(raw_name):
+            for entry in roster:
+                roster_name = _normalize_match_text(entry.name)
+                if not roster_name:
+                    continue
+                score = SequenceMatcher(None, roster_name, normalized).ratio()
+                if len(normalized) >= 3 and (roster_name in normalized or normalized in roster_name):
+                    score = max(score, 0.98)
+                if best is None or score > best[1]:
+                    best = (entry, score, raw_name)
 
     if best is None or best[1] < 0.70:
         return None
@@ -299,7 +313,28 @@ def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple
 
 def _normalize_match_text(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "", value.lower())
-    return normalized.translate(str.maketrans({"1": "l", "i": "l"}))
+    return normalized.translate(str.maketrans({"1": "l", "i": "l", "o": "0"}))
+
+
+def _normalized_name_candidates(value: str) -> list[str]:
+    normalized = _normalize_match_text(value)
+    candidates = [normalized] if normalized else []
+    stripped = normalized
+    for prefix in ("guildmembers", "members", "member", "bers", "ers", "pers"):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):]
+            if stripped:
+                candidates.append(stripped)
+            break
+    return list(dict.fromkeys(candidates))
+
+
+def _raw_name_has_signal(value: str) -> bool:
+    return any(
+        candidates and len(candidates[-1]) >= 3
+        for part in value.split("|")
+        if (candidates := _normalized_name_candidates(part))
+    )
 
 
 def _match_by_power(power: int | None, roster: list[RosterEntry], used_player_ids: set[str]) -> RosterEntry | None:
@@ -360,11 +395,11 @@ def parse_activity_days(value: str) -> int | None:
     normalized = value.lower()
     if "online" in normalized or "onl" in normalized:
         return 0
-    if re.search(r"\d+\s*[hm]", normalized):
-        return 0
     day_match = re.search(r"(\d+)\s*d", normalized)
     if day_match:
         return int(day_match.group(1))
+    if re.search(r"\d+\s*[hm]", normalized):
+        return 0
     return None
 
 
