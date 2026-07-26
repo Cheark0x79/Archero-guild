@@ -23,16 +23,22 @@ chmod 600 .env.production
 mkdir -p data screenshots/raw screenshots/trash backups
 ```
 
-Generate independent secrets:
+Generate five independent secrets:
 
 ```bash
 openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
+openssl rand -hex 32
+openssl rand -hex 32
 ```
 
-Put the first value in `POSTGRES_PASSWORD`, the second in
-`ARCHERO_ADMIN_PASSWORD`, and the third in `ARCHERO_ADMIN_SESSION_TOKEN`.
+Put them in `POSTGRES_PASSWORD`, `ARCHERO_USER_PASSWORD`,
+`ARCHERO_USER_SESSION_TOKEN`, `ARCHERO_ADMIN_PASSWORD`,
+`ARCHERO_ADMIN_SESSION_TOKEN`, and `ARCHERO_API_KEYS`. Keep different values
+for both dashboard accounts and
+both session tokens. Usernames default to `viewer` and `admin` and can be
+changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
 Do not reuse a password or commit `.env.production`.
 
 ## 2. Create the Cloudflare Tunnel
@@ -62,8 +68,9 @@ sharing it. The safest initial policy is:
 - Require: MFA when supported by the identity provider
 
 Protecting the whole hostname is recommended for the first deployment. The app
-also keeps its own password protection on `/admin` and `/api/data/*`, providing
-a second layer for administrative actions.
+also requires its own account on every page and enforces the administrator
+role on `/admin/*` and `/api/data/*`, providing a second layer for
+administrative actions.
 
 If the public dashboard must later be anonymous, create more specific Access
 applications for `/admin/*` and `/api/data/*` instead of removing the
@@ -158,9 +165,33 @@ make pause-tunnel
 make resume-tunnel
 ```
 
-Every application page and API requires the password configured in
-`ARCHERO_ADMIN_PASSWORD`. Only `/login`, authentication endpoints, and
-`/api/health` are reachable without a valid session.
+Every application page and API requires a valid account. The standard account
+can access Dashboard, Members, Boss, Records, Activity, and their read APIs.
+The administrator can additionally access `/admin/*` and `/api/data/*`.
+Only `/login`, authentication endpoints, and `/api/health` are reachable
+without a valid session.
+
+After adding the new user variables to an existing `.env.production`, run
+`make release`. Existing sessions are invalidated because the cookie name
+changed; sign in again with either account.
+
+## Updating production data without OCR on the VM
+
+Keep capture and OCR outside the public VM. The intended split is:
+
+1. The trusted workstation captures screenshots and performs OCR.
+2. It validates the resulting structured rows locally.
+3. A dedicated synchronization command sends only validated JSON to an
+   authenticated administrator API.
+4. The production application validates the schema and writes one atomic
+   import to PostgreSQL.
+
+The repository does not yet expose that structured synchronization endpoint.
+Until it is implemented, do not expose PostgreSQL or copy partially generated
+files into production. Continue importing on the trusted workstation and
+deploy only reviewed application data. The next implementation should add a
+versioned JSON schema, an idempotency key based on capture date, a dry-run
+validation response, and an admin-only `POST /api/data/sync` endpoint.
 
 ### Cloudflare request limits
 

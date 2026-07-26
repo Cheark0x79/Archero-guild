@@ -42,11 +42,11 @@ case "$release_kind" in
 esac
 
 next_version="$major.$minor.$patch"
-printf '%s\n' "$next_version" > .release-version
 export ARCHERO_IMAGE_TAG="$next_version"
 
 echo "Building Archero $next_version..."
 docker compose --env-file "$env_file" -f docker-compose.prod.yml build app
 docker compose --env-file "$env_file" -f docker-compose.prod.yml up -d --no-deps app
 ./scripts/wait-for-app.sh "$env_file" "$next_version"
+printf '%s\n' "$next_version" > .release-version
 echo "Archero $next_version is deployed and healthy."

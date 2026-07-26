@@ -6,7 +6,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
-from observer.import_capture import ImportedScreenshot, ImportReport, validate_capture_date
+from observer.import_capture import (
+    ImportedScreenshot,
+    ImportReport,
+    validate_capture_date,
+    validate_extracted_import,
+)
 from observer.import_capture import read_roster_entries
 from observer.pipeline.guild_boss import (
     ExtractedBossRanking,
@@ -73,6 +78,16 @@ def migrate_import_reports(
             if member_paths or boss_paths:
                 warnings.append("OCR skipped; rerun with --with-ocr to migrate extracted metrics and boss rankings")
         daily_boss_rankings = {report.date: boss_rankings} if boss_rankings else {}
+
+        if with_ocr:
+            quality = validate_extracted_import(
+                member_screenshots=report.member_screenshots,
+                boss_screenshots=report.boss_screenshots,
+                extracted_metrics=member_metrics,
+                boss_rankings=boss_rankings,
+                expected_member_count=len(roster),
+            )
+            warnings.extend(str(item) for item in quality.get("warnings", []))
 
         if not dry_run:
             persist_import_report(

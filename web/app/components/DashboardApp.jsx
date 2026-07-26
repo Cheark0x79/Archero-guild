@@ -37,7 +37,7 @@ let guildRoster = localGuildRoster;
 let memberSnapshots = localMemberSnapshots;
 let previousMemberSnapshots = localPreviousMemberSnapshots;
 let defaultRules = localDefaultRules;
-let members = mergeRosterMetrics(guildRoster, memberSnapshots);
+let members = buildCurrentMembers();
 
 function applyDashboardData(data) {
   captures = objectOrDefault(data.captures, localCaptures);
@@ -48,7 +48,7 @@ function applyDashboardData(data) {
   memberSnapshots = arrayOrDefault(data.memberSnapshots, localMemberSnapshots);
   previousMemberSnapshots = arrayOrDefault(data.previousMemberSnapshots, localPreviousMemberSnapshots);
   defaultRules = { ...localDefaultRules, ...(data.rules && typeof data.rules === "object" ? data.rules : {}) };
-  members = mergeRosterMetrics(guildRoster, memberSnapshots);
+  members = buildCurrentMembers();
 }
 
 function arrayOrDefault(value, fallback) {
@@ -58,6 +58,63 @@ function arrayOrDefault(value, fallback) {
 function objectOrDefault(value, fallback) {
   return value && typeof value === "object" && !Array.isArray(value) ? { ...fallback, ...value } : fallback;
 }
+
+function buildCurrentMembers() {
+  const rosterMembers = mergeRosterMetrics(guildRoster, memberSnapshots);
+  const latestDay = [...dailyRawSnapshots].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
+  if (!latestDay) return rosterMembers;
+
+  const rosterNames = new Set(rosterMembers.map((member) => normalizedMemberName(member.name)));
+  const unresolvedMembers = (latestDay.rows ?? [])
+    .filter((snapshot) => !snapshot.playerId && snapshot.name && !rosterNames.has(normalizedMemberName(snapshot.name)))
+    .map((snapshot, index) => ({
+      rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(snapshot.name)}`,
+      playerId: null,
+      name: snapshot.name,
+      previousNames: [],
+      discord: "",
+      discordName: snapshot.name,
+      discordLinked: false,
+      searchAliases: [],
+      role: snapshot.role ?? "member",
+      joinedAt: null,
+      leftAt: null,
+      status: "active",
+      absenceUntil: null,
+      absenceReason: "",
+      warnings: [],
+      officerNote: "",
+      power: snapshot.power ?? null,
+      power7d: null,
+      power14dPercent: null,
+      contributionToday: null,
+      contribution7d: snapshot.contribution7d ?? null,
+      contributionDelta: null,
+      contributionTotal: null,
+      bossDamageToday: snapshot.bossDamageToday ?? null,
+      bossDamageTotal: null,
+      bossRank: null,
+      bossAttacks: snapshot.bossAttacks ?? null,
+      bossAttacksDelta: null,
+      powerDelta: null,
+      previousSnapshot: null,
+      lastSeenAt: latestDay.date,
+      lastActivityDays: snapshot.lastActivityDays ?? null,
+      metricsCaptured: true,
+      metricsVerified: true,
+      verificationNote: snapshot.verificationNote ?? "",
+    }));
+
+  return [...rosterMembers, ...unresolvedMembers];
+}
+
+function normalizedMemberName(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("en-US");
+}
+
 const BOSS_ROTATION = [
   { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian", icon: "TG", image: "/bosses/treant-guardian.png", stats: { atk: 200, def: 200, spd: 10 } },
   { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon", icon: "FD", image: "/bosses/fire-dragon.png", stats: { atk: 180, def: 200, spd: 10 } },
@@ -97,6 +154,7 @@ const routeMeta = {
 };
 
 export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null }) {
+  const [sessionRole, setSessionRole] = useState(null);
   const [rules, setRules] = useStoredRules();
   const [dataVersion, setDataVersion] = useState(0);
   const [dataWarning, setDataWarning] = useState("");
@@ -127,6 +185,19 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (!cancelled) setSessionRole(payload?.role ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
   const selectedMember = selectedMemberCandidate && !isFormerStatus(selectedMemberCandidate.status) ? selectedMemberCandidate : null;
@@ -134,7 +205,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
 
   return (
     <div className="app-shell">
-      <Sidebar activeRoute={activeRoute} />
+      <Sidebar activeRoute={activeRoute} sessionRole={sessionRole} />
       <main className="main" data-version={dataVersion}>
         <header className="topbar">
           <div>
@@ -157,7 +228,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           </div>
         ) : null}
 
-        {activeRoute === "dashboard" && <Dashboard rules={rules} />}
+        {activeRoute === "dashboard" && <Dashboard rules={rules} sessionRole={sessionRole} />}
         {activeRoute === "members" && (
           <MembersView query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} sort={sort} setSort={setSort} rules={rules} />
         )}
@@ -191,7 +262,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   );
 }
 
-function Sidebar({ activeRoute }) {
+function Sidebar({ activeRoute, sessionRole }) {
   const navRoute = activeRoute === "member" ? "members" : activeRoute;
   return (
     <aside className="sidebar" aria-label="Primary navigation">
@@ -211,14 +282,16 @@ function Sidebar({ activeRoute }) {
           </a>
         ))}
       </nav>
-      <nav className="nav-list admin-nav-list" aria-label="Admin pages">
-        <span>Admin</span>
-        {adminNavItems.map(([key, label, href]) => (
-          <a key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
-            {label}
-          </a>
-        ))}
-      </nav>
+      {sessionRole === "admin" ? (
+        <nav className="nav-list admin-nav-list" aria-label="Admin pages">
+          <span>Admin</span>
+          {adminNavItems.map(([key, label, href]) => (
+            <a key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
+              {label}
+            </a>
+          ))}
+        </nav>
+      ) : null}
       <LogoutButton />
       <div className="sidebar-note">
         <span>Checkpoint</span>
@@ -583,7 +656,7 @@ function DataView() {
               <div className={`import-quality ${importJob.result.quality.status}`}>
                 <strong>{importJob.result.quality.status === "accepted" ? "Quality checks passed" : "Accepted with warnings"}</strong>
                 <span>
-                  Guild {Math.round((importJob.result.quality.member_coverage ?? 0) * 100)}% · Boss{" "}
+                  Guild {Math.round((importJob.result.quality.roster_coverage ?? importJob.result.quality.member_coverage ?? 0) * 100)}% · Boss{" "}
                   {Math.round((importJob.result.quality.boss_coverage ?? 0) * 100)}%
                 </span>
                 {(importJob.result.quality.warnings ?? []).map((warning) => (
@@ -817,7 +890,7 @@ function dataActionHeaders(extra = {}) {
   return { "x-archero-dashboard-action": "1", ...extra };
 }
 
-function Dashboard({ rules }) {
+function Dashboard({ rules, sessionRole }) {
   const [donationRange, setDonationRange] = useState("1m");
   const [validatedRows] = useCheckValidation();
   const summary = buildSummary(members, rules);
@@ -874,20 +947,27 @@ function Dashboard({ rules }) {
           </div>
         </section>
         <section className="panel command-panel">
-          <PanelHeading title="Needs review" subtitle="Fast links to the rows that can affect data quality." />
+          <PanelHeading
+            title={sessionRole === "admin" ? "Needs review" : "Roster status"}
+            subtitle={sessionRole === "admin" ? "Fast links to the rows that can affect data quality." : "Current member status and possible departures."}
+          />
           <div className="review-list">
-            <a href="/admin/check">
-              <span>Pending check rows</span>
-              <strong>{dashboardStatus.pendingRows}</strong>
-            </a>
-            <a href="/admin/check">
-              <span>Bad rows</span>
-              <strong>{dashboardStatus.invalidRows}</strong>
-            </a>
-            <a href="/admin/check">
-              <span>Unmatched boss rows</span>
-              <strong>{dashboardStatus.bossUnmatched}</strong>
-            </a>
+            {sessionRole === "admin" ? (
+              <>
+                <a href="/admin/check">
+                  <span>Pending check rows</span>
+                  <strong>{dashboardStatus.pendingRows}</strong>
+                </a>
+                <a href="/admin/check">
+                  <span>Bad rows</span>
+                  <strong>{dashboardStatus.invalidRows}</strong>
+                </a>
+                <a href="/admin/check">
+                  <span>Unmatched boss rows</span>
+                  <strong>{dashboardStatus.bossUnmatched}</strong>
+                </a>
+              </>
+            ) : null}
             <a href="/members">
               <span>Kicked candidates</span>
               <strong>{kickedCandidates.length}</strong>
@@ -896,11 +976,13 @@ function Dashboard({ rules }) {
         </section>
       </div>
       <div className="action-strip">
-        <a className="action-tile" href="/admin/check">
-          <span>Check</span>
-          <strong>{latestCheckDay ? `${latestCheckDay.rows.length} rows` : "No capture"}</strong>
-          <small>{latestCheckDay?.date ?? "Import screenshots"}</small>
-        </a>
+        {sessionRole === "admin" ? (
+          <a className="action-tile" href="/admin/check">
+            <span>Check</span>
+            <strong>{latestCheckDay ? `${latestCheckDay.rows.length} rows` : "No capture"}</strong>
+            <small>{latestCheckDay?.date ?? "Import screenshots"}</small>
+          </a>
+        ) : null}
         <a className="action-tile" href="/boss">
           <span>Boss</span>
           <strong>{topBoss ? formatBossDamageText(topBoss.bossDamageToday, topBoss.damageText) : "Not recorded"}</strong>
@@ -1917,7 +1999,7 @@ function CheckView() {
                         <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
                           <div className="player-cell">
                             <strong>{row.name}</strong>
-                            <small>{row.playerId}</small>
+                            <small>{row.playerId ?? "Missing ID"}</small>
                           </div>
                         </ReviewableValue>
                       </td>
@@ -2065,6 +2147,7 @@ function MemberRow({ member, rules }) {
 function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnotations }) {
   const evaluation = evaluateMember(member, rules);
   const history = dailyHistory(member);
+  const currentHistory = history.find((row) => row.date === currentImportDate());
   const weeklyHistory = filterHistoryByRange(history, "1w");
   const memberAnnotations = annotations[memberKey(member)] ?? { notes: [], warnings: [] };
   const needs = evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
@@ -2122,7 +2205,10 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
             <DetailMetric label="Power" value={formatOptionalCompact(member.power)} delta={member.powerDelta} formatter={formatCompact} />
             <DetailMetric label="Donation" value={formatOptionalNumber(member.contribution7d)} delta={member.contributionDelta} formatter={formatNumber} />
             <DetailMetric label="Boss tries" value={formatOptionalNumber(member.bossAttacks)} delta={member.bossAttacksDelta} formatter={formatNumber} />
-            <DetailMetric label="Boss damage" value={formatOptionalBossDamage(member.bossDamageToday, member.bossDamageText)} />
+            <DetailMetric
+              label="Boss damage"
+              value={formatOptionalBossDamage(currentHistory?.bossDamage ?? member.bossDamageToday, currentHistory?.bossDamageText ?? member.bossDamageText)}
+            />
             <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays)} />
             <DetailMetric label="Joined guild" value={member.joinedAt ?? "Not recorded"} />
           </div>
@@ -2810,17 +2896,15 @@ function useStoredRules() {
 
 function useCheckValidation() {
   const hydrated = useRef(false);
-  const [validatedRows, setValidatedRows] = useState(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const stored = JSON.parse(localStorage.getItem(CHECK_VALIDATION_STORAGE_KEY) ?? "{}");
-      return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
-    } catch {
-      return {};
-    }
-  });
+  const [validatedRows, setValidatedRows] = useState({});
   useEffect(() => {
     let active = true;
+    try {
+      const stored = JSON.parse(localStorage.getItem(CHECK_VALIDATION_STORAGE_KEY) ?? "{}");
+      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+        setValidatedRows(stored);
+      }
+    } catch {}
     fetch("/api/data/reviews")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
@@ -2952,7 +3036,7 @@ function buildKickedCandidates(latestDate) {
 function buildCheckRows(snapshots, date) {
   const snapshotsById = new Map(snapshots.map((snapshot) => [snapshot.playerId, snapshot]));
   const currentRolesById = new Map(memberSnapshots.map((snapshot) => [snapshot.playerId, snapshot.role]));
-  return guildRoster
+  const matchedRows = guildRoster
     .filter((entry) => isCurrentPlayerId(entry.playerId) && snapshotsById.has(entry.playerId))
     .map((entry) => {
       const snapshot = snapshotsById.get(entry.playerId);
@@ -2969,6 +3053,21 @@ function buildCheckRows(snapshots, date) {
         source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
       };
     });
+  const unmatchedRows = snapshots
+    .filter((snapshot) => !snapshot.playerId)
+    .map((snapshot, index) => ({
+      captureType: "guild",
+      reviewId: `unmatched:${snapshot.name ?? "member"}:${sourceFromVerification(snapshot.verificationNote) || index}`,
+      playerId: null,
+      name: snapshot.name ?? "Unmatched member",
+      role: snapshot.role ?? "member",
+      power: snapshot.power ?? null,
+      contribution7d: snapshot.contribution7d ?? null,
+      bossAttacks: snapshot.bossAttacks ?? null,
+      bossDamageToday: snapshot.bossDamageToday ?? null,
+      source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
+    }));
+  return [...matchedRows, ...unmatchedRows];
 }
 
 function buildDailyPowerStats() {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -90,16 +91,36 @@ def validate_extracted_import(
     boss_screenshots: Sequence[ImportedScreenshot],
     extracted_metrics: Sequence[ExtractedMemberMetrics],
     boss_rankings: Sequence[ExtractedBossRanking],
+    expected_member_count: int | None = None,
 ) -> dict[str, object]:
     errors: list[str] = []
     detected_member_rows = sum(item.row_count or 0 for item in member_screenshots)
     detected_boss_rows = sum(item.row_count or 0 for item in boss_screenshots)
     unique_boss_rankings = _unique_boss_rankings(list(boss_rankings))
     member_coverage = len(extracted_metrics) / detected_member_rows if detected_member_rows else 1.0
+    detected_roster_coverage = (
+        min(detected_member_rows / expected_member_count, 1.0)
+        if expected_member_count
+        else None
+    )
+    roster_coverage = (
+        min(len(extracted_metrics) / expected_member_count, 1.0)
+        if expected_member_count
+        else None
+    )
     boss_coverage = len([row for row in unique_boss_rankings if row.boss_rank is not None]) / detected_boss_rows if detected_boss_rows else 1.0
     warnings: list[str] = []
 
-    if detected_member_rows and not extracted_metrics:
+    if expected_member_count and detected_member_rows < math.ceil(expected_member_count * 0.90):
+        errors.append(
+            f"incomplete guild capture: detected {detected_member_rows} rows for "
+            f"{expected_member_count} roster members; upload the remaining guild screenshots"
+        )
+    elif expected_member_count and len(extracted_metrics) < math.ceil(expected_member_count * 0.85):
+        errors.append(
+            f"guild OCR matched only {len(extracted_metrics)} of {expected_member_count} roster members"
+        )
+    elif detected_member_rows and not extracted_metrics:
         errors.append(f"member OCR extracted 0 of {detected_member_rows} detected rows")
     elif detected_member_rows >= 5 and member_coverage < 0.65:
         errors.append(f"member OCR coverage is only {member_coverage:.0%}")
@@ -139,6 +160,8 @@ def validate_extracted_import(
     return {
         "status": "accepted_with_warnings" if warnings else "accepted",
         "member_coverage": round(member_coverage, 4),
+        "detected_roster_coverage": round(detected_roster_coverage, 4) if detected_roster_coverage is not None else None,
+        "roster_coverage": round(roster_coverage, 4) if roster_coverage is not None else None,
         "boss_coverage": round(boss_coverage, 4),
         "warnings": warnings,
         "errors": [],
@@ -243,6 +266,7 @@ def _import_capture_day_unlocked(
         boss_screenshots=boss_screenshots,
         extracted_metrics=extracted_metrics,
         boss_rankings=daily_boss_rankings.get(capture_date, []),
+        expected_member_count=len(roster),
     )
 
     backup_path = backup_before_publish(sample_data_path, imports_root, capture_date) if update_front else None

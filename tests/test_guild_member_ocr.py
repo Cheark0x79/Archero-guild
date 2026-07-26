@@ -1,6 +1,10 @@
 import unittest
 
 from observer.pipeline.guild_member_ocr import (
+    RosterEntry,
+    _match_roster_name,
+    _parse_visible_activity_days,
+    _raw_name_has_signal,
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
@@ -45,6 +49,24 @@ class GuildMemberOcrTests(unittest.TestCase):
         candidates = [550, 850, 550, 0, 550]
 
         self.assertEqual(_select_integer_candidate(candidates), 550)
+
+    def test_match_roster_name_removes_ui_prefixes_and_normalizes_zero(self) -> None:
+        roster = [
+            RosterEntry("1", "June00"),
+            RosterEntry("2", "Jokowi"),
+        ]
+
+        self.assertEqual(_match_roster_name(["Members+ JuneOO"], roster)[0].player_id, "1")
+        self.assertEqual(_match_roster_name(["bers? jokewi"], roster)[0].player_id, "2")
+
+    def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
+        self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))
+        self.assertFalse(_raw_name_has_signal(" | pers? aA | "))
+
+    def test_empty_activity_area_means_member_is_online_today(self) -> None:
+        self.assertEqual(_parse_visible_activity_days(""), 0)
+        self.assertEqual(_parse_visible_activity_days("   "), 0)
+        self.assertEqual(_parse_visible_activity_days("01d 05h"), 1)
 
 
 if __name__ == "__main__":
