@@ -71,7 +71,7 @@ class CaptureTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["path"], f"{directory}/2026-07-16/guild/members-001.png")
+        self.assertEqual(Path(payload["path"]), Path(directory) / "2026-07-16" / "guild" / "members-001.png")
         self.assertTrue(payload["dry_run"])
 
     def test_cli_rejects_invalid_date(self) -> None:

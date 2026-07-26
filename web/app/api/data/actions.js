@@ -80,10 +80,20 @@ function hasProjectFlake() {
 
 export function observerEnv(extra = {}) {
   const cwd = projectRoot();
+  const tesseractDirectory =
+    process.platform === "win32" && existsSync("C:\\Program Files\\Tesseract-OCR\\tesseract.exe")
+      ? "C:\\Program Files\\Tesseract-OCR"
+      : null;
+  const windowsTessdata =
+    process.platform === "win32" && process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, "ArcheroObserver", "tessdata")
+      : null;
   return {
     ...process.env,
     ...extra,
+    PATH: [tesseractDirectory, process.env.PATH].filter(Boolean).join(path.delimiter),
     PYTHONPATH: [cwd, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+    TESSDATA_PREFIX: windowsTessdata && existsSync(windowsTessdata) ? windowsTessdata : process.env.TESSDATA_PREFIX,
   };
 }
 
@@ -170,7 +180,7 @@ export async function readUploadedPng(file) {
 }
 
 export async function writePngBuffer(buffer, destination) {
-  await fs.writeFile(destination, buffer);
+  await fs.writeFile(destination, buffer, { flag: "wx" });
 }
 
 export async function findExistingScreenshotByHash(kind, date, sha256) {

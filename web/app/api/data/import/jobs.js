@@ -68,6 +68,12 @@ export function currentImportJob() {
   return store.currentJobId ? store.jobs.get(store.currentJobId) ?? null : null;
 }
 
+export function listImportJobs() {
+  return [...state().jobs.values()]
+    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+    .map(publicJob);
+}
+
 export function publicJob(job) {
   return {
     id: job.id,
@@ -160,8 +166,8 @@ function applyProgress(job, event) {
 function stepIndexForPhase(phase) {
   if (["find_raw", "detect_members", "detect_boss"].includes(phase)) return 0;
   if (["extract_current_members", "extract_daily_members", "extract_boss"].includes(phase)) return 1;
-  if (["write_report", "persist_database"].includes(phase)) return 2;
-  if (["update_front", "done"].includes(phase)) return 3;
+  if (["validate_import", "update_front", "persist_database"].includes(phase)) return 2;
+  if (["write_report", "done"].includes(phase)) return 3;
   return 0;
 }
 

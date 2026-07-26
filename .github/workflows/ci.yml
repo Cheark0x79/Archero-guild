@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: archero_observer
+          POSTGRES_USER: archero
+          POSTGRES_PASSWORD: archero_dev_password
+        ports:
+          - 55440:5432
+        options: >-
+          --health-cmd "pg_isready -U archero -d archero_observer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow pytesseract "psycopg[binary]"
+      - run: python -m unittest discover -s tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - working-directory: web
+        run: npm ci
+      - working-directory: web
+        run: npm test
+      - working-directory: web
+        run: npm audit --omit=dev
+      - working-directory: web
+        run: npm run build

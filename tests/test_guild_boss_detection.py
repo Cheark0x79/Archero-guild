@@ -57,6 +57,20 @@ class GuildBossDamageTests(unittest.TestCase):
         self.assertEqual(repaired[1].damage_text, "421.21M")
         self.assertEqual(repaired[1].boss_damage_today, 421_210_000)
 
+    def test_repairs_implausible_billion_to_million_ocr_drop(self) -> None:
+        rankings = [
+            ExtractedBossRanking("podium 2", 1, "podium", 2, None, "godforlin", "godforlin", "23.91B", 23_910_000_000),
+            ExtractedBossRanking("podium 3", 2, "podium", 3, None, "Inf3rn4l", "Inf3rn4l", "215.71M", 215_710_000),
+            ExtractedBossRanking("boss row 0", 0, "list", 4, None, "bolby", "bolby", "12.45M", 12_450_000),
+            ExtractedBossRanking("boss row 1", 1, "list", 5, None, "Deathlinger", "Deathlinger", "12.30M", 12_300_000),
+        ]
+
+        repaired = _repair_rank_damage_order(rankings)
+
+        self.assertEqual(repaired[1].damage_text, "15.71B")
+        self.assertEqual(repaired[2].damage_text, "12.45B")
+        self.assertEqual(repaired[3].damage_text, "12.30B")
+
     def test_keeps_valid_trillion_top_rank(self) -> None:
         rankings = [
             ExtractedBossRanking("boss podium 1", 0, "podium", 1, "119934456", "Sendrock", "Sendrock", "2.50T", 2_500_000_000_000),

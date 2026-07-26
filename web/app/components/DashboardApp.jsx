@@ -99,6 +99,7 @@ const routeMeta = {
 export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null }) {
   const [rules, setRules] = useStoredRules();
   const [dataVersion, setDataVersion] = useState(0);
+  const [dataWarning, setDataWarning] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState({ key: null, direction: "asc" });
@@ -114,6 +115,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
       .then((payload) => {
         if (cancelled || !payload?.data) return;
         applyDashboardData(payload.data);
+        setDataWarning(payload.warning ?? "");
         if (!window.localStorage.getItem(RULES_STORAGE_KEY)) {
           setRules(normalizeRules({ ...defaultRules, currentDate: currentImportDate() }));
         }
@@ -148,6 +150,12 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             <strong>{formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}</strong>
           </div>
         </header>
+        {dataWarning ? (
+          <div className="data-warning" role="status">
+            <strong>Data source warning</strong>
+            <span>{dataWarning}</span>
+          </div>
+        ) : null}
 
         {activeRoute === "dashboard" && <Dashboard rules={rules} />}
         {activeRoute === "members" && (
@@ -234,6 +242,7 @@ function DataView() {
   const [uploadResult, setUploadResult] = useState(null);
   const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
   const [importJob, setImportJob] = useState(null);
+  const [importHistory, setImportHistory] = useState([]);
   const reportedImportJobs = useRef(new Set());
   const importRunning = importJob && ["queued", "running"].includes(importJob.status);
 
@@ -326,7 +335,7 @@ function DataView() {
         action,
         status: "warning",
         title: `${dataActionLabel(action)} discarded`,
-        detail: `${captureDialog.result.path} was deleted.`,
+        detail: `${captureDialog.result.path} was moved to the recoverable screenshot trash.`,
       });
       setCaptureDialog(null);
     } catch (error) {
@@ -388,6 +397,7 @@ function DataView() {
     try {
       const response = await fetch(`/api/data/import/status${suffix}`, { headers: dataActionHeaders() });
       const payload = await response.json().catch(() => ({}));
+      setImportHistory(payload.jobs ?? []);
       if (!response.ok || payload.ok === false || !payload.job) return;
       setImportJob(payload.job);
       setSyncSteps(importJobToSteps(payload.job));
@@ -551,11 +561,42 @@ function DataView() {
             <meter min="0" max="100" value={importJob.progress ?? 0}>
               {importJob.progress ?? 0}%
             </meter>
+            {importJob.status === "succeeded" && importJob.result?.quality ? (
+              <div className={`import-quality ${importJob.result.quality.status}`}>
+                <strong>{importJob.result.quality.status === "accepted" ? "Quality checks passed" : "Accepted with warnings"}</strong>
+                <span>
+                  Guild {Math.round((importJob.result.quality.member_coverage ?? 0) * 100)}% · Boss{" "}
+                  {Math.round((importJob.result.quality.boss_coverage ?? 0) * 100)}%
+                </span>
+                {(importJob.result.quality.warnings ?? []).map((warning) => (
+                  <small key={warning}>{warning}</small>
+                ))}
+                <small>
+                  {importJob.result.database_persisted ? "Saved to PostgreSQL." : "PostgreSQL not configured; local data only."}
+                  {importJob.result.backup_path ? ` Backup: ${importJob.result.backup_path}` : ""}
+                </small>
+              </div>
+            ) : null}
             <small>{importJob.status === "failed" ? importJob.error : `Updated ${formatDateTime(importJob.updatedAt)}. Status refreshes every 5 seconds while running.`}</small>
           </div>
         ) : (
           <p className="muted">No import job is currently known by the server.</p>
         )}
+        {importHistory.length ? (
+          <div className="import-history">
+            <strong>Recent imports</strong>
+            {importHistory.map((job) => (
+              <article className={job.status} key={job.id}>
+                <span>{job.date ?? "Latest capture"}</span>
+                <StatusPill
+                  label={importHistoryLabel(job)}
+                  severity={importHistorySeverity(job)}
+                />
+                <small>{job.status === "failed" ? job.error : job.result?.quality?.warnings?.[0] ?? job.detail}</small>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel data-log-panel">
@@ -916,6 +957,7 @@ function Dashboard({ rules }) {
 function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, setSort, rules }) {
   const summary = buildSummary(members, rules);
   const [showFormerMembers, setShowFormerMembers] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const historyDates = memberHistoryDates(members);
   const latestHistoryDate = historyDates.at(-1) ?? currentImportDate();
   const [selectedMembersDate, setSelectedMembersDate] = useState(latestHistoryDate);
@@ -950,6 +992,19 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
     if (historyDates.length === 0) return;
     const nextIndex = Math.min(historyDates.length - 1, selectedMembersDateIndex + 1);
     setSelectedMembersDate(historyDates[nextIndex]);
+  }
+
+  async function exportMembers() {
+    setExporting(true);
+    try {
+      await exportMembersImage(visibleMembers, rules, {
+        selectedDate: selectedMembersDate,
+        query,
+        statusFilter,
+      });
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -992,8 +1047,11 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
         />
         <label className="toggle-field">
           <input type="checkbox" checked={showFormerMembers} onChange={(event) => setShowFormerMembers(event.target.checked)} />
-          <span>Show kicked</span>
+          <span>Show former members</span>
         </label>
+        <button className="secondary-button" type="button" onClick={exportMembers} disabled={exporting || visibleMembers.length === 0}>
+          {exporting ? "Exporting..." : "Export image"}
+        </button>
       </div>
       <div className="identity-metrics">
         {cards.map(([label, value, detail]) => (
@@ -1701,16 +1759,30 @@ function CheckView() {
     setSourceSortDirection((current) => (current === "asc" ? "desc" : "asc"));
   }
 
-  function setRowReview(reviewId, status) {
+  function setRowGood(reviewId) {
     if (!selectedDay) return;
     const key = checkRowKey(selectedDay.date, reviewId);
     setValidatedRows((current) => {
       const next = { ...current };
-      if (checkReviewStatus(next, selectedDay.date, reviewId) === status) {
+      if (checkReviewStatus(next, selectedDay.date, reviewId) === "valid") {
         delete next[key];
       } else {
-        next[key] = status;
+        next[key] = { status: "valid", fields: {} };
       }
+      return next;
+    });
+  }
+
+  function toggleBadField(reviewId, field) {
+    if (!selectedDay) return;
+    const key = checkRowKey(selectedDay.date, reviewId);
+    setValidatedRows((current) => {
+      const next = { ...current };
+      const fields = { ...checkReviewFields(next, selectedDay.date, reviewId) };
+      if (fields[field]) delete fields[field];
+      else fields[field] = checkFieldLabel(field);
+      if (Object.keys(fields).length === 0) delete next[key];
+      else next[key] = { status: "invalid", fields };
       return next;
     });
   }
@@ -1809,7 +1881,7 @@ function CheckView() {
             {orderedRows.map((row) => {
               const reviewStatus = checkReviewStatus(validatedRows, selectedDay?.date, row.reviewId);
               const isValid = reviewStatus === "valid";
-              const isInvalid = reviewStatus === "invalid";
+              const invalidFields = checkReviewFields(validatedRows, selectedDay?.date, row.reviewId);
               return (
                 <tr className={reviewStatus ? `check-row-${reviewStatus}` : ""} key={row.reviewId}>
                   <td>
@@ -1817,32 +1889,61 @@ function CheckView() {
                       label={row.name}
                       date={selectedDay?.date}
                       isValid={isValid}
-                      isInvalid={isInvalid}
-                      onMarkValid={() => setRowReview(row.reviewId, "valid")}
-                      onMarkInvalid={() => setRowReview(row.reviewId, "invalid")}
+                      invalidFields={invalidFields}
+                      onMarkValid={() => setRowGood(row.reviewId)}
                     />
                   </td>
                   {checkMode === "guild" ? (
                     <>
                       <td>
-                        <div className="player-cell">
-                          <strong>{row.name}</strong>
-                          <small>{row.playerId}</small>
-                        </div>
+                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          <div className="player-cell">
+                            <strong>{row.name}</strong>
+                            <small>{row.playerId}</small>
+                          </div>
+                        </ReviewableValue>
                       </td>
-                      <td>{roleLabel(row.role)}</td>
-                      <td className="numeric">{formatOptionalCompact(row.power)}</td>
-                      <td className="numeric">{formatOptionalNumber(row.bossAttacks)}</td>
-                      <td className="numeric">{formatOptionalNumber(row.contribution7d)}</td>
+                      <td>
+                        <ReviewableValue field="role" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {roleLabel(row.role)}
+                        </ReviewableValue>
+                      </td>
+                      <td className="numeric">
+                        <ReviewableValue field="power" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {formatOptionalCompact(row.power)}
+                        </ReviewableValue>
+                      </td>
+                      <td className="numeric">
+                        <ReviewableValue field="bossAttacks" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {formatOptionalNumber(row.bossAttacks)}
+                        </ReviewableValue>
+                      </td>
+                      <td className="numeric">
+                        <ReviewableValue field="contribution7d" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {formatOptionalNumber(row.contribution7d)}
+                        </ReviewableValue>
+                      </td>
                       <td>
                         <span className="muted">{row.source}</span>
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="numeric">{formatOptionalNumber(row.bossRank)}</td>
-                      <td>{row.name}</td>
-                      <td className="numeric">{formatOptionalBossDamage(row.bossDamageToday, row.bossDamageText)}</td>
+                      <td className="numeric">
+                        <ReviewableValue field="bossRank" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {formatOptionalNumber(row.bossRank)}
+                        </ReviewableValue>
+                      </td>
+                      <td>
+                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {row.name}
+                        </ReviewableValue>
+                      </td>
+                      <td className="numeric">
+                        <ReviewableValue field="bossDamageToday" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {formatOptionalBossDamage(row.bossDamageToday, row.bossDamageText)}
+                        </ReviewableValue>
+                      </td>
                       <td>
                         <span className="muted">{row.source}</span>
                       </td>
@@ -1861,30 +1962,40 @@ function CheckView() {
   );
 }
 
-function CheckReviewButtons({ label, date, isValid, isInvalid, onMarkValid, onMarkInvalid }) {
+function CheckReviewButtons({ label, date, isValid, invalidFields, onMarkValid }) {
+  const badLabels = Object.keys(invalidFields).map(checkFieldLabel);
   return (
     <div className="check-toggle-group">
       <button
-        className={`check-toggle good ${isValid ? "checked" : ""}`}
+        className={`check-good-button ${isValid ? "checked" : ""}`}
         type="button"
         aria-label={`${isValid ? "Uncheck good" : "Mark good"} ${label} on ${date}`}
         aria-pressed={isValid}
         title={isValid ? "Uncheck good" : "Mark good"}
         onClick={onMarkValid}
       >
-        ✓
+        {isValid ? "Good ✓" : "Good"}
       </button>
-      <button
-        className={`check-toggle bad ${isInvalid ? "checked" : ""}`}
-        type="button"
-        aria-label={`${isInvalid ? "Uncheck bad" : "Mark bad"} ${label} on ${date}`}
-        aria-pressed={isInvalid}
-        title={isInvalid ? "Uncheck bad" : "Mark bad"}
-        onClick={onMarkInvalid}
-      >
-        !
-      </button>
+      {badLabels.length > 0 ? <small className="bad-fields-summary">Bad: {badLabels.join(", ")}</small> : null}
     </div>
+  );
+}
+
+function ReviewableValue({ field, invalidFields, onToggle, children }) {
+  const isBad = Boolean(invalidFields[field]);
+  const label = checkFieldLabel(field);
+  return (
+    <button
+      className={`check-value-button ${isBad ? "bad" : ""}`}
+      type="button"
+      aria-label={`${isBad ? "Clear error on" : "Mark as incorrect:"} ${label}`}
+      aria-pressed={isBad}
+      title={isBad ? `Clear ${label} error` : `Mark ${label} as incorrect`}
+      onClick={() => onToggle(field)}
+    >
+      {children}
+      {isBad ? <small className="bad-value-label">Not good</small> : null}
+    </button>
   );
 }
 
@@ -2640,6 +2751,7 @@ function NewMemberBadge({ member, rules }) {
 function useStoredRules() {
   const initialRules = useMemo(() => normalizeRules({ ...defaultRules, currentDate: currentImportDate() }), []);
   const [rules, setRules] = useState(initialRules);
+  const hydrated = useRef(false);
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(RULES_STORAGE_KEY) ?? "{}");
@@ -2647,15 +2759,39 @@ function useStoredRules() {
     } catch {
       setRules(initialRules);
     }
+    let active = true;
+    fetch("/api/data/rules")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (active && payload?.rules) {
+          setRules(normalizeRules({ ...defaultRules, ...payload.rules, currentDate: currentImportDate() }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) hydrated.current = true;
+      });
+    return () => {
+      active = false;
+    };
   }, [initialRules]);
   useEffect(() => {
+    if (!hydrated.current) return;
     const { currentDate, ...persistedRules } = rules;
     localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(persistedRules));
+    if (window.location.pathname.startsWith("/admin")) {
+      fetch("/api/data/rules", {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" },
+        body: JSON.stringify({ rules: persistedRules }),
+      }).catch(() => {});
+    }
   }, [rules]);
   return [rules, setRules];
 }
 
 function useCheckValidation() {
+  const hydrated = useRef(false);
   const [validatedRows, setValidatedRows] = useState(() => {
     if (typeof window === "undefined") return {};
     try {
@@ -2666,7 +2802,30 @@ function useCheckValidation() {
     }
   });
   useEffect(() => {
+    let active = true;
+    fetch("/api/data/reviews")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (active && payload?.reviews && typeof payload.reviews === "object") {
+          setValidatedRows(payload.reviews);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) hydrated.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!hydrated.current) return;
     localStorage.setItem(CHECK_VALIDATION_STORAGE_KEY, JSON.stringify(validatedRows));
+    fetch("/api/data/reviews", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" },
+      body: JSON.stringify({ reviews: validatedRows }),
+    }).catch(() => {});
   }, [validatedRows]);
   return [validatedRows, setValidatedRows];
 }
@@ -2690,7 +2849,27 @@ function checkRowKey(date, playerId) {
 function checkReviewStatus(validatedRows, date, playerId) {
   const value = validatedRows[checkRowKey(date, playerId)];
   if (value === true) return "valid";
+  if (value && typeof value === "object" && (value.status === "valid" || value.status === "invalid")) return value.status;
   return value === "valid" || value === "invalid" ? value : null;
+}
+
+function checkReviewFields(validatedRows, date, playerId) {
+  const value = validatedRows[checkRowKey(date, playerId)];
+  return value && typeof value === "object" && value.fields && typeof value.fields === "object" && !Array.isArray(value.fields) ? value.fields : {};
+}
+
+const CHECK_FIELD_LABELS = {
+  identity: "User",
+  role: "Role",
+  power: "Power",
+  bossAttacks: "Boss tries",
+  contribution7d: "Donation",
+  bossRank: "Rank",
+  bossDamageToday: "Damage",
+};
+
+function checkFieldLabel(field) {
+  return CHECK_FIELD_LABELS[field] ?? field;
 }
 
 function checkReviewRank(status) {
@@ -3545,6 +3724,141 @@ function dataSuccessMessage(action, payload) {
 function addDataMessage(setMessages, message) {
   const at = message.at ?? new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   setMessages((current) => [{ ...message, id: `${Date.now()}-${message.action}`, at }, ...current].slice(0, 8));
+}
+
+function importHistoryLabel(job) {
+  if (job.status === "failed") return "Rejected";
+  if (["queued", "running"].includes(job.status)) return "Running";
+  if (!job.result?.quality) return "Legacy / unscored";
+  return job.result.quality.status === "accepted_with_warnings" ? "Accepted with warnings" : "Accepted";
+}
+
+function importHistorySeverity(job) {
+  if (job.status === "failed") return "danger";
+  if (!job.result?.quality || job.result.quality.status === "accepted_with_warnings") return "warning";
+  return "positive";
+}
+
+async function exportMembersImage(rows, rules, filters) {
+  const width = 1800;
+  const margin = 64;
+  const headerHeight = 190;
+  const summaryTop = 208;
+  const summaryHeight = 112;
+  const tableTop = 354;
+  const tableHeaderHeight = 58;
+  const rowHeight = 58;
+  const footerHeight = 76;
+  const height = tableTop + tableHeaderHeight + rows.length * rowHeight + footerHeight + margin;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  drawExportBackground(ctx, width, height);
+  drawText(ctx, "Archero Guild", margin, 78, { size: 26, weight: 800, color: "#435062" });
+  drawText(ctx, "Guild members", margin, 132, { size: 48, weight: 900, color: "#111a25" });
+  const filterParts = [
+    filters.selectedDate,
+    filters.statusFilter !== "all" ? `Filter: ${filters.statusFilter}` : "Current guild",
+    filters.query ? `Search: ${filters.query}` : null,
+  ].filter(Boolean);
+  drawText(ctx, filterParts.join("  -  "), margin, 174, { size: 22, weight: 650, color: "#4b5b6d", maxWidth: 1500 });
+  drawText(ctx, `${rows.length} visible member${rows.length === 1 ? "" : "s"}`, width - margin, 132, { size: 22, weight: 850, color: "#435062", align: "right" });
+
+  const evaluations = rows.map((member) => evaluateMember(member, rules));
+  const linkedCount = rows.filter((member) => member.discordLinked).length;
+  const reviewCount = evaluations.filter((evaluation) => evaluation.severity === "warning" || evaluation.severity === "danger").length;
+  const capturedCount = rows.filter((member) => member.metricsCaptured).length;
+  const cards = [
+    ["Visible members", rows.length],
+    ["Discord linked", linkedCount],
+    ["Stats captured", capturedCount],
+    ["Need attention", reviewCount],
+  ];
+  const cardGap = 20;
+  const cardWidth = (width - margin * 2 - cardGap * 3) / 4;
+  cards.forEach(([label, value], index) => {
+    const x = margin + index * (cardWidth + cardGap);
+    ctx.fillStyle = "#ffffff";
+    roundedRect(ctx, x, summaryTop, cardWidth, summaryHeight, 12);
+    ctx.fill();
+    ctx.strokeStyle = "#c8d2dc";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    drawText(ctx, label, x + 24, summaryTop + 36, { size: 18, weight: 800, color: "#566577" });
+    drawText(ctx, String(value), x + 24, summaryTop + 86, { size: 38, weight: 950, color: "#111a25" });
+  });
+
+  drawMembersExportTable(ctx, rows, evaluations, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
+  drawText(ctx, `Generated by Archero Observer on ${new Date().toLocaleString("en-GB")}`, margin, height - 52, { size: 18, weight: 650, color: "#667588" });
+  downloadCanvas(canvas, `archero-members-${filters.selectedDate || currentIsoDate()}.png`);
+}
+
+function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeight, rowHeight) {
+  const columns = {
+    number: x + 28,
+    member: x + 92,
+    discord: x + 430,
+    role: x + 650,
+    activity: x + 850,
+    donation: x + 1130,
+    bossTries: x + 1320,
+    power: x + 1510,
+    status: x + width - 24,
+  };
+  ctx.fillStyle = "#ffffff";
+  roundedRect(ctx, x, y, width, headerHeight + rows.length * rowHeight, 12);
+  ctx.fill();
+  ctx.strokeStyle = "#c8d2dc";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const headers = [
+    ["#", columns.number, "left"],
+    ["Member", columns.member, "left"],
+    ["Discord", columns.discord, "left"],
+    ["Role", columns.role, "left"],
+    ["Activity", columns.activity, "left"],
+    ["Donation", columns.donation, "right"],
+    ["Boss tries", columns.bossTries, "right"],
+    ["Power", columns.power, "right"],
+    ["Status", columns.status, "right"],
+  ];
+  headers.forEach(([label, columnX, align]) => drawText(ctx, label, columnX, y + 38, { size: 17, weight: 900, color: "#435062", align }));
+  drawLine(ctx, x, y + headerHeight, x + width, y + headerHeight);
+
+  rows.forEach((member, index) => {
+    const rowY = y + headerHeight + index * rowHeight;
+    const evaluation = evaluations[index];
+    if (index % 2 === 1) {
+      ctx.fillStyle = "#f7f9fb";
+      ctx.fillRect(x + 1, rowY, width - 2, rowHeight);
+    }
+    drawLine(ctx, x, rowY + rowHeight, x + width, rowY + rowHeight);
+    const baseline = rowY + 37;
+    drawText(ctx, String(index + 1), columns.number, baseline, { size: 18, weight: 750, color: "#667588" });
+    drawText(ctx, member.name, columns.member, baseline, { size: 20, weight: 850, color: "#111a25", maxWidth: 300 });
+    drawText(ctx, member.discordName || (member.discordLinked ? "Linked" : "Missing"), columns.discord, baseline, {
+      size: 18,
+      weight: 700,
+      color: member.discordLinked ? "#18794e" : "#b54708",
+      maxWidth: 190,
+    });
+    drawText(ctx, roleLabel(member.role), columns.role, baseline, { size: 18, weight: 700, maxWidth: 170 });
+    drawText(ctx, activityLabel(member.lastActivityDays), columns.activity, baseline, { size: 18, weight: 700, maxWidth: 230 });
+    drawText(ctx, formatOptionalNumber(member.contribution7d), columns.donation, baseline, { size: 18, weight: 750, align: "right" });
+    drawText(ctx, formatOptionalNumber(member.bossAttacks), columns.bossTries, baseline, { size: 18, weight: 750, align: "right" });
+    drawText(ctx, formatOptionalCompact(member.power), columns.power, baseline, { size: 18, weight: 750, align: "right" });
+    drawText(ctx, evaluation.status, columns.status, baseline, {
+      size: 18,
+      weight: 850,
+      align: "right",
+      color: evaluation.severity === "danger" ? "#b42318" : evaluation.severity === "warning" ? "#b54708" : "#18794e",
+      maxWidth: 190,
+    });
+  });
 }
 
 function currentImportDate() {

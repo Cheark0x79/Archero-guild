@@ -55,8 +55,16 @@ export async function POST(request) {
       });
     }
 
-    const destination = await nextUploadPath(kind, date);
-    await writePngBuffer(upload.buffer, destination.absolutePath);
+    let destination;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      destination = await nextUploadPath(kind, date);
+      try {
+        await writePngBuffer(upload.buffer, destination.absolutePath);
+        break;
+      } catch (error) {
+        if (!(error && typeof error === "object" && error.code === "EEXIST") || attempt === 19) throw error;
+      }
+    }
     const relativePath = relativeProjectPath(destination.absolutePath);
     return NextResponse.json({
       ok: true,

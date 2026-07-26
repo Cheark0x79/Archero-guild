@@ -2051,6 +2051,61 @@ th.numeric {
   background: oklch(97% 0.018 155);
 }
 
+.import-quality {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px !important;
+  padding: 10px;
+  border: 1px solid oklch(76% 0.08 155);
+  border-radius: 7px;
+  background: oklch(98% 0.018 155);
+}
+
+.import-quality.accepted_with_warnings {
+  border-color: oklch(78% 0.1 75);
+  background: oklch(97% 0.025 75);
+}
+
+.import-quality small {
+  grid-column: 1 / -1;
+}
+
+.import-history {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 16px;
+}
+
+.import-history > article {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.import-history > article small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.import-history > article.failed {
+  border-color: oklch(78% 0.09 25);
+}
+
+@media (max-width: 720px) {
+  .import-history > article {
+    grid-template-columns: 1fr auto;
+  }
+
+  .import-history > article small {
+    grid-column: 1 / -1;
+  }
+}
+
 .data-log {
   display: grid;
   gap: 8px;
@@ -2263,7 +2318,7 @@ th.numeric {
 }
 
 .check-table .col-check-status {
-  width: 92px;
+  width: 170px;
 }
 
 .check-table .col-check-name {
@@ -2298,64 +2353,94 @@ th.numeric {
 }
 
 .check-toggle-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  justify-items: start;
+  gap: 5px;
 }
 
-.check-toggle {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
+.check-good-button {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   color: var(--muted);
-  font-weight: 900;
-  line-height: 1;
+  padding: 6px 11px;
+  font: inherit;
+  font-weight: 800;
 }
 
-.check-toggle:hover,
-.check-toggle:focus-visible {
+.check-good-button:hover,
+.check-good-button:focus-visible {
   border-color: var(--accent);
   background: var(--surface-2);
   outline: 2px solid oklch(72% 0.11 225);
   outline-offset: 2px;
 }
 
-.check-toggle.good:hover,
-.check-toggle.good:focus-visible {
-  color: oklch(32% 0.1 155);
-}
-
-.check-toggle.bad:hover,
-.check-toggle.bad:focus-visible {
-  color: oklch(38% 0.14 25);
-}
-
-.check-toggle.good.checked {
+.check-good-button.checked {
   border-color: oklch(72% 0.08 155);
   background: oklch(92% 0.06 155);
   color: oklch(32% 0.1 155);
 }
 
-.check-toggle.bad.checked {
+.bad-fields-summary {
+  max-width: 155px;
+  color: oklch(42% 0.14 25);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.check-value-button {
+  display: inline-flex;
+  width: 100%;
+  min-height: 38px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  margin: -6px -7px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.numeric .check-value-button {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.check-value-button:hover,
+.check-value-button:focus-visible {
+  border-color: var(--line);
+  background: var(--surface-2);
+  outline: 2px solid oklch(72% 0.11 225);
+  outline-offset: 1px;
+}
+
+.check-value-button.bad {
   border-color: oklch(70% 0.12 25);
-  background: oklch(92% 0.08 25);
-  color: oklch(38% 0.14 25);
+  background: oklch(94% 0.055 25);
+  color: oklch(36% 0.14 25);
+}
+
+.bad-value-label {
+  color: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .check-row-valid {
   background: oklch(97.5% 0.012 155);
 }
 
-.check-row-invalid {
+.check-row-invalid > td:first-child {
   background: oklch(97.5% 0.018 25);
 }
 
-.check-row-valid td:not(:first-child),
-.check-row-invalid td:not(:first-child) {
+.check-row-valid td:not(:first-child) {
   opacity: 0.66;
 }
 
@@ -2669,6 +2754,18 @@ th.numeric {
 .login-actions {
   display: grid;
   gap: 10px;
+}
+
+.data-warning {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0 1.5rem 1rem;
+  padding: 0.75rem 1rem;
+  color: #7a2e0e;
+  background: #fff4e5;
+  border: 1px solid #f0b56a;
+  border-radius: 10px;
 }
 
 .login-actions .primary-button,

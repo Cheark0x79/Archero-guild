@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from observer.config import ObserverConfig
 
@@ -36,7 +37,7 @@ class ConfigTests(unittest.TestCase):
         )
 
         self.assertTrue(config.dry_run)
-        self.assertEqual(str(config.adb.normalized_screenshot_dir), "screenshots/normalized")
+        self.assertEqual(config.adb.normalized_screenshot_dir, Path("screenshots/normalized"))
         self.assertEqual(config.regions["ranking_rows"].width, 900)
 
     def test_rejects_invalid_confidence_order(self) -> None:

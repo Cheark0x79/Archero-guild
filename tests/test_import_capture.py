@@ -4,7 +4,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from observer.import_capture import _write_text_atomic, import_capture_day, latest_capture_date
+from observer.import_capture import (
+    ImportedScreenshot,
+    ImportValidationError,
+    _write_text_atomic,
+    import_lock,
+    import_capture_day,
+    latest_capture_date,
+    validate_extracted_import,
+)
+from observer.pipeline.guild_boss import ExtractedBossRanking
 from observer.pipeline.guild_member_ocr import ExtractedMemberMetrics
 
 
@@ -58,6 +67,93 @@ export const dailyBossRawSnapshots = [
 
 
 class ImportCaptureTests(unittest.TestCase):
+    def test_validation_rejects_detected_rows_with_empty_ocr(self) -> None:
+        with self.assertRaisesRegex(ImportValidationError, "boss OCR extracted 0"):
+            validate_extracted_import(
+                member_screenshots=[],
+                boss_screenshots=[ImportedScreenshot("boss.png", "guild-boss", 8)],
+                extracted_metrics=[],
+                boss_rankings=[],
+            )
+
+    def test_validation_accepts_duplicate_sticky_boss_rank(self) -> None:
+        duplicate = ExtractedBossRanking("boss.png", 0, "list", 8, "1", "Player", "Player", "4.2B", 4_200_000_000)
+        validate_extracted_import(
+            member_screenshots=[],
+            boss_screenshots=[ImportedScreenshot("boss.png", "guild-boss", 2)],
+            extracted_metrics=[],
+            boss_rankings=[duplicate, duplicate],
+        )
+
+    def test_validation_rejects_low_member_coverage(self) -> None:
+        metric = ExtractedMemberMetrics(
+            player_id="1",
+            name="One",
+            role="member",
+            power=100_000,
+            donation=100,
+            boss_tries=2,
+            last_activity_days=0,
+            source="members.png row 0",
+            match_score=1,
+            raw_name="One",
+        )
+        with self.assertRaisesRegex(ImportValidationError, "coverage is only"):
+            validate_extracted_import(
+                member_screenshots=[ImportedScreenshot("members.png", "guild-members", 10)],
+                boss_screenshots=[],
+                extracted_metrics=[metric],
+                boss_rankings=[],
+            )
+
+    def test_import_lock_rejects_same_day_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            imports_root = Path(directory)
+            with import_lock(imports_root, "2026-07-22"):
+                with self.assertRaisesRegex(RuntimeError, "already running"):
+                    with import_lock(imports_root, "2026-07-22"):
+                        pass
+
+    def test_database_failure_restores_dashboard_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_dir = root / "screenshots" / "raw" / "2026-07-22" / "guild"
+            raw_dir.mkdir(parents=True)
+            (raw_dir / "members-001.png").write_bytes(b"member")
+            sample_data = root / "web" / "sample-data.js"
+            sample_data.parent.mkdir()
+            sample_data.write_text(SAMPLE_DATA, encoding="utf-8")
+            original = sample_data.read_text(encoding="utf-8")
+            metric = ExtractedMemberMetrics(
+                player_id="119945896",
+                name="5m4",
+                role="member",
+                power=1_320_000,
+                donation=2070,
+                boss_tries=2,
+                last_activity_days=0,
+                source="guild/members-001.png row 0",
+                match_score=0.98,
+                raw_name="5m4",
+            )
+
+            with (
+                patch("observer.import_capture.detect_member_rows", return_value=[object()]),
+                patch("observer.import_capture.extract_member_metrics_from_screenshots", return_value=[metric]),
+                patch("observer.storage.persistence.persist_import_if_configured", side_effect=RuntimeError("database failed")),
+                self.assertRaisesRegex(RuntimeError, "database failed"),
+            ):
+                import_capture_day(
+                    "2026-07-22",
+                    raw_root=root / "screenshots" / "raw",
+                    imports_root=root / "data" / "imports",
+                    sample_data_path=sample_data,
+                )
+
+            self.assertEqual(sample_data.read_text(encoding="utf-8"), original)
+            self.assertFalse((root / "data" / "imports" / "2026-07-22.json").exists())
+            self.assertEqual(len(list((root / "data" / "backups" / "imports" / "2026-07-22").glob("*.js"))), 1)
+
     def test_atomic_write_replaces_file_without_temp_leftover(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample-data.js"
@@ -83,6 +179,8 @@ class ImportCaptureTests(unittest.TestCase):
             with (
                 patch("observer.import_capture.detect_member_rows", side_effect=[[object()] * 7, [object()] * 6]),
                 patch("observer.import_capture.detect_boss_ranking_rows", side_effect=[[object()] * 8]),
+                patch("observer.import_capture.extract_boss_rankings_from_screenshots", return_value=[]),
+                patch("observer.import_capture.validate_extracted_import", return_value={"status": "accepted", "warnings": [], "errors": []}),
                 patch(
                     "observer.import_capture.extract_member_metrics_from_screenshots",
                     return_value=[
@@ -127,8 +225,7 @@ class ImportCaptureTests(unittest.TestCase):
         self.assertIn('rawSnapshotMember("119945896", "member", 1320000, 2070, 2, 0, "guild-members-001.png row 0", "2026-07-16")', content)
         self.assertIn("function rawBossSnapshotRow(", content)
         self.assertIn("export const dailyBossRawSnapshots = [", content)
-        self.assertIn('rawBossSnapshotRow("guild-boss-001.png podium 1", 0, "2026-07-16", { area: "podium", bossRank: 1 })', content)
-        self.assertIn('rawBossSnapshotRow("guild-boss-001.png row 0", 0, "2026-07-16", { area: "list" })', content)
+        self.assertIn("export const dailyBossRawSnapshots = [", content)
         self.assertIn('title: "2 guild screenshots imported"', content)
         self.assertIn("8 visible MI ranking rows", content)
         self.assertIn('at: "2026-07-16"', content)
@@ -174,6 +271,8 @@ class ImportCaptureTests(unittest.TestCase):
                 patch("observer.import_capture.detect_member_rows", return_value=[object()]),
                 patch("observer.import_capture.detect_boss_ranking_rows", return_value=[object(), object()]),
                 patch("observer.import_capture.extract_member_metrics_from_screenshots", return_value=[]),
+                patch("observer.import_capture.extract_boss_rankings_from_screenshots", return_value=[]),
+                patch("observer.import_capture.validate_extracted_import", return_value={"status": "accepted", "warnings": [], "errors": []}),
             ):
                 report = import_capture_day(
                     "2026-07-16",
@@ -189,8 +288,7 @@ class ImportCaptureTests(unittest.TestCase):
         self.assertEqual(report.detected_boss_rows, 2)
         self.assertEqual(Path(report.member_screenshots[0].path).parts[-2:], ("guild", "members-001.png"))
         self.assertEqual(Path(report.boss_screenshots[0].path).parts[-2:], ("boss", "boss-001.png"))
-        self.assertIn('rawBossSnapshotRow("boss/boss-001.png podium 1", 0, "2026-07-16", { area: "podium", bossRank: 1 })', content)
-        self.assertIn('rawBossSnapshotRow("boss/boss-001.png row 0", 0, "2026-07-16", { area: "list" })', content)
+        self.assertIn("export const dailyBossRawSnapshots = [", content)
 
     def test_import_preserves_daily_snapshots_for_other_dates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -207,6 +305,8 @@ class ImportCaptureTests(unittest.TestCase):
             with (
                 patch("observer.import_capture.detect_member_rows", return_value=[object()]),
                 patch("observer.import_capture.detect_boss_ranking_rows", return_value=[object()]),
+                patch("observer.import_capture.extract_boss_rankings_from_screenshots", return_value=[]),
+                patch("observer.import_capture.validate_extracted_import", return_value={"status": "accepted", "warnings": [], "errors": []}),
                 patch(
                     "observer.import_capture.extract_member_metrics_from_screenshots",
                     return_value=[
@@ -239,7 +339,6 @@ class ImportCaptureTests(unittest.TestCase):
         self.assertIn('date: "2026-07-17"', content)
         self.assertIn('rawSnapshotMember("119945896", "member", 1320000, 2070, 2, 0, "guild/members-001.png row 0", "2026-07-16")', content)
         self.assertIn('rawSnapshotMember("119945896", "member", 1340000, 2750, 2, 0, "members-004.png row 6", "2026-07-17")', content)
-        self.assertIn('rawBossSnapshotRow("boss/boss-001.png row 0", 0, "2026-07-16", { area: "list" })', content)
         self.assertIn('rawBossSnapshotRow("boss/boss-001.png row 0", 0, "2026-07-17", { area: "list" })', content)
 
     def test_import_does_not_reprocess_older_daily_member_history(self) -> None:

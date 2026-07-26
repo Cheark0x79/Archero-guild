@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.pyc
+data
+screenshots
+web/.next
+web/node_modules
+web/npm-debug.log

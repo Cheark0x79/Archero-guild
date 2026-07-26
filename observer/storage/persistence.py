@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import math
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
@@ -31,6 +32,8 @@ def persist_import_if_configured(
     except Exception as exc:
         if not _is_database_unavailable(exc):
             raise
+        if os.environ.get("ARCHERO_REQUIRE_DATABASE") == "1":
+            raise RuntimeError(f"database persistence required but unavailable: {_database_error_message(exc)}") from exc
         print(f"warning: database persistence skipped: {_database_error_message(exc)}", file=sys.stderr)
         return False
     return True
@@ -177,9 +180,21 @@ def _replace_member_metrics(
     extracted_metrics: Sequence[ExtractedMemberMetrics],
     screenshots_by_path: dict[str, int],
 ) -> None:
-    cursor.execute("DELETE FROM guild_snapshots WHERE capture_date = %s", (report.date,))
     if not extracted_metrics:
         return
+    _guard_replacement_size(
+        cursor,
+        """
+        SELECT count(*)
+        FROM member_metrics mm
+        JOIN guild_snapshots gs ON gs.id = mm.snapshot_id
+        WHERE gs.capture_date = %s
+        """,
+        report.date,
+        len(extracted_metrics),
+        "member metrics",
+    )
+    cursor.execute("DELETE FROM guild_snapshots WHERE capture_date = %s", (report.date,))
 
     screenshot_id = next(iter(screenshots_by_path.values()), None)
     cursor.execute(
@@ -221,9 +236,19 @@ def _replace_boss_results(
     screenshots_by_path: dict[str, int],
 ) -> None:
     for day, rankings in daily_boss_rankings.items():
+        deduped_rankings = _dedupe_boss_rankings(rankings)
+        if not deduped_rankings:
+            continue
+        _guard_replacement_size(
+            cursor,
+            "SELECT count(*) FROM boss_daily_results WHERE capture_date = %s",
+            day,
+            len(deduped_rankings),
+            "boss results",
+        )
         boss_key = _boss_key_for_date(day)
         cursor.execute("DELETE FROM boss_daily_results WHERE capture_date = %s", (day,))
-        for index, ranking in enumerate(_dedupe_boss_rankings(rankings)):
+        for index, ranking in enumerate(deduped_rankings):
             if not ranking.name and not ranking.player_id:
                 continue
             screenshot_id = _screenshot_id_for_source(screenshots_by_path, ranking.source)
@@ -251,6 +276,20 @@ def _replace_boss_results(
                     _json(asdict(ranking)),
                 ),
             )
+
+
+def _guard_replacement_size(cursor, query: str, day: str, incoming_count: int, label: str) -> None:
+    if os.environ.get("ARCHERO_ALLOW_PARTIAL_REPLACEMENT") == "1":
+        return
+    cursor.execute(query, (day,))
+    row = cursor.fetchone()
+    existing_count = int(row[0]) if row and row[0] is not None else 0
+    minimum_safe_count = math.ceil(existing_count * 0.70)
+    if existing_count >= 5 and incoming_count < minimum_safe_count:
+        raise RuntimeError(
+            f"refusing to replace {existing_count} existing {label} for {day} "
+            f"with only {incoming_count}; review OCR or set ARCHERO_ALLOW_PARTIAL_REPLACEMENT=1"
+        )
 
 
 def _dedupe_boss_rankings(rankings: Sequence[ExtractedBossRanking]) -> list[ExtractedBossRanking]:

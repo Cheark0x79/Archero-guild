@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { hasDashboardActionHeader } from "../../actions.js";
-import { getImportJob, publicJob } from "../jobs.js";
+import { getImportJob, listImportJobs, publicJob } from "../jobs.js";
 
 export async function GET(request) {
   if (!hasDashboardActionHeader(request)) {
@@ -10,8 +10,8 @@ export async function GET(request) {
   const url = new URL(request.url);
   const job = getImportJob(url.searchParams.get("id"));
   if (!job) {
-    return NextResponse.json({ ok: true, job: null });
+    return NextResponse.json({ ok: true, job: null, jobs: listImportJobs() });
   }
 
-  return NextResponse.json({ ok: true, job: publicJob(job) });
+  return NextResponse.json({ ok: true, job: publicJob(job), jobs: listImportJobs() });
 }

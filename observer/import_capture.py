@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys
-from dataclasses import asdict, dataclass
+import time
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -56,6 +60,7 @@ class ImportedScreenshot:
     path: str
     kind: str
     row_count: int | None = None
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,74 @@ class ImportReport:
     extracted_member_metrics: int
     report_path: str
     front_updated: bool
+    quality: dict[str, object] = field(default_factory=dict)
+    backup_path: str | None = None
+    database_persisted: bool = False
+
+
+class ImportValidationError(RuntimeError):
+    pass
+
+
+def validate_extracted_import(
+    *,
+    member_screenshots: Sequence[ImportedScreenshot],
+    boss_screenshots: Sequence[ImportedScreenshot],
+    extracted_metrics: Sequence[ExtractedMemberMetrics],
+    boss_rankings: Sequence[ExtractedBossRanking],
+) -> dict[str, object]:
+    errors: list[str] = []
+    detected_member_rows = sum(item.row_count or 0 for item in member_screenshots)
+    detected_boss_rows = sum(item.row_count or 0 for item in boss_screenshots)
+    unique_boss_rankings = _unique_boss_rankings(list(boss_rankings))
+    member_coverage = len(extracted_metrics) / detected_member_rows if detected_member_rows else 1.0
+    boss_coverage = len([row for row in unique_boss_rankings if row.boss_rank is not None]) / detected_boss_rows if detected_boss_rows else 1.0
+    warnings: list[str] = []
+
+    if detected_member_rows and not extracted_metrics:
+        errors.append(f"member OCR extracted 0 of {detected_member_rows} detected rows")
+    elif detected_member_rows >= 5 and member_coverage < 0.65:
+        errors.append(f"member OCR coverage is only {member_coverage:.0%}")
+    elif detected_member_rows >= 5 and member_coverage < 0.85:
+        warnings.append(f"member OCR coverage is {member_coverage:.0%}; human review recommended")
+    member_ids = [metric.player_id for metric in extracted_metrics if metric.player_id]
+    duplicate_member_ids = sorted({player_id for player_id in member_ids if member_ids.count(player_id) > 1})
+    if duplicate_member_ids:
+        errors.append(f"duplicate member IDs: {', '.join(duplicate_member_ids)}")
+
+    if detected_boss_rows and not boss_rankings:
+        errors.append(f"boss OCR extracted 0 of {detected_boss_rows} detected rows")
+    elif detected_boss_rows >= 5 and boss_coverage < 0.65:
+        errors.append(f"boss OCR coverage is only {boss_coverage:.0%}")
+    elif detected_boss_rows >= 5 and boss_coverage < 0.85:
+        warnings.append(f"boss OCR coverage is {boss_coverage:.0%}; human review recommended")
+    # The game repeats the current player's sticky row while scrolling. Keep the
+    # best OCR result for each rank before checking the ranking order.
+    ranked = sorted(
+        (
+            ranking
+            for ranking in unique_boss_rankings
+            if ranking.boss_rank is not None and ranking.boss_damage_today is not None
+        ),
+        key=lambda ranking: ranking.boss_rank or 0,
+    )
+    for previous, current in zip(ranked, ranked[1:]):
+        if current.boss_damage_today > previous.boss_damage_today:
+            errors.append(
+                f"boss rank {current.boss_rank} damage {current.damage_text} exceeds "
+                f"rank {previous.boss_rank} damage {previous.damage_text}"
+            )
+            break
+
+    if errors:
+        raise ImportValidationError("Import validation failed: " + "; ".join(errors))
+    return {
+        "status": "accepted_with_warnings" if warnings else "accepted",
+        "member_coverage": round(member_coverage, 4),
+        "boss_coverage": round(boss_coverage, 4),
+        "warnings": warnings,
+        "errors": [],
+    }
 
 
 def import_capture_day(
@@ -81,7 +154,28 @@ def import_capture_day(
     captured_at: str | None = None,
     update_front: bool = True,
 ) -> ImportReport:
-    capture_date = capture_date or latest_capture_date(raw_root)
+    selected_date = capture_date or latest_capture_date(raw_root)
+    validate_capture_date(selected_date)
+    with import_lock(imports_root, selected_date):
+        return _import_capture_day_unlocked(
+            selected_date,
+            raw_root=raw_root,
+            imports_root=imports_root,
+            sample_data_path=sample_data_path,
+            captured_at=captured_at,
+            update_front=update_front,
+        )
+
+
+def _import_capture_day_unlocked(
+    capture_date: str,
+    *,
+    raw_root: Path,
+    imports_root: Path,
+    sample_data_path: Path,
+    captured_at: str | None,
+    update_front: bool,
+) -> ImportReport:
     validate_capture_date(capture_date)
     raw_dir = raw_root / capture_date
     if not raw_dir.exists():
@@ -96,11 +190,25 @@ def import_capture_day(
     member_screenshots = []
     for index, path in enumerate(member_paths, start=1):
         progress("detect_members", f"Detecting guild rows in {path.name} ({index}/{len(member_paths)}).", 8 + _portion(index, len(member_paths), 18))
-        member_screenshots.append(ImportedScreenshot(path=str(path), kind="guild-members", row_count=len(detect_member_rows(path))))
+        member_screenshots.append(
+            ImportedScreenshot(
+                path=path.as_posix(),
+                kind="guild-members",
+                row_count=len(detect_member_rows(path)),
+                sha256=file_sha256(path),
+            )
+        )
     boss_screenshots = []
     for index, path in enumerate(boss_paths, start=1):
         progress("detect_boss", f"Detecting boss rows in {path.name} ({index}/{len(boss_paths)}).", 26 + _portion(index, len(boss_paths), 12))
-        boss_screenshots.append(ImportedScreenshot(path=str(path), kind="guild-boss", row_count=len(detect_boss_ranking_rows(path))))
+        boss_screenshots.append(
+            ImportedScreenshot(
+                path=path.as_posix(),
+                kind="guild-boss",
+                row_count=len(detect_boss_ranking_rows(path)),
+                sha256=file_sha256(path),
+            )
+        )
     detected_member_rows = sum(item.row_count or 0 for item in member_screenshots)
     detected_boss_rows = sum(item.row_count or 0 for item in boss_screenshots)
     captured_at_value = captured_at or default_captured_at(capture_date)
@@ -125,44 +233,105 @@ def import_capture_day(
                 progress("extract_daily_members", f"Extracting previous guild metrics for {previous_date}.", 48)
                 previous_metrics = extract_member_metrics_from_screenshots(previous_member_paths, roster)
         daily_metrics[capture_date] = extracted_metrics
-    if boss_paths and sample_data_path.exists():
+    if boss_paths and detected_boss_rows and sample_data_path.exists():
         progress("extract_boss", f"Extracting boss rankings for {capture_date}.", 76)
-        try:
-            daily_boss_rankings[capture_date] = extract_boss_rankings_from_screenshots(boss_paths, roster)
-        except (GuildBossDetectionError, OSError):
-            daily_boss_rankings = {}
+        daily_boss_rankings[capture_date] = extract_boss_rankings_from_screenshots(boss_paths, roster)
 
+    progress("validate_import", "Validating extracted guild and boss data.", 82)
+    quality = validate_extracted_import(
+        member_screenshots=member_screenshots,
+        boss_screenshots=boss_screenshots,
+        extracted_metrics=extracted_metrics,
+        boss_rankings=daily_boss_rankings.get(capture_date, []),
+    )
+
+    backup_path = backup_before_publish(sample_data_path, imports_root, capture_date) if update_front else None
     report = ImportReport(
         date=capture_date,
         captured_at=captured_at_value,
-        raw_dir=str(raw_dir),
+        raw_dir=raw_dir.as_posix(),
         member_screenshots=member_screenshots,
         boss_screenshots=boss_screenshots,
         detected_member_rows=detected_member_rows,
         detected_boss_rows=detected_boss_rows,
         extracted_member_metrics=len(extracted_metrics),
-        report_path=str(report_path),
+        report_path=report_path.as_posix(),
         front_updated=update_front,
+        quality=quality,
+        backup_path=backup_path.as_posix() if backup_path else None,
     )
-    progress("write_report", f"Writing import report {report_path}.", 84)
-    write_report(report, report_path)
 
     from observer.storage.persistence import persist_import_if_configured
 
-    progress("persist_database", "Persisting import into PostgreSQL when configured.", 88)
-    persist_import_if_configured(
-        report,
-        roster=roster,
-        extracted_metrics=extracted_metrics,
-        daily_boss_rankings=daily_boss_rankings,
-    )
+    try:
+        if update_front:
+            progress("update_front", "Updating dashboard sample data file.", 88)
+            update_sample_data(sample_data_path, report, extracted_metrics, previous_metrics, previous_date, daily_metrics, daily_boss_rankings)
+        progress("persist_database", "Persisting import into PostgreSQL when configured.", 94)
+        database_persisted = persist_import_if_configured(
+            report,
+            roster=roster,
+            extracted_metrics=extracted_metrics,
+            daily_boss_rankings=daily_boss_rankings,
+        )
+    except Exception:
+        if backup_path and backup_path.exists():
+            shutil.copy2(backup_path, sample_data_path)
+        raise
 
-    if update_front:
-        progress("update_front", "Updating dashboard sample data file.", 94)
-        update_sample_data(sample_data_path, report, extracted_metrics, previous_metrics, previous_date, daily_metrics, daily_boss_rankings)
+    report = replace(report, database_persisted=database_persisted)
+    progress("write_report", f"Writing completed import report {report_path}.", 98)
+    write_report(report, report_path)
 
     progress("done", "Import finished.", 100)
     return report
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def backup_before_publish(sample_data_path: Path, imports_root: Path, capture_date: str) -> Path:
+    backup_dir = imports_root.parent / "backups" / "imports" / capture_date
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"sample-data-{time.time_ns()}.js"
+    shutil.copy2(sample_data_path, backup_path)
+    return backup_path
+
+
+@contextmanager
+def import_lock(imports_root: Path, capture_date: str):
+    lock_dir = imports_root / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{capture_date}.lock"
+    descriptor = _create_import_lock(lock_path, capture_date)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(), "started_at": datetime.now().isoformat()}, handle)
+        yield
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def _create_import_lock(lock_path: Path, capture_date: str) -> int:
+    try:
+        return os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        try:
+            stale = time.time() - lock_path.stat().st_mtime > 2 * 60 * 60
+        except FileNotFoundError:
+            stale = True
+        if stale:
+            lock_path.unlink(missing_ok=True)
+            try:
+                return os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                pass
+        raise RuntimeError(f"an import for {capture_date} is already running") from exc
 
 
 def write_report(report: ImportReport, output_path: Path) -> None:
@@ -508,7 +677,7 @@ def _parse_daily_blocks(body: str) -> dict[str, str]:
 def _source_label(path: Path, capture_date: str) -> str:
     parts = path.parts
     if len(parts) >= 3 and parts[-3] == capture_date:
-        return str(Path(parts[-2]) / parts[-1])
+        return (Path(parts[-2]) / parts[-1]).as_posix()
     return path.name
 
 
@@ -639,7 +808,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             captured_at=args.captured_at,
             update_front=not args.no_front_update,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError, GuildBossDetectionError, OSError) as exc:
         parser.exit(1, f"error: {exc}\n")
 
     print(json.dumps(asdict(report), indent=2))

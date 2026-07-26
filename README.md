@@ -1,5 +1,14 @@
 # Archero Observer
 
+## Production homelab
+
+For a Docker deployment behind Cloudflare Tunnel, including persistent
+PostgreSQL, backups, health checks, and Cloudflare Access, see
+[`docs/production-homelab.md`](docs/production-homelab.md).
+
+The deferred Proxmox, K3s, and Argo CD target architecture is recorded in
+[`docs/roadmap-k3s-argocd.md`](docs/roadmap-k3s-argocd.md).
+
 Petit pipeline d'observation visuelle pour collecter des captures, extraire des classements par OCR, normaliser les donnees et les preparer pour PostgreSQL.
 
 Le projet reste volontairement sur de l'automatisation visuelle classique via ADB/Appium et OCR. Il ne contient pas d'interception reseau, de modification du jeu ou de contournement de detection.

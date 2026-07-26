@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { NextResponse } from "next/server";
-import { hasDashboardActionHeader, resolveScreenshotPath } from "../actions.js";
+import { hasDashboardActionHeader, projectRoot, relativeProjectPath, resolveScreenshotPath } from "../actions.js";
 
 export async function POST(request) {
   if (!hasDashboardActionHeader(request)) {
@@ -21,8 +22,23 @@ export async function POST(request) {
 
   try {
     const absolutePath = resolveScreenshotPath(relativePath);
-    await fs.unlink(absolutePath);
-    return NextResponse.json({ ok: true, discarded: { path: relativePath } });
+    const trashRoot = path.join(projectRoot(), "screenshots", "trash");
+    const relativeFromRaw = path.relative(path.join(projectRoot(), "screenshots", "raw"), absolutePath);
+    const trashPath = path.join(trashRoot, relativeFromRaw);
+    await fs.mkdir(path.dirname(trashPath), { recursive: true });
+    let recoverablePath = trashPath;
+    try {
+      await fs.rename(absolutePath, recoverablePath);
+    } catch (error) {
+      if (!(error && typeof error === "object" && error.code === "EEXIST")) throw error;
+      const parsed = path.parse(trashPath);
+      recoverablePath = path.join(parsed.dir, `${parsed.name}-${Date.now()}${parsed.ext}`);
+      await fs.rename(absolutePath, recoverablePath);
+    }
+    return NextResponse.json({
+      ok: true,
+      discarded: { path: relativePath, recoverablePath: relativeProjectPath(recoverablePath) },
+    });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "discard failed" }, { status: 500 });
   }

@@ -46,6 +46,8 @@ class DayCommandTests(unittest.TestCase):
                 patch("observer.import_capture.detect_member_rows", return_value=[object()]),
                 patch("observer.import_capture.detect_boss_ranking_rows", return_value=[object(), object()]),
                 patch("observer.import_capture.extract_member_metrics_from_screenshots", return_value=[]),
+                patch("observer.import_capture.extract_boss_rankings_from_screenshots", return_value=[]),
+                patch("observer.import_capture.validate_extracted_import", return_value={"status": "accepted", "warnings": [], "errors": []}),
             ):
                 report = run_day(
                     "2026-07-17",
@@ -61,8 +63,8 @@ class DayCommandTests(unittest.TestCase):
         self.assertEqual(report.date, "2026-07-17")
         self.assertEqual(import_payload["detected_member_rows"], 1)
         self.assertEqual(import_payload["detected_boss_rows"], 2)
-        self.assertEqual(import_payload["member_screenshots"][0]["path"], str(raw_dir / "guild" / "members-001.png"))
-        self.assertEqual(import_payload["boss_screenshots"][0]["path"], str(raw_dir / "boss" / "boss-001.png"))
+        self.assertEqual(import_payload["member_screenshots"][0]["path"], (raw_dir / "guild" / "members-001.png").as_posix())
+        self.assertEqual(import_payload["boss_screenshots"][0]["path"], (raw_dir / "boss" / "boss-001.png").as_posix())
         self.assertIn('lastImportedAt: "2026-07-17T00:05:00+02:00"', content)
 
     def test_cli_dry_run_does_not_capture_or_import(self) -> None:

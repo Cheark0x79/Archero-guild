@@ -429,30 +429,65 @@ def _extract_list_ranking(
 
 def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
     repaired = list(rankings)
-    ranked_indexes = sorted(
-        [
-            index
-            for index, ranking in enumerate(repaired)
-            if ranking.boss_rank is not None and ranking.boss_damage_today is not None
-        ],
-        key=lambda index: repaired[index].boss_rank or 0,
-    )
-    previous_damage: int | None = None
-    for index in ranked_indexes:
-        ranking = repaired[index]
-        current_damage = ranking.boss_damage_today
-        if previous_damage is not None and current_damage is not None and current_damage > previous_damage:
-            replacement = _downgraded_damage_text(ranking.damage_text, previous_damage)
-            if replacement is not None:
-                repaired[index] = replace(
-                    ranking,
-                    damage_text=replacement,
-                    boss_damage_today=parse_boss_damage(replacement),
-                )
-                current_damage = repaired[index].boss_damage_today
-        if current_damage is not None:
-            previous_damage = current_damage
+    for _pass in range(3):
+        changed = False
+        ranked_indexes = sorted(
+            [
+                index
+                for index, ranking in enumerate(repaired)
+                if ranking.boss_rank is not None and ranking.boss_damage_today is not None
+            ],
+            key=lambda index: repaired[index].boss_rank or 0,
+        )
+        previous_damage: int | None = None
+        for index in ranked_indexes:
+            ranking = repaired[index]
+            current_damage = ranking.boss_damage_today
+            if previous_damage is not None and current_damage is not None and previous_damage > current_damage * 100:
+                replacement = _upgraded_damage_text(ranking.damage_text, previous_damage)
+                if replacement is not None:
+                    repaired[index] = replace(
+                        ranking,
+                        damage_text=replacement,
+                        boss_damage_today=parse_boss_damage(replacement),
+                    )
+                    current_damage = repaired[index].boss_damage_today
+                    changed = True
+            if previous_damage is not None and current_damage is not None and current_damage > previous_damage:
+                replacement = _downgraded_damage_text(ranking.damage_text, previous_damage)
+                if replacement is not None:
+                    repaired[index] = replace(
+                        ranking,
+                        damage_text=replacement,
+                        boss_damage_today=parse_boss_damage(replacement),
+                    )
+                    current_damage = repaired[index].boss_damage_today
+                    changed = True
+            if current_damage is not None:
+                previous_damage = current_damage
+        if not changed:
+            break
     return repaired
+
+
+def _upgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?|\.\d+)([Mm])", damage_text or "")
+    if match is None:
+        return None
+    amount = match.group(1)
+    candidates = [amount]
+    integer, separator, fraction = amount.partition(".")
+    candidates.extend(
+        f"{integer[offset:]}{separator}{fraction}"
+        for offset in range(1, len(integer))
+        if integer[offset:] and integer[offset:] != "0"
+    )
+    for candidate_amount in candidates:
+        candidate = f"{candidate_amount}B"
+        parsed = parse_boss_damage(candidate)
+        if parsed is not None and parsed <= maximum:
+            return candidate
+    return None
 
 
 def _downgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:

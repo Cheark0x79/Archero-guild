@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import patch
 
 from observer.pipeline.guild_boss import ExtractedBossRanking
@@ -39,6 +40,21 @@ class StoragePersistenceTests(unittest.TestCase):
             )
 
         self.assertFalse(persisted)
+
+    def test_required_database_fails_closed(self) -> None:
+        with (
+            patch("observer.storage.persistence.persist_import_report", side_effect=RuntimeError("connection refused")),
+            patch("observer.storage.persistence._is_database_unavailable", return_value=True),
+            patch.dict(os.environ, {"ARCHERO_REQUIRE_DATABASE": "1"}),
+            self.assertRaisesRegex(RuntimeError, "database persistence required"),
+        ):
+            persist_import_if_configured(
+                _import_report(),
+                roster=[],
+                extracted_metrics=[],
+                daily_boss_rankings={},
+                dsn="postgresql://archero@postgres/archero_observer",
+            )
 
 
 def _boss_ranking(*, rank: int | None, name: str | None, player_id: str | None, damage: int | None, raw_name: str | None) -> ExtractedBossRanking:
