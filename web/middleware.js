@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { ADMIN_ROLE, AUTH_COOKIE_NAME, isAdminPath, isPublicPath, roleForSessionToken } from "./lib/auth.js";
+import {
+  ADMIN_ROLE,
+  applicationUrl,
+  AUTH_COOKIE_NAME,
+  isAdminPath,
+  isPublicPath,
+  roleForSessionToken,
+} from "./lib/auth.js";
 
 export function middleware(request) {
   const role = roleForSessionToken(request.cookies.get(AUTH_COOKIE_NAME)?.value);
@@ -7,7 +14,9 @@ export function middleware(request) {
   const { pathname } = request.nextUrl;
 
   if (isPublicPath(pathname)) {
-    if (pathname === "/login" && authenticated) return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (pathname === "/login" && authenticated) {
+      return NextResponse.redirect(applicationUrl("/dashboard", request.url));
+    }
     return NextResponse.next();
   }
 
@@ -15,7 +24,7 @@ export function middleware(request) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ ok: false, error: "administrator access required" }, { status: 403 });
     }
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return NextResponse.redirect(applicationUrl("/dashboard", request.url));
   }
 
   if (authenticated) return NextResponse.next();
@@ -24,7 +33,7 @@ export function middleware(request) {
     return NextResponse.json({ ok: false, error: "authentication required" }, { status: 401 });
   }
 
-  const loginUrl = new URL("/login", request.url);
+  const loginUrl = applicationUrl("/login", request.url);
   return NextResponse.redirect(loginUrl);
 }
 

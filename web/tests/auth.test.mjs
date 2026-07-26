@@ -2,12 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ADMIN_ROLE,
+  applicationUrl,
   AUTH_COOKIE_NAME,
   isAdminPath,
   isPublicPath,
   roleForSessionToken,
   USER_ROLE,
 } from "../lib/auth.js";
+
+test("public application origin overrides an internal proxy URL", () => {
+  const environment = { ARCHERO_PUBLIC_ORIGIN: "https://archero.example.com" };
+  assert.equal(
+    applicationUrl("/login", "http://localhost:5181/dashboard", environment).href,
+    "https://archero.example.com/login",
+  );
+});
+
+test("application URLs fall back to the request origin in local development", () => {
+  assert.equal(
+    applicationUrl("/dashboard", "http://127.0.0.1:5181/login", {}).href,
+    "http://127.0.0.1:5181/dashboard",
+  );
+});
 
 test("only login, authentication assets, and health are public", () => {
   assert.equal(AUTH_COOKIE_NAME, "archero_session");

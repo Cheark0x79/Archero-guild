@@ -295,7 +295,7 @@ function codeExample(item, mode) {
     return `import os\nimport requests\n\nAPI_URL = os.environ["ARCHERO_API_URL"]\n\nresponse = requests.get(\n    f"{API_URL}${path}${suffix}"${headers}\n)\ndata = response.json()["data"]`;
   }
   const auth = item.secured ? ` \\\n  -H "Authorization: Bearer $ARCHERO_API_TOKEN"` : "";
-  return `curl "http://127.0.0.1:5182${path}${suffix}"${auth}`;
+  return `curl "$ARCHERO_API_URL${path}${suffix}"${auth}`;
 }
 
 function highlightCode(code) {

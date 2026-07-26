@@ -26,6 +26,17 @@ export function isAdminPath(pathname) {
     || pathname.startsWith("/api/data/");
 }
 
+export function applicationUrl(pathname, requestUrl, environment = process.env) {
+  const configuredOrigin = environment.ARCHERO_PUBLIC_ORIGIN?.trim();
+  if (!configuredOrigin) return new URL(pathname, requestUrl);
+
+  const publicUrl = new URL(configuredOrigin);
+  if (!["http:", "https:"].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password) {
+    throw new Error("ARCHERO_PUBLIC_ORIGIN must be an HTTP(S) origin without credentials");
+  }
+  return new URL(pathname, publicUrl.origin);
+}
+
 export function roleForSessionToken(token, environment = process.env) {
   if (!token) return null;
   const adminToken = environment.ARCHERO_ADMIN_SESSION_TOKEN;

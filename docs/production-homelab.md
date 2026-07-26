@@ -41,6 +41,16 @@ both session tokens. Usernames default to `viewer` and `admin` and can be
 changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
 Do not reuse a password or commit `.env.production`.
 
+Set `ARCHERO_PUBLIC_ORIGIN` to the exact browser-facing origin, without a
+trailing path, for example:
+
+```env
+ARCHERO_PUBLIC_ORIGIN=https://archero.example.com
+```
+
+The application uses this value for server-side redirects so an internal
+Docker or proxy hostname can never leak into browser navigation.
+
 ## 2. Create the Cloudflare Tunnel
 
 In Cloudflare, open **Networking > Tunnels**, create a remotely managed tunnel,
@@ -174,6 +184,9 @@ without a valid session.
 After adding the new user variables to an existing `.env.production`, run
 `make release`. Existing sessions are invalidated because the cookie name
 changed; sign in again with either account.
+
+Existing deployments must also add `ARCHERO_PUBLIC_ORIGIN` to
+`.env.production` before running `make release`.
 
 ## Updating production data without OCR on the VM
 
