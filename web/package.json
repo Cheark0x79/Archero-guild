@@ -6,7 +6,8 @@
     "dev": "next dev -H 127.0.0.1 -p 5181",
     "build": "next build",
     "start": "next start -H 127.0.0.1 -p 5181",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:api": "node api-tests/live.mjs"
   },
   "dependencies": {
     "next": "^15.5.21",

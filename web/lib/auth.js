@@ -13,7 +13,10 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 export function isPublicPath(pathname) {
-  return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/_next/");
+  return PUBLIC_PATHS.has(pathname)
+    || pathname.startsWith("/_next/")
+    || pathname === "/api/v1"
+    || pathname.startsWith("/api/v1/");
 }
 
 export function isAdminPath(pathname) {

@@ -34,8 +34,9 @@ openssl rand -hex 32
 ```
 
 Put them in `POSTGRES_PASSWORD`, `ARCHERO_USER_PASSWORD`,
-`ARCHERO_USER_SESSION_TOKEN`, `ARCHERO_ADMIN_PASSWORD`, and
-`ARCHERO_ADMIN_SESSION_TOKEN`. Keep different values for both accounts and
+`ARCHERO_USER_SESSION_TOKEN`, `ARCHERO_ADMIN_PASSWORD`,
+`ARCHERO_ADMIN_SESSION_TOKEN`, and `ARCHERO_API_KEYS`. Keep different values
+for both dashboard accounts and
 both session tokens. Usernames default to `viewer` and `admin` and can be
 changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
 Do not reuse a password or commit `.env.production`.

@@ -97,6 +97,23 @@ Le dashboard local est ensuite disponible sur:
 http://127.0.0.1:5181
 ```
 
+## API pour integrations
+
+Une API JSON en lecture seule, versionnee sous `/api/v1`, expose le resume de
+guilde, les membres et les classements boss pour un bot Discord ou une autre
+integration. La documentation d'utilisation est dans
+[`docs/api.md`](docs/api.md) et le contrat OpenAPI dans
+[`docs/openapi.yaml`](docs/openapi.yaml).
+
+Une fois le dashboard lance, la documentation web est disponible sur:
+
+```text
+http://127.0.0.1:5181/api-docs
+```
+
+Pour proteger les routes en dehors de `/api/v1/health`, definir
+`ARCHERO_API_KEYS` dans l'environnement du dashboard.
+
 Le port peut etre change avec:
 
 ```bash
