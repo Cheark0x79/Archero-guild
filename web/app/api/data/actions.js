@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
 export const CAPTURE_KINDS = new Set(["guild-members", "guild-boss"]);
 export const DASHBOARD_ACTION_HEADER = "x-archero-dashboard-action";
@@ -12,6 +13,7 @@ const CAPTURE_LAYOUT = {
 };
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+export const MAX_UPLOAD_PIXELS = 12_000_000;
 
 export function hasDashboardActionHeader(request) {
   return request.headers.get(DASHBOARD_ACTION_HEADER) === "1";
@@ -172,10 +174,23 @@ export async function readUploadedPng(file) {
   if (buffer.length > MAX_UPLOAD_BYTES) {
     throw new Error("PNG screenshot is too large");
   }
+  let metadata;
+  try {
+    const image = sharp(buffer, { failOn: "warning", limitInputPixels: MAX_UPLOAD_PIXELS });
+    metadata = await image.metadata();
+    await image.clone().raw().toBuffer();
+  } catch {
+    throw new Error("PNG screenshot is invalid or exceeds the pixel limit");
+  }
+  if (metadata.format !== "png" || !metadata.width || !metadata.height) {
+    throw new Error("only valid PNG screenshots are supported");
+  }
   return {
     buffer,
     sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
     size: buffer.length,
+    width: metadata.width,
+    height: metadata.height,
   };
 }
 

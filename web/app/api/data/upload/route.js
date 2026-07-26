@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireContentLength, RequestLimitError } from "../../../../lib/request-security.js";
 import {
   CAPTURE_KINDS,
   MAX_UPLOAD_BYTES,
@@ -13,9 +14,18 @@ import {
   writePngBuffer,
 } from "../actions.js";
 
+const MAX_MULTIPART_BYTES = MAX_UPLOAD_BYTES + 128 * 1024;
+
 export async function POST(request) {
   if (!hasDashboardActionHeader(request)) {
     return NextResponse.json({ ok: false, error: "missing dashboard action header" }, { status: 403 });
+  }
+
+  try {
+    requireContentLength(request, MAX_MULTIPART_BYTES);
+  } catch (error) {
+    const status = error instanceof RequestLimitError ? error.status : 400;
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "invalid request size" }, { status });
   }
 
   const form = await request.formData();

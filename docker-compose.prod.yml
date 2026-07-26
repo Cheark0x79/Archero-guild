@@ -2,13 +2,20 @@ name: archero-observer
 
 services:
   app:
+    image: archero-observer-app:${ARCHERO_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${ARCHERO_IMAGE_TAG:-local}
     restart: unless-stopped
     init: true
+    cpus: "1.50"
+    mem_limit: 2g
+    pids_limit: 256
     environment:
       NODE_ENV: production
+      APP_VERSION: ${ARCHERO_IMAGE_TAG:-local}
       PORT: 5181
       HOSTNAME: 0.0.0.0
       ARCHERO_ADMIN_PASSWORD: ${ARCHERO_ADMIN_PASSWORD:?Set ARCHERO_ADMIN_PASSWORD}
@@ -37,6 +44,8 @@ services:
       start_period: 30s
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - backend
       - tunnel
@@ -44,6 +53,9 @@ services:
   postgres:
     image: postgres:16-bookworm
     restart: unless-stopped
+    cpus: "1.00"
+    mem_limit: 2g
+    pids_limit: 256
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-archero_observer}
       POSTGRES_USER: ${POSTGRES_USER:-archero}
@@ -65,6 +77,9 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:2026.7.2
     restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 256m
+    pids_limit: 128
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
@@ -73,6 +88,8 @@ services:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - tunnel
 

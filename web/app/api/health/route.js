@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   return NextResponse.json(
-    { ok: true, service: "archero-observer" },
+    { ok: true, service: "archero-observer", version: process.env.APP_VERSION ?? "development" },
     {
       headers: {
         "cache-control": "no-store",

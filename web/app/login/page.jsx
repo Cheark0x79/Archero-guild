@@ -19,8 +19,7 @@ export default function LoginPage() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Login failed");
-      const next = new URLSearchParams(window.location.search).get("next");
-      window.location.assign(next?.startsWith("/") ? next : "/admin");
+      window.location.assign("/dashboard");
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Login failed");
     } finally {
@@ -36,12 +35,12 @@ export default function LoginPage() {
           <div><strong>Archero Guild</strong><span>Observer access</span></div>
         </div>
         <div>
-          <h1>Admin login</h1>
-          <p>The public dashboard remains accessible without an account.</p>
+          <h1>Sign in</h1>
+          <p>Enter the application password to access the guild dashboard.</p>
         </div>
         <form className="login-actions" onSubmit={submit}>
           <label>
-            Admin password
+            Password
             <input
               type="password"
               autoComplete="current-password"
@@ -54,7 +53,6 @@ export default function LoginPage() {
           <button className="primary-button" type="submit" disabled={submitting}>
             {submitting ? "Signing in…" : "Sign in"}
           </button>
-          <a className="secondary-button" href="/dashboard">Continue as user</a>
         </form>
       </section>
     </main>

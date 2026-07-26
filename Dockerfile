@@ -1,20 +1,29 @@
+ARG APP_VERSION=development
+
 FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 
 FROM node:22-bookworm-slim AS builder
+ARG APP_VERSION
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 WORKDIR /app
 COPY --from=dependencies /app/web/node_modules ./web/node_modules
 COPY web ./web
 RUN npm --prefix web run build
 
 FROM node:22-bookworm-slim AS runner
+ARG APP_VERSION
 ENV NODE_ENV=production \
+    APP_VERSION=$APP_VERSION \
     HOSTNAME=0.0.0.0 \
     PORT=5181 \
     ARCHERO_PYTHON=/opt/archero-venv/bin/python \
     PYTHONPATH=/app
+
+LABEL org.opencontainers.image.title="Archero Guild Observer" \
+      org.opencontainers.image.version=$APP_VERSION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

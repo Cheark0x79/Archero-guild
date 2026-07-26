@@ -219,14 +219,32 @@ function Sidebar({ activeRoute }) {
           </a>
         ))}
       </nav>
-      <a className="login-link" href="/login">
-        Login
-      </a>
+      <LogoutButton />
       <div className="sidebar-note">
         <span>Checkpoint</span>
         <strong>{formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}</strong>
+        <span className="app-version">Version {process.env.NEXT_PUBLIC_APP_VERSION ?? "development"}</span>
       </div>
     </aside>
+  );
+}
+
+function LogoutButton() {
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  async function logout() {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      window.location.assign("/login");
+    }
+  }
+
+  return (
+    <button className="login-link logout-button" type="button" disabled={loggingOut} onClick={logout}>
+      {loggingOut ? "Signing out…" : "Sign out"}
+    </button>
   );
 }
 

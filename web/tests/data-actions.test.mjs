@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 
 import { MAX_UPLOAD_BYTES, findExistingScreenshotByHash, observerPythonCommand, readUploadedPng } from "../app/api/data/actions.js";
 
-const PNG_BYTES = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d,
-]);
+const PNG_BYTES = await sharp({
+  create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+}).png().toBuffer();
 
 test("readUploadedPng validates PNG files and returns a sha256 digest", async () => {
   const file = new File([PNG_BYTES], "members.png", { type: "image/png" });
@@ -17,7 +17,14 @@ test("readUploadedPng validates PNG files and returns a sha256 digest", async ()
   const upload = await readUploadedPng(file);
 
   assert.equal(upload.size, PNG_BYTES.length);
+  assert.equal(upload.width, 1);
+  assert.equal(upload.height, 1);
   assert.match(upload.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("readUploadedPng rejects a signature-only fake PNG", async () => {
+  const fake = new File([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "fake.png", { type: "image/png" });
+  await assert.rejects(() => readUploadedPng(fake), /invalid|valid PNG/);
 });
 
 test("readUploadedPng rejects oversized screenshots before writing", async () => {

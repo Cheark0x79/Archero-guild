@@ -133,6 +133,57 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 For rollback, check out the recorded commit and rebuild. Do not remove the
 PostgreSQL volume during routine deployments.
 
+### One-command application releases
+
+The tracked base version is stored in `VERSION`. On the server, `make release`
+increments a local patch version, builds a versioned image, replaces only the
+application container, and waits for the healthcheck:
+
+```bash
+git pull --ff-only
+make release
+```
+
+PostgreSQL and Cloudflare Tunnel remain running during this replacement. Use
+`make release-minor` or `make release-major` for larger version changes. The
+deployed version is stored in the ignored `.release-version` file and appears
+in the sidebar and `/api/health`.
+
+Useful operational commands:
+
+```bash
+make status
+make logs
+make pause-tunnel
+make resume-tunnel
+```
+
+Every application page and API requires the password configured in
+`ARCHERO_ADMIN_PASSWORD`. Only `/login`, authentication endpoints, and
+`/api/health` are reachable without a valid session.
+
+### Cloudflare request limits
+
+The application locks an address for 15 minutes after five failed password
+attempts and limits login JSON bodies to 4 KiB. Keep a second independent
+limit at Cloudflare:
+
+- Hostname equals the Archero hostname
+- URI path equals `/api/auth/login`
+- Request method equals `POST`
+- Count by source IP
+- Block after 5 requests in 5 minutes for at least 15 minutes
+
+Create this under **Security > WAF > Rate limiting rules**. Also configure a
+request-body limit for `/api/data/upload`. The application requires a declared
+`Content-Length`, rejects multipart requests above the PNG limit plus 128 KiB
+of form overhead, fully decodes PNG input, and rejects images above 12 million
+pixels.
+
+The Compose file caps application, PostgreSQL, and tunnel CPU, memory, and
+process counts. Revisit these values only after observing real production
+usage.
+
 ## Network exposure
 
 - PostgreSQL has no published host port.

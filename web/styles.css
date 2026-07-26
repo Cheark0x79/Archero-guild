@@ -138,9 +138,13 @@ button {
 }
 
 .login-link {
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: oklch(86% 0.018 250);
   padding: 10px 12px;
+  font: inherit;
+  text-align: left;
   text-decoration: none;
 }
 
@@ -151,9 +155,21 @@ button {
   outline: none;
 }
 
+.logout-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .sidebar-note strong {
   display: block;
   margin-top: 4px;
+}
+
+.sidebar-note .app-version {
+  display: block;
+  margin-top: 8px;
+  color: oklch(72% 0.018 250);
+  font-size: 11px;
 }
 
 .main {
