@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function ApiDocsPage() {
-  return <ApiDocsClient />;
+  return <ApiDocsClient publicOrigin={process.env.ARCHERO_PUBLIC_ORIGIN ?? ""} />;
 }

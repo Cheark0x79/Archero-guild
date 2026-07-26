@@ -90,8 +90,9 @@ const endpoints = [
 
 const categories = ["All", "System", "Guild", "Members", "Rankings", "Bosses"];
 
-export default function ApiDocsClient() {
+export default function ApiDocsClient({ publicOrigin }) {
   const [sessionRole, setSessionRole] = useState(null);
+  const [browserOrigin, setBrowserOrigin] = useState("");
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(endpoints[1].id);
@@ -99,6 +100,7 @@ export default function ApiDocsClient() {
   const [copied, setCopied] = useState("");
 
   useEffect(() => {
+    setBrowserOrigin(window.location.origin);
     let cancelled = false;
     fetch("/api/auth/session", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -111,6 +113,7 @@ export default function ApiDocsClient() {
     };
   }, []);
 
+  const apiBaseUrl = String(publicOrigin || browserOrigin).replace(/\/+$/, "");
   const visibleEndpoints = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return endpoints.filter((item) =>
@@ -120,7 +123,8 @@ export default function ApiDocsClient() {
   }, [category, query]);
 
   const selected = endpoints.find((item) => item.id === selectedId) ?? visibleEndpoints[0] ?? endpoints[0];
-  const example = codeExample(selected, codeMode);
+  const example = codeExample(selected, codeMode, apiBaseUrl);
+  const requestUrl = `${apiBaseUrl}${selected.path}`;
 
   async function copy(value, key) {
     await navigator.clipboard.writeText(value);
@@ -146,12 +150,18 @@ export default function ApiDocsClient() {
             <h1>API documentation</h1>
             <p>Endpoints, authentication and ready-to-use integration examples.</p>
           </div>
-          <strong>API v1</strong>
+          <div className={styles.baseUrl}>
+            <span>Base URL</span>
+            <code>{apiBaseUrl || "Loading…"}</code>
+            <button type="button" onClick={() => copy(apiBaseUrl, "base-url")}>
+              {copied === "base-url" ? "Copied!" : "Copy"}
+            </button>
+          </div>
         </header>
 
         <section className={styles.reference} id="reference">
         <div className={styles.sectionTitle}>
-          <div><span>API ROUTES</span><h2>Choose an endpoint.</h2></div>
+          <div><span>API ROUTES</span></div>
           <label className={styles.search}>
             <span>⌕</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search endpoints…" />
@@ -192,8 +202,8 @@ export default function ApiDocsClient() {
 
             <div className={styles.requestBar}>
               <span className={styles.method}>{selected.method}</span>
-              <code>{selected.path}</code>
-              <button onClick={() => copy(selected.path, "path")}>{copied === "path" ? "Copied!" : "Copy path"}</button>
+              <code>{requestUrl}</code>
+              <button onClick={() => copy(requestUrl, "path")}>{copied === "path" ? "Copied!" : "Copy URL"}</button>
             </div>
 
             <div className={styles.detailColumns}>
@@ -276,7 +286,7 @@ function parameterMeta(value) {
   };
 }
 
-function codeExample(item, mode) {
+function codeExample(item, mode, apiBaseUrl) {
   if (mode === "response") {
     return JSON.stringify({
       data: item.response,
@@ -285,17 +295,17 @@ function codeExample(item, mode) {
   }
 
   const { path, suffix } = requestParts(item);
-  const url = `\${API_URL}${path}${suffix}`;
+  const url = `${apiBaseUrl}${path}${suffix}`;
   if (mode === "javascript") {
     const options = item.secured ? `, {\n  headers: {\n    Authorization: \`Bearer \${process.env.ARCHERO_API_TOKEN}\`\n  }\n}` : "";
-    return `const API_URL = process.env.ARCHERO_API_URL;\n\nconst response = await fetch(\`${url}\`${options});\nconst { data } = await response.json();`;
+    return `const response = await fetch("${url}"${options});\nconst { data } = await response.json();`;
   }
   if (mode === "python") {
     const headers = item.secured ? `,\n    headers={\n        "Authorization": f"Bearer {os.environ['ARCHERO_API_TOKEN']}"\n    }` : "";
-    return `import os\nimport requests\n\nAPI_URL = os.environ["ARCHERO_API_URL"]\n\nresponse = requests.get(\n    f"{API_URL}${path}${suffix}"${headers}\n)\ndata = response.json()["data"]`;
+    return `import os\nimport requests\n\nresponse = requests.get(\n    "${url}"${headers}\n)\ndata = response.json()["data"]`;
   }
   const auth = item.secured ? ` \\\n  -H "Authorization: Bearer $ARCHERO_API_TOKEN"` : "";
-  return `curl "$ARCHERO_API_URL${path}${suffix}"${auth}`;
+  return `curl "${url}"${auth}`;
 }
 
 function highlightCode(code) {
