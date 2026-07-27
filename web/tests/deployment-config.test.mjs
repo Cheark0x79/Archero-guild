@@ -33,3 +33,16 @@ test("release automation versions the image and preserves database deployment", 
   assert.doesNotMatch(middleware, /searchParams\.set\("next"/);
   assert.match(fallbackPage, /redirect\("\/dashboard"\)/);
 });
+
+test("React runtime packages are pinned to the same exact version", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "web", "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(projectRoot, "web", "package-lock.json"), "utf8"));
+  const lockedRoot = packageLock.packages[""].dependencies;
+
+  assert.match(packageJson.dependencies.react, /^\d+\.\d+\.\d+$/);
+  assert.equal(packageJson.dependencies["react-dom"], packageJson.dependencies.react);
+  assert.equal(lockedRoot.react, packageJson.dependencies.react);
+  assert.equal(lockedRoot["react-dom"], packageJson.dependencies["react-dom"]);
+  assert.equal(packageLock.packages["node_modules/react"].version, packageJson.dependencies.react);
+  assert.equal(packageLock.packages["node_modules/react-dom"].version, packageJson.dependencies["react-dom"]);
+});

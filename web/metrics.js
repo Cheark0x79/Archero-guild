@@ -85,6 +85,24 @@ export function activityLabel(days) {
   return `${days} days ago`;
 }
 
+export function dateOnly(value, fallback = null) {
+  for (const candidate of [value, fallback]) {
+    if (typeof candidate !== "string") continue;
+    const match = candidate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) continue;
+    const [, year, month, day] = match;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12));
+    if (
+      parsed.getUTCFullYear() === Number(year) &&
+      parsed.getUTCMonth() === Number(month) - 1 &&
+      parsed.getUTCDate() === Number(day)
+    ) {
+      return `${year}-${month}-${day}`;
+    }
+  }
+  return null;
+}
+
 export function evaluateMember(member, rules) {
   if (isFormerMember(member)) {
     return {

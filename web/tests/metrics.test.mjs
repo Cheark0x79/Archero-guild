@@ -4,6 +4,7 @@ import {
   activityLabel,
   buildSummary,
   compareSourceRows,
+  dateOnly,
   evaluateMember,
   filterMembers,
   formatBossDamageText,
@@ -39,6 +40,12 @@ const member = {
   metricsCaptured: true,
   metricsVerified: true,
 };
+
+test("dateOnly uses a valid fallback instead of slicing a missing capture date", () => {
+  assert.equal(dateOnly(null, "2026-07-25T22:00:00.000Z"), "2026-07-25");
+  assert.equal(dateOnly("not-a-date", "2026-07-26"), "2026-07-26");
+  assert.equal(dateOnly("2026-02-30", null), null);
+});
 
 test("evaluateMember marks healthy member active", () => {
   assert.deepEqual(evaluateMember(member, rules), {

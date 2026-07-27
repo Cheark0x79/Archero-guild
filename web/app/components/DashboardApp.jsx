@@ -15,6 +15,7 @@ import {
   activityLabel,
   buildSummary,
   compareSourceRows,
+  dateOnly,
   defaultSortDirection,
   evaluateMember,
   filterMembers,
@@ -2929,10 +2930,11 @@ function buildCheckDays() {
       .map(([date, rows]) => ({ date, rows }));
   }
 
-  const previousRows = buildCheckRows(previousMemberSnapshots, captures.lastCapturedAt.slice(0, 10));
+  const previousCaptureDate = captureDate();
+  const previousRows = buildCheckRows(previousMemberSnapshots, previousCaptureDate);
   const currentRows = buildCheckRows(memberSnapshots, currentImportDate());
   return [
-    previousRows.length ? { date: captures.lastCapturedAt.slice(0, 10), rows: previousRows } : null,
+    previousRows.length ? { date: previousCaptureDate, rows: previousRows } : null,
     currentRows.length ? { date: currentImportDate(), rows: currentRows } : null,
   ].filter(Boolean);
 }
@@ -3510,7 +3512,7 @@ function dailyHistory(member) {
   const rows = [];
   if (member.previousSnapshot) {
     rows.push({
-      date: captures.lastCapturedAt.slice(0, 10),
+      date: captureDate(),
       power: member.previousSnapshot.power,
       powerDelta: null,
       donation: member.previousSnapshot.contribution7d,
@@ -3910,7 +3912,19 @@ function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeigh
 }
 
 function currentImportDate() {
-  return (captures.lastImportedAt ?? captures.lastCapturedAt).slice(0, 10);
+  return dateOnly(captures.lastImportedAt, captures.lastCapturedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+}
+
+function captureDate() {
+  return dateOnly(captures.lastCapturedAt, captures.lastImportedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+}
+
+function latestRawSnapshotDate() {
+  const dates = [...dailyRawSnapshots, ...dailyBossRawSnapshots]
+    .map((snapshot) => dateOnly(snapshot?.date))
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+  return dates.at(-1) ?? null;
 }
 
 function formatDateTime(value) {
