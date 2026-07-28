@@ -5,6 +5,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 
+import { localIsoDate } from "../../../date.js";
+
 export const CAPTURE_KINDS = new Set(["guild-members", "guild-boss"]);
 export const DASHBOARD_ACTION_HEADER = "x-archero-dashboard-action";
 const CAPTURE_LAYOUT = {
@@ -131,12 +133,7 @@ export async function runCommand(command, args = []) {
 }
 
 export function captureDateToday() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  return localIsoDate();
 }
 
 export function validateCaptureDate(value) {

@@ -28,6 +28,7 @@ import {
   newMemberDay,
   sortMembers,
 } from "../../metrics.js";
+import { localIsoDate } from "../../date.js";
 import AppSidebar from "./AppSidebar.jsx";
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
@@ -3459,7 +3460,7 @@ function buildBossDashboardData() {
 }
 
 function currentIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return localIsoDate();
 }
 
 function bossForKey(key) {
@@ -3931,7 +3932,7 @@ function annotationValueKey(type) {
 }
 
 function todayLabel() {
-  return currentImportDate();
+  return currentIsoDate();
 }
 
 function dataActionLabel(action) {
