@@ -264,7 +264,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
       <AppSidebar
         activeRoute={activeRoute}
         sessionRole={sessionRole}
-        checkpointValue={formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}
+        checkpointValue={formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}
       />
       <main className="main" data-version={dataVersion}>
         <header className="topbar">
@@ -278,7 +278,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           </div>
           <div className="topbar-meta" aria-label="Last update">
             <span>Last update</span>
-            <strong>{formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}</strong>
+            <strong>{formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}</strong>
           </div>
         </header>
         {dataWarning ? (
