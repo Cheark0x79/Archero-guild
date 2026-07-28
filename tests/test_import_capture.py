@@ -232,6 +232,38 @@ export const memberSnapshots = [
             self.assertFalse((root / "data" / "imports" / "2026-07-22.json").exists())
             self.assertEqual(len(list((root / "data" / "backups" / "imports" / "2026-07-22").glob("*.js"))), 1)
 
+    def test_validation_failure_never_updates_front_or_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_dir = root / "screenshots" / "raw" / "2026-07-29" / "guild"
+            raw_dir.mkdir(parents=True)
+            (raw_dir / "members-001.png").write_bytes(b"member")
+            sample_data = root / "web" / "sample-data.js"
+            sample_data.parent.mkdir()
+            sample_data.write_text(SAMPLE_DATA, encoding="utf-8")
+
+            with (
+                patch("observer.import_capture.detect_member_rows", return_value=[object()]),
+                patch("observer.import_capture.extract_member_metrics_from_screenshots", return_value=[]),
+                patch(
+                    "observer.import_capture.validate_extracted_import",
+                    side_effect=ImportValidationError("incomplete capture"),
+                ),
+                patch("observer.import_capture.update_sample_data") as update_front,
+                patch("observer.storage.persistence.persist_import_if_configured") as persist,
+                self.assertRaisesRegex(ImportValidationError, "incomplete capture"),
+            ):
+                import_capture_day(
+                    "2026-07-29",
+                    raw_root=root / "screenshots" / "raw",
+                    imports_root=root / "data" / "imports",
+                    sample_data_path=sample_data,
+                )
+
+            update_front.assert_not_called()
+            persist.assert_not_called()
+            self.assertFalse((root / "data" / "imports" / "2026-07-29.json").exists())
+
     def test_atomic_write_replaces_file_without_temp_leftover(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample-data.js"

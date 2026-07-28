@@ -28,7 +28,7 @@ import {
   newMemberDay,
   sortMembers,
 } from "../../metrics.js";
-import { localIsoDate } from "../../date.js";
+import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
 import AppSidebar from "./AppSidebar.jsx";
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
@@ -3651,7 +3651,9 @@ function bossSeriesColor(index) {
 }
 
 function memberHistoryDates(memberRows) {
-  return [...new Set(memberRows.flatMap((member) => dailyHistory(member).map((row) => row.date)))].sort((left, right) => left.localeCompare(right));
+  const acceptedDates = acceptedSnapshotDates(dailyRawSnapshots.map((snapshot) => snapshot?.date));
+  if (acceptedDates.length > 0) return acceptedDates;
+  return acceptedSnapshotDates(memberRows.flatMap((member) => dailyHistory(member).map((row) => row.date)));
 }
 
 function memberSnapshotForDate(member, date) {
@@ -3699,6 +3701,12 @@ function dailyHistory(member) {
   const rawHistory = dailySnapshotHistory(member);
   if (rawHistory.length > 0) return rawHistory;
   if (!member.metricsCaptured) return [];
+  const snapshotDate = latestDataDate({
+    preferred: member.lastSeenAt,
+    snapshotDates: [...dailyRawSnapshots, ...dailyBossRawSnapshots].map((snapshot) => snapshot?.date),
+    fallbacks: [captures.lastCapturedAt, captures.lastImportedAt],
+  });
+  if (!snapshotDate) return [];
   const rows = [];
   if (member.previousSnapshot) {
     rows.push({
@@ -3718,7 +3726,7 @@ function dailyHistory(member) {
   }
   rows.push(
     {
-      date: currentImportDate(),
+      date: snapshotDate,
       power: member.power,
       powerDelta: member.powerDelta,
       donation: member.contribution7d,
@@ -4108,19 +4116,17 @@ function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeigh
 }
 
 function currentImportDate() {
-  return dateOnly(captures.lastImportedAt, captures.lastCapturedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+  return latestRawSnapshotDate() ?? dateOnly(captures.lastImportedAt, captures.lastCapturedAt) ?? currentIsoDate();
 }
 
 function captureDate() {
-  return dateOnly(captures.lastCapturedAt, captures.lastImportedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+  return latestRawSnapshotDate() ?? dateOnly(captures.lastCapturedAt, captures.lastImportedAt) ?? currentIsoDate();
 }
 
 function latestRawSnapshotDate() {
-  const dates = [...dailyRawSnapshots, ...dailyBossRawSnapshots]
-    .map((snapshot) => dateOnly(snapshot?.date))
-    .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right));
-  return dates.at(-1) ?? null;
+  return latestDataDate({
+    snapshotDates: [...dailyRawSnapshots, ...dailyBossRawSnapshots].map((snapshot) => snapshot?.date),
+  });
 }
 
 function formatDateTime(value) {
