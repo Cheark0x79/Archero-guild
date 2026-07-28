@@ -27,14 +27,11 @@ LABEL org.opencontainers.image.title="Archero Guild Observer" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      android-tools-adb \
       ca-certificates \
       python3 \
       python3-venv \
-      tesseract-ocr \
-      tesseract-ocr-eng \
     && python3 -m venv /opt/archero-venv \
-    && /opt/archero-venv/bin/pip install --no-cache-dir pillow "psycopg[binary]" pytesseract \
+    && /opt/archero-venv/bin/pip install --no-cache-dir "psycopg[binary]" \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

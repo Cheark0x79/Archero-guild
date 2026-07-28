@@ -35,6 +35,24 @@ Les tests du coeur ne demandent aucune dependance externe:
 python3 -m unittest discover -s tests
 ```
 
+## Captures locales BlueStacks
+
+Un agent Windows local utilise l'ADB fourni par BlueStacks sur
+`127.0.0.1:5555`. Le dashboard et l'agent communiquent uniquement par les
+fichiers ignores de `data/capture-bridge`; aucun port ADB n'est expose au
+reseau. Cet agent appartient au composant OCR local et n'est pas necessaire au
+serveur web de production.
+
+1. Demarrer BlueStacks et ouvrir Archero sur l'ecran a capturer.
+2. Ouvrir `/admin/data` dans le dashboard.
+3. Verifier que le statut ADB indique `Connected`.
+4. Choisir `Guild members` ou `Guild boss`, puis confirmer la capture.
+5. Examiner le PNG affiche et choisir `Keep screenshot` ou `Discard screenshot`.
+
+Cette action prend une image seulement. Elle ne lance ni Tesseract, ni import,
+ni ecriture PostgreSQL. Le bouton `Synchronize` reste une action distincte et
+doit etre utilise uniquement apres verification des captures.
+
 ## Environnement Nix
 
 Le projet fournit une `flake.nix` pour isoler les dependances de developpement et d'execution:
@@ -241,6 +259,86 @@ La normalisation produit des PNG deterministes:
 - hash SHA-256 de l'artefact genere.
 
 L'objectif est qu'une meme capture, traitee avec le meme profil, donne toujours le meme fichier et le meme hash. Les alertes OCR et les imports doivent donc s'appuyer sur les images normalisees, pas directement sur les screenshots bruts.
+
+### OCR Lab local et contrat image vers JSON
+
+La page admin `/admin/ocr-lab` teste le moteur OCR sans lancer d'import et sans
+ecrire dans PostgreSQL. Elle accepte une capture PNG `guild-members` ou
+`guild-boss`, affiche l'image ramenee a la largeur canonique de 1080 pixels, les
+zones detectees, les donnees extraites et le JSON brut.
+
+Cette page et son endpoint ne sont disponibles que sur la machine OCR lorsque
+`ARCHERO_OCR_LAB_ENABLED=1`. Ils restent des outils locaux et ne doivent pas
+etre actives dans l'image web de production.
+
+L'endpoint local `POST /api/data/ocr` utilise un multipart avec:
+
+- `kind`: `guild-members` ou `guild-boss`;
+- `file`: capture PNG;
+- `includePodium`: `true` uniquement pour la premiere capture boss qui montre
+  le podium;
+- header `x-archero-dashboard-action: 1`.
+
+La reponse contient `schemaVersion`, la geometrie source, la transformation de
+normalisation, les rectangles detectes, les lignes OCR, les temps de traitement
+et un controle qualite. Un resultat ne doit etre considere publiable que si
+`quality.status` vaut `pass`, avec une couverture et une completude de 100 %.
+
+Le module Python autonome peut aussi etre execute sans le dashboard:
+
+```bash
+python -B -m observer.ocr.service guild-members capture.png \
+  --normalized normalized.png --annotated annotated.png
+```
+
+Pour construire un lot versionne a partir de plusieurs captures:
+
+```bash
+python -B -m observer.ocr.batch \
+  --date 2026-07-29 \
+  --roster roster.json \
+  --member screenshots/members-001.png \
+  --boss screenshots/boss-001.png \
+  --output data/outbox/2026-07-29.json
+```
+
+Le schema du lot est dans `contracts/import-batch.schema.json`. Avant tout
+envoi, l'agent impose une qualite de 100 %, calcule les SHA-256 des images et
+une cle d'idempotence. Il peut ensuite valider, puis publier le JSON:
+
+```bash
+python -B -m observer.ocr.publish data/outbox/2026-07-29.json \
+  --target https://archero.example.com \
+  --token "$ARCHERO_INGESTION_TOKEN" \
+  --validate-only
+
+python -B -m observer.ocr.publish data/outbox/2026-07-29.json \
+  --target https://archero.example.com \
+  --token "$ARCHERO_INGESTION_TOKEN"
+```
+
+Le serveur expose `POST /api/v1/imports/validate` et
+`POST /api/v1/imports`. Il exige une cle presente dans
+`ARCHERO_INGESTION_KEYS`, revalide le contrat et le controle qualite, puis
+importe le lot dans PostgreSQL dans une transaction. Une nouvelle tentative
+avec la meme cle d'idempotence renvoie le premier resultat sans dupliquer les
+donnees.
+
+La separation de production est donc:
+
+```text
+PC OCR (BlueStacks + ADB + Tesseract)
+             |
+             | JSON versionne, HTTPS sortant
+             v
+serveur production (Next.js + API + PostgreSQL)
+```
+
+La machine OCR ne recoit jamais d'acces PostgreSQL et le serveur de production
+ne contient plus Tesseract ni ADB. `Dockerfile` construit la plateforme;
+`Dockerfile.ocr` constitue la frontiere extractible vers le futur depot OCR.
+La separation en deux depots pourra se faire apres stabilisation de ce contrat,
+en conservant l'historique Git des dossiers OCR.
 
 ## Base de donnees
 

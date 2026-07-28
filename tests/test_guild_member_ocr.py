@@ -4,10 +4,14 @@ from observer.pipeline.guild_member_ocr import (
     RosterEntry,
     _match_roster_name,
     _parse_visible_activity_days,
+    _parse_role,
     _raw_name_has_signal,
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
+    format_activity_text,
+    format_game_power,
+    format_role_text,
     parse_power,
 )
 
@@ -59,6 +63,15 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertEqual(_match_roster_name(["Members+ JuneOO"], roster)[0].player_id, "1")
         self.assertEqual(_match_roster_name(["bers? jokewi"], roster)[0].player_id, "2")
 
+    def test_matches_a_cyrillic_member_name(self) -> None:
+        roster = [RosterEntry("119933547", "Алхимик")]
+
+        match = _match_roster_name(["АЛХИМИК |", "AJIXUMUK"], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "119933547")
+        self.assertEqual(match[2], "АЛХИМИК |")
+
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
         self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))
         self.assertFalse(_raw_name_has_signal(" | pers? aA | "))
@@ -67,6 +80,25 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertEqual(_parse_visible_activity_days(""), 0)
         self.assertEqual(_parse_visible_activity_days("   "), 0)
         self.assertEqual(_parse_visible_activity_days("01d 05h"), 1)
+        self.assertEqual(_parse_visible_activity_days("Old 10h"), 1)
+
+    def test_formats_values_like_the_game_display(self) -> None:
+        self.assertEqual(format_game_power(1_260_000), "1.26M")
+        self.assertEqual(format_game_power(923_090), "923.09K")
+        self.assertEqual(format_activity_text("Online", 0), "Online")
+        self.assertEqual(format_activity_text("01d 05h", 1), "1 d 5 h")
+        self.assertEqual(format_activity_text("02d 03h", 2), "2 d 3 h")
+        self.assertEqual(format_activity_text("Old 10h", 1), "1 d 10 h")
+        self.assertEqual(format_role_text("officer"), "Vice-leader")
+        self.assertEqual(format_role_text("member"), "Guild member")
+
+    def test_recognizes_all_guild_roles_and_common_vice_leader_noise(self) -> None:
+        self.assertEqual(_parse_role("Leader"), "leader")
+        self.assertEqual(_parse_role("Vice Leader"), "officer")
+        self.assertEqual(_parse_role("Mice Leader?"), "officer")
+        self.assertEqual(_parse_role("Elder"), "elder")
+        self.assertEqual(_parse_role("Guild Members"), "member")
+        self.assertEqual(_parse_role("_ Guild Memhers +"), "member")
 
 
 if __name__ == "__main__":

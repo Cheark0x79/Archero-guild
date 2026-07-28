@@ -57,7 +57,9 @@ test("findExistingScreenshotByHash finds an exact upload duplicate for the same 
 
 test("observerPythonCommand uses the Nix dev shell when outside Nix", () => {
   const previous = process.env.IN_NIX_SHELL;
+  const previousPython = process.env.ARCHERO_PYTHON;
   delete process.env.IN_NIX_SHELL;
+  delete process.env.ARCHERO_PYTHON;
   try {
     const command = observerPythonCommand(["-B", "-m", "observer.import_capture", "2026-07-20"]);
 
@@ -69,6 +71,11 @@ test("observerPythonCommand uses the Nix dev shell when outside Nix", () => {
       delete process.env.IN_NIX_SHELL;
     } else {
       process.env.IN_NIX_SHELL = previous;
+    }
+    if (previousPython === undefined) {
+      delete process.env.ARCHERO_PYTHON;
+    } else {
+      process.env.ARCHERO_PYTHON = previousPython;
     }
   }
 });

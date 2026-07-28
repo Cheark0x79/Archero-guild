@@ -9,6 +9,18 @@ export function requireApiKey(request) {
   });
 }
 
+export function requireIngestionKey(request) {
+  const configuredKeys = process.env.ARCHERO_INGESTION_KEYS;
+  if (!String(configuredKeys ?? "").trim()) {
+    return apiError(503, "ingestion_disabled", "Remote OCR ingestion is not configured.");
+  }
+  const auth = authorizeApiRequest(request, configuredKeys);
+  if (auth.authorized) return null;
+  return apiError(401, auth.reason, "A valid ingestion key is required.", {
+    "WWW-Authenticate": 'Bearer realm="archero-ingestion"',
+  });
+}
+
 export function apiSuccess(data, options = {}) {
   return NextResponse.json(
     {

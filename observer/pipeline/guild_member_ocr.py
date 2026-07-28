@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from observer.pipeline.image_geometry import normalize_analysis_image
 from observer.pipeline.guild_members import MemberRow, Rect, detect_member_rows
 
 
@@ -31,6 +32,11 @@ class ExtractedMemberMetrics:
     source: str
     match_score: float
     raw_name: str
+    power_text: str | None = None
+    activity_text: str | None = None
+    role_text: str | None = None
+    raw_activity: str = ""
+    raw_role: str = ""
 
 
 def extract_member_metrics_from_screenshots(paths: list[Path], roster: list[RosterEntry]) -> list[ExtractedMemberMetrics]:
@@ -42,10 +48,11 @@ def extract_member_metrics_from_screenshots(paths: list[Path], roster: list[Rost
 
     extracted_by_player: dict[str, ExtractedMemberMetrics] = {}
     unmatched_rows: list[ExtractedMemberMetrics] = []
+    unresolved_rows: list[ExtractedMemberMetrics] = []
     for path in paths:
         rows = detect_member_rows(path)
         with Image.open(path) as image:
-            rgb = image.convert("RGB")
+            rgb = normalize_analysis_image(image)
             for row in rows:
                 metrics = _extract_row_metrics(rgb, row, path.name, roster, pytesseract)
                 if metrics is None:
@@ -62,6 +69,7 @@ def extract_member_metrics_from_screenshots(paths: list[Path], roster: list[Rost
             # A readable name that is absent from the roster is probably a new
             # or renamed member. Never attach it to an unrelated member merely
             # because their power values happen to be close.
+            unresolved_rows.append(metrics)
             continue
         fallback = _match_by_power(metrics.power, roster, set(extracted_by_player))
         if fallback is None:
@@ -77,32 +85,46 @@ def extract_member_metrics_from_screenshots(paths: list[Path], roster: list[Rost
             source=metrics.source,
             match_score=0.50,
             raw_name=metrics.raw_name,
+            power_text=metrics.power_text,
+            activity_text=metrics.activity_text,
+            role_text=metrics.role_text,
         )
 
-    return list(extracted_by_player.values())
+    return [*extracted_by_player.values(), *unresolved_rows]
 
 
 def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster: list[RosterEntry], pytesseract: object) -> ExtractedMemberMetrics | None:
+    primary_name_crop = _crop_rect(image, row.fields.name)
     raw_names = [
-        _ocr_text(_relative_crop(image, row.bounds, 0.31, 0.15, 0.48, 0.36), pytesseract),
-        _ocr_text(_relative_crop(image, row.bounds, 0.40, 0.14, 0.42, 0.38), pytesseract),
-        _ocr_text(_relative_crop(image, row.bounds, 0.38, 0.20, 0.46, 0.32), pytesseract),
+        _ocr_text(primary_name_crop, pytesseract),
+        _ocr_text(_relative_crop(image, row.bounds, 0.49, 0.14, 0.34, 0.38), pytesseract),
+        _ocr_text(_relative_crop(image, row.bounds, 0.47, 0.18, 0.38, 0.34), pytesseract),
+        _ocr_text(_relative_crop(image, row.bounds, 0.38, 0.16, 0.46, 0.36), pytesseract),
         _ocr_text(_relative_crop(image, row.bounds, 0.20, 0.12, 0.68, 0.40), pytesseract),
     ]
     match = _match_roster_name(raw_names, roster)
+    if match is None and any(re.search(r"[\u0400-\u04ff]", entry.name) for entry in roster):
+        russian_name = _ocr_text(primary_name_crop, pytesseract, language="rus")
+        if russian_name:
+            raw_names.insert(0, russian_name)
+            match = _match_roster_name(raw_names, roster)
     parsed_power = _read_power(image, row, pytesseract)
-    boss_text = _ocr_text(_relative_crop(image, row.bounds, 0.49, 0.61, 0.15, 0.29), pytesseract, whitelist="0123456789time(s)")
-    status_text = _ocr_text(_relative_crop(image, row.bounds, 0.82, 0.02, 0.17, 0.36), pytesseract)
-    role_text = _ocr_text(_relative_crop(image, row.bounds, 0.19, 0.18, 0.28, 0.36), pytesseract)
+    status_text = _ocr_text(_relative_crop(image, row.bounds, 0.84, 0.04, 0.14, 0.34), pytesseract)
+    parsed_role, role_text = _read_role(image, row, pytesseract)
     parsed_donation = _read_donation(image, row, pytesseract)
-    parsed_boss = parse_integer(boss_text)
+    parsed_boss = _read_boss_tries(image, row, pytesseract)
     parsed_activity = _parse_visible_activity_days(status_text)
 
     if match is None:
+        observed_name = max(
+            (" ".join(value.split()) for value in raw_names[:3]),
+            key=lambda value: len(_normalize_match_text(value)),
+            default="",
+        )
         return ExtractedMemberMetrics(
             player_id="",
-            name="",
-            role=_parse_role(role_text),
+            name=observed_name,
+            role=parsed_role,
             power=parsed_power,
             donation=parsed_donation,
             boss_tries=parsed_boss,
@@ -110,6 +132,11 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
             source=f"{source_name} row {row.index}",
             match_score=0.0,
             raw_name=" | ".join(raw_names),
+            power_text=format_game_power(parsed_power),
+            activity_text=format_activity_text(status_text, parsed_activity),
+            role_text=format_role_text(parsed_role),
+            raw_activity=status_text,
+            raw_role=role_text,
         )
 
     entry, score, raw_name = match
@@ -117,7 +144,7 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     return ExtractedMemberMetrics(
         player_id=entry.player_id,
         name=entry.name,
-        role=_parse_role(role_text),
+        role=parsed_role,
         power=parsed_power,
         donation=parsed_donation,
         boss_tries=parsed_boss,
@@ -125,6 +152,11 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
         source=f"{source_name} row {row.index}",
         match_score=score,
         raw_name=raw_name,
+        power_text=format_game_power(parsed_power),
+        activity_text=format_activity_text(status_text, parsed_activity),
+        role_text=format_role_text(parsed_role),
+        raw_activity=status_text,
+        raw_role=role_text,
     )
 
 
@@ -137,7 +169,13 @@ def _parse_visible_activity_days(status_text: str) -> int | None:
     return parse_activity_days(status_text)
 
 
-def _ocr_text(image: object, pytesseract: object, *, whitelist: str | None = None) -> str:
+def _ocr_text(
+    image: object,
+    pytesseract: object,
+    *,
+    whitelist: str | None = None,
+    language: str | None = None,
+) -> str:
     try:
         from PIL import Image, ImageOps  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -152,7 +190,38 @@ def _ocr_text(image: object, pytesseract: object, *, whitelist: str | None = Non
     config = "--psm 7"
     if whitelist is not None:
         config += f" -c tessedit_char_whitelist={whitelist}"
-    return pytesseract.image_to_string(prepared, config=config).strip()
+    return pytesseract.image_to_string(prepared, config=config, lang=language).strip()
+
+
+def _read_role(image: object, row: MemberRow, pytesseract: object) -> tuple[str | None, str]:
+    try:
+        from PIL import Image, ImageOps  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise GuildMemberOcrError("Pillow is required to preprocess role OCR crops.") from exc
+
+    crop = _crop_rect(image, row.fields.role).convert("RGB")
+    variants = [
+        crop.resize((crop.width * 4, crop.height * 4), Image.Resampling.BICUBIC),
+        ImageOps.autocontrast(
+            ImageOps.grayscale(crop).resize((crop.width * 4, crop.height * 4), Image.Resampling.BICUBIC)
+        ),
+        ImageOps.autocontrast(
+            crop.getchannel("R").resize((crop.width * 4, crop.height * 4), Image.Resampling.BICUBIC)
+        ),
+        ImageOps.autocontrast(
+            crop.getchannel("G").resize((crop.width * 4, crop.height * 4), Image.Resampling.BICUBIC)
+        ),
+    ]
+    candidates = [
+        pytesseract.image_to_string(variant, config="--psm 7").strip()
+        for variant in variants
+    ]
+    parsed = [(role, text) for text in candidates if (role := _parse_role(text)) is not None]
+    for preferred_role in ("officer", "leader", "elder", "member"):
+        for role, text in parsed:
+            if role == preferred_role:
+                return role, text
+    return None, next((text for text in candidates if text), "")
 
 
 def _relative_crop(image: object, row: Rect, x: float, y: float, width: float, height: float) -> object:
@@ -165,13 +234,18 @@ def _relative_crop(image: object, row: Rect, x: float, y: float, width: float, h
     return image.crop((crop.x, crop.y, crop.right, crop.bottom))
 
 
+def _crop_rect(image: object, rect: Rect) -> object:
+    return image.crop((rect.x, rect.y, rect.right, rect.bottom))
+
+
 def _read_power(image: object, row: MemberRow, pytesseract: object) -> int | None:
     crops = [
-        ((0.22, 0.58, 0.22, 0.35), True),
-        ((0.18, 0.58, 0.28, 0.35), True),
-        ((0.20, 0.58, 0.24, 0.35), True),
+        ((0.275, 0.55, 0.16, 0.37), True),
+        ((0.265, 0.58, 0.17, 0.34), True),
+        ((0.25, 0.56, 0.20, 0.38), True),
+        ((0.22, 0.58, 0.22, 0.35), False),
+        ((0.18, 0.58, 0.28, 0.35), False),
         ((0.19, 0.60, 0.25, 0.31), False),
-        ((0.265, 0.62, 0.16, 0.28), False),
     ]
     candidates: list[tuple[int, bool, bool]] = []
     for crop, is_trusted in crops:
@@ -214,9 +288,10 @@ def _select_power_cluster(candidates: list[tuple[int, bool, bool]]) -> int:
 
 def _read_donation(image: object, row: MemberRow, pytesseract: object) -> int | None:
     crops = [
-        (0.715, 0.60, 0.22, 0.30),
+        (0.755, 0.58, 0.15, 0.34),
+        (0.745, 0.56, 0.17, 0.38),
+        (0.72, 0.56, 0.20, 0.38),
         (0.700, 0.58, 0.24, 0.34),
-        (0.730, 0.60, 0.18, 0.30),
     ]
     candidates: list[int] = []
     for crop in crops:
@@ -226,6 +301,26 @@ def _read_donation(image: object, row: MemberRow, pytesseract: object) -> int | 
     if not candidates:
         return None
     return _select_integer_candidate(candidates)
+
+
+def _read_boss_tries(image: object, row: MemberRow, pytesseract: object) -> int | None:
+    crops = [
+        (0.49, 0.56, 0.15, 0.38),
+        (0.505, 0.56, 0.17, 0.38),
+        (0.49, 0.58, 0.19, 0.34),
+    ]
+    candidates: list[int] = []
+    for crop in crops:
+        text = _ocr_text(
+            _relative_crop(image, row.bounds, *crop),
+            pytesseract,
+            whitelist="0123456789time(s)",
+        )
+        value = parse_integer(text)
+        if value is not None:
+            candidates.append(value)
+    candidates = [candidate for candidate in candidates if 0 <= candidate <= 10]
+    return _select_integer_candidate(candidates) if candidates else None
 
 
 def _read_integer_candidates(image: object, pytesseract: object) -> list[int]:
@@ -312,7 +407,7 @@ def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple
 
 
 def _normalize_match_text(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", "", value.lower())
+    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff]+", "", value.lower())
     return normalized.translate(str.maketrans({"1": "l", "i": "l", "o": "0"}))
 
 
@@ -395,6 +490,7 @@ def parse_activity_days(value: str) -> int | None:
     normalized = value.lower()
     if "online" in normalized or "onl" in normalized:
         return 0
+    normalized = _normalize_activity_ocr(normalized)
     day_match = re.search(r"(\d+)\s*d", normalized)
     if day_match:
         return int(day_match.group(1))
@@ -403,14 +499,68 @@ def parse_activity_days(value: str) -> int | None:
     return None
 
 
+def format_activity_text(raw_value: str, days: int | None) -> str | None:
+    normalized = raw_value.strip().lower()
+    if not normalized or "online" in normalized or "onl" in normalized:
+        return "Online"
+    normalized = _normalize_activity_ocr(normalized)
+    day_match = re.search(r"(\d+)\s*d", normalized)
+    hour_match = re.search(r"(\d+)\s*h", normalized)
+    if day_match:
+        parts = [f"{int(day_match.group(1))} d"]
+        if hour_match:
+            parts.append(f"{int(hour_match.group(1))} h")
+        return " ".join(parts)
+    if hour_match:
+        return f"{int(hour_match.group(1))} h"
+    minute_match = re.search(r"(\d+)\s*m", normalized)
+    if minute_match:
+        return f"{int(minute_match.group(1))} min"
+    return f"{days} days" if days is not None else None
+
+
+def _normalize_activity_ocr(value: str) -> str:
+    def normalize_day_token(match: re.Match[str]) -> str:
+        digits = match.group(1).translate(str.maketrans({"o": "0", "i": "1", "l": "1"}))
+        return f"{digits}d"
+
+    normalized = re.sub(r"\b([0-9oil]+)\s*d\b", normalize_day_token, value.lower())
+    return re.sub(
+        r"\b([0-9oil]+)\s*([hm])\b",
+        lambda match: (
+            match.group(1).translate(str.maketrans({"o": "0", "i": "1", "l": "1"}))
+            + match.group(2)
+        ),
+        normalized,
+    )
+
+
+def format_game_power(value: int | None) -> str | None:
+    if value is None:
+        return None
+    unit, divisor = ("M", 1_000_000) if value >= 1_000_000 else ("K", 1_000)
+    amount = value / divisor
+    text = f"{amount:.2f}".rstrip("0").rstrip(".")
+    return f"{text}{unit}"
+
+
+def format_role_text(role: str | None) -> str | None:
+    return {
+        "leader": "Leader",
+        "officer": "Vice-leader",
+        "elder": "Elder",
+        "member": "Guild member",
+    }.get(role)
+
+
 def _parse_role(value: str) -> str | None:
     normalized = value.lower()
-    if "leader" in normalized and "vice" not in normalized:
-        return "leader"
-    if "vice" in normalized:
+    if any(marker in normalized for marker in ("vice", "vce", "mice", "nice")) and "leader" in normalized:
         return "officer"
+    if "leader" in normalized:
+        return "leader"
     if "elder" in normalized:
         return "elder"
-    if "member" in normalized:
+    if "member" in normalized or "guild" in normalized or "mem" in normalized:
         return "member"
     return None

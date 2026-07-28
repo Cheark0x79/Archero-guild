@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 export const publicNavItems = [
@@ -15,6 +16,9 @@ const adminNavItems = [
   ["admin", "Overview", "/admin"],
   ["data", "Data", "/admin/data"],
   ["check", "Check", "/admin/check"],
+  ...(process.env.NEXT_PUBLIC_OCR_LAB_ENABLED === "1"
+    ? [["ocr-lab", "OCR Lab", "/admin/ocr-lab"]]
+    : []),
   ["settings", "Rules", "/admin/rules"],
 ];
 
@@ -37,18 +41,18 @@ export default function AppSidebar({
       </div>
       <nav className="nav-list" aria-label="Pages">
         {publicNavItems.map(([key, label, href]) => (
-          <a key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
+          <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
             {label}
-          </a>
+          </Link>
         ))}
       </nav>
       {sessionRole === "admin" ? (
         <nav className="nav-list admin-nav-list" aria-label="Admin pages">
           <span>Admin</span>
           {adminNavItems.map(([key, label, href]) => (
-            <a key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
+            <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
               {label}
-            </a>
+            </Link>
           ))}
         </nav>
       ) : null}

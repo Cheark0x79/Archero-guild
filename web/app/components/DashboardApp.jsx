@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   captures as localCaptures,
@@ -39,7 +40,33 @@ let guildRoster = localGuildRoster;
 let memberSnapshots = localMemberSnapshots;
 let previousMemberSnapshots = localPreviousMemberSnapshots;
 let defaultRules = localDefaultRules;
+let identityLinks = [];
 let members = buildCurrentMembers();
+let dashboardDataCache = null;
+let dashboardDataCachedAt = 0;
+let dashboardDataPromise = null;
+const DASHBOARD_DATA_CACHE_MS = 15_000;
+
+function loadDashboardData() {
+  const now = Date.now();
+  if (dashboardDataCache && now - dashboardDataCachedAt < DASHBOARD_DATA_CACHE_MS) {
+    return Promise.resolve(dashboardDataCache);
+  }
+  if (dashboardDataPromise) return dashboardDataPromise;
+  dashboardDataPromise = fetch("/api/dashboard-data", { cache: "no-store" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((payload) => {
+      if (payload?.data) {
+        dashboardDataCache = payload;
+        dashboardDataCachedAt = Date.now();
+      }
+      return payload;
+    })
+    .finally(() => {
+      dashboardDataPromise = null;
+    });
+  return dashboardDataPromise;
+}
 
 function applyDashboardData(data) {
   captures = objectOrDefault(data.captures, localCaptures);
@@ -49,6 +76,7 @@ function applyDashboardData(data) {
   guildRoster = arrayOrDefault(data.guildRoster, localGuildRoster);
   memberSnapshots = arrayOrDefault(data.memberSnapshots, localMemberSnapshots);
   previousMemberSnapshots = arrayOrDefault(data.previousMemberSnapshots, localPreviousMemberSnapshots);
+  identityLinks = arrayOrDefault(data.identityLinks, []);
   defaultRules = { ...localDefaultRules, ...(data.rules && typeof data.rules === "object" ? data.rules : {}) };
   members = buildCurrentMembers();
 }
@@ -62,13 +90,48 @@ function objectOrDefault(value, fallback) {
 }
 
 function buildCurrentMembers() {
-  const rosterMembers = mergeRosterMetrics(guildRoster, memberSnapshots);
   const latestDay = [...dailyRawSnapshots].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
+  const linkedSnapshots = (latestDay?.rows ?? [])
+    .filter((snapshot) => !snapshot.playerId && identityPlayerIdForName(snapshot.name))
+    .map((snapshot) => ({
+      ...snapshot,
+      playerId: identityPlayerIdForName(snapshot.name),
+      metricsCaptured: true,
+      metricsVerified: true,
+    }));
+  const knownRosterIds = new Set(guildRoster.map((entry) => entry.playerId).filter(Boolean));
+  const linkedRosterEntries = identityLinks
+    .filter((link) => link.playerId && !knownRosterIds.has(link.playerId))
+    .map((link) => ({
+      playerId: link.playerId,
+      name: link.observedName,
+      status: "active",
+      joinedAt: null,
+      identitySource: "manual",
+    }));
+  const snapshotsById = new Map(memberSnapshots.filter((snapshot) => snapshot.playerId).map((snapshot) => [snapshot.playerId, snapshot]));
+  for (const snapshot of linkedSnapshots) snapshotsById.set(snapshot.playerId, snapshot);
+  const statusById = new Map(
+    identityLinks
+      .filter((link) => link.playerId && link.status)
+      .map((link) => [link.playerId, link.status]),
+  );
+  const rosterWithOverrides = [...guildRoster, ...linkedRosterEntries].map((entry) => ({
+    ...entry,
+    status: statusById.get(entry.playerId) ?? entry.status,
+  }));
+  const rosterMembers = mergeRosterMetrics(rosterWithOverrides, [...snapshotsById.values()]);
   if (!latestDay) return rosterMembers;
 
   const rosterNames = new Set(rosterMembers.map((member) => normalizedMemberName(member.name)));
   const unresolvedMembers = (latestDay.rows ?? [])
-    .filter((snapshot) => !snapshot.playerId && snapshot.name && !rosterNames.has(normalizedMemberName(snapshot.name)))
+    .filter(
+      (snapshot) =>
+        !snapshot.playerId
+        && snapshot.name
+        && !identityPlayerIdForName(snapshot.name)
+        && !rosterNames.has(normalizedMemberName(snapshot.name)),
+    )
     .map((snapshot, index) => ({
       rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(snapshot.name)}`,
       playerId: null,
@@ -110,6 +173,11 @@ function buildCurrentMembers() {
   return [...rosterMembers, ...unresolvedMembers];
 }
 
+function identityPlayerIdForName(name) {
+  const normalized = normalizedMemberName(name);
+  return identityLinks.find((link) => link.normalizedName === normalized)?.playerId ?? null;
+}
+
 function normalizedMemberName(value) {
   return String(value ?? "")
     .normalize("NFKC")
@@ -140,8 +208,8 @@ const routeMeta = {
   settings: ["Rules", "Local thresholds before backend wiring."],
 };
 
-export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null }) {
-  const [sessionRole, setSessionRole] = useState(null);
+export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null, initialSessionRole = null }) {
+  const [sessionRole, setSessionRole] = useState(initialSessionRole);
   const [rules, setRules] = useStoredRules();
   const [dataVersion, setDataVersion] = useState(0);
   const [dataWarning, setDataWarning] = useState("");
@@ -155,8 +223,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/dashboard-data", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
+    loadDashboardData()
       .then((payload) => {
         if (cancelled || !payload?.data) return;
         applyDashboardData(payload.data);
@@ -173,6 +240,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   }, []);
 
   useEffect(() => {
+    if (initialSessionRole) return undefined;
     let cancelled = false;
     fetch("/api/auth/session", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -183,11 +251,11 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialSessionRole]);
 
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
-  const selectedMember = selectedMemberCandidate && !isFormerStatus(selectedMemberCandidate.status) ? selectedMemberCandidate : null;
+  const selectedMember = selectedMemberCandidate;
   const [title, subtitle] = routeMeta[activeRoute];
 
   return (
@@ -235,6 +303,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             setRanges={setDetailRanges}
             annotations={annotations}
             setAnnotations={setAnnotations}
+            sessionRole={sessionRole}
           />
         )}
         {activeRoute === "member" && !selectedMember && (
@@ -518,7 +587,7 @@ function DataView() {
       </section>
 
       <section className="panel data-command-panel">
-        <PanelHeading title="ADB screenshot" subtitle="Confirm before capture, then review the exact screenshot that was saved." />
+        <PanelHeading title="BlueStacks screenshot" subtitle="Capture only: no OCR, import, or database write runs until you request synchronization." />
         <div className="data-command-grid">
           <DataActionButton
             title="Guild members"
@@ -706,7 +775,7 @@ function CaptureDialog({ dialog, busyAction, adbConnected, onCancel, onConfirm, 
           <div className="data-modal-body">
             <div className="data-confirm-box">
               <StatusPill label={adbConnected ? "Connected" : "Disconnected"} severity={adbConnected ? "positive" : "warning"} />
-              <p>Only one ADB screenshot will be taken. No navigation command will run.</p>
+              <p>Only one BlueStacks screenshot will be taken. No navigation, OCR, import, or database command will run.</p>
             </div>
             <div className="data-modal-actions">
               <button className="secondary-button" type="button" onClick={onCancel}>
@@ -2038,9 +2107,13 @@ function checkRowMatchesQuery(row, query) {
 }
 
 function MemberRow({ member, rules }) {
+  const router = useRouter();
   const evaluation = evaluateMember(member, rules);
   return (
-    <tr className={`member-row ${rowStateClass(evaluation)} ${isFormerStatus(member.status) ? "row-former" : ""} clickable-row`} onClick={() => navigateToMember(member)}>
+    <tr
+      className={`member-row ${rowStateClass(evaluation)} ${isFormerStatus(member.status) ? "row-former" : ""} clickable-row`}
+      onClick={() => navigateToMember(member, router)}
+    >
       <td>
         <div className="player-cell">
           <strong>{member.playerId ?? "Missing ID"}</strong>
@@ -2076,13 +2149,16 @@ function MemberRow({ member, rules }) {
   );
 }
 
-function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnotations }) {
+function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnotations, sessionRole }) {
   const evaluation = evaluateMember(member, rules);
   const history = dailyHistory(member);
   const currentHistory = history.find((row) => row.date === currentImportDate());
   const weeklyHistory = filterHistoryByRange(history, "1w");
   const memberAnnotations = annotations[memberKey(member)] ?? { notes: [], warnings: [] };
   const needs = evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
+  const [playerIdDraft, setPlayerIdDraft] = useState("");
+  const [identitySaveState, setIdentitySaveState] = useState({ saving: false, error: "" });
+  const [statusSaveState, setStatusSaveState] = useState({ saving: false, error: "" });
 
   function setRange(chart, range) {
     setRanges((current) => ({ ...current, [chart]: range }));
@@ -2110,6 +2186,57 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
 
   function deleteAnnotation(type, index) {
     setAnnotations((current) => updateMemberAnnotations(current, member, type, (items) => items.filter((_, itemIndex) => itemIndex !== index)));
+  }
+
+  async function assignPlayerId(event) {
+    event.preventDefault();
+    const playerId = playerIdDraft.trim();
+    if (!/^\d{6,20}$/.test(playerId)) {
+      setIdentitySaveState({ saving: false, error: "Player ID must contain 6 to 20 digits." });
+      return;
+    }
+    setIdentitySaveState({ saving: true, error: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ observedName: member.name, playerId }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.link) throw new Error(payload?.error || "Identity save failed.");
+      identityLinks = [
+        ...identityLinks.filter((link) => link.normalizedName !== payload.link.normalizedName),
+        payload.link,
+      ];
+      members = buildCurrentMembers();
+      dashboardDataCache = null;
+      window.location.assign(`/members/${encodeURIComponent(playerId)}`);
+    } catch (error) {
+      setIdentitySaveState({ saving: false, error: error instanceof Error ? error.message : "Identity save failed." });
+    }
+  }
+
+  async function updateMemberStatus(status) {
+    if (!member.playerId || statusSaveState.saving) return;
+    setStatusSaveState({ saving: true, error: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          action: "status",
+          playerId: member.playerId,
+          observedName: member.name,
+          status,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.member) throw new Error(payload?.error || "Member status save failed.");
+      dashboardDataCache = null;
+      window.location.reload();
+    } catch (error) {
+      setStatusSaveState({ saving: false, error: error instanceof Error ? error.message : "Member status save failed." });
+    }
   }
 
   return (
@@ -2144,6 +2271,68 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
             <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays)} />
             <DetailMetric label="Joined guild" value={member.joinedAt ?? "Not recorded"} />
           </div>
+          {!member.playerId && sessionRole === "admin" ? (
+            <form className="identity-assignment" onSubmit={assignPlayerId}>
+              <div>
+                <strong>Unmatched OCR member</strong>
+                <span>Assign the permanent Archero player ID. Existing history with the same observed name will be linked.</span>
+              </div>
+              <label>
+                <span>Player ID</span>
+                <input
+                  inputMode="numeric"
+                  pattern="[0-9]{6,20}"
+                  value={playerIdDraft}
+                  onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
+                  placeholder="119000000"
+                  aria-describedby={identitySaveState.error ? "identity-save-error" : undefined}
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={identitySaveState.saving}>
+                {identitySaveState.saving ? "Saving..." : "Assign ID"}
+              </button>
+              {identitySaveState.error ? (
+                <small className="form-error" id="identity-save-error" role="alert">
+                  {identitySaveState.error}
+                </small>
+              ) : null}
+            </form>
+          ) : null}
+          {member.playerId && sessionRole === "admin" ? (
+            <div className="identity-assignment member-status-assignment">
+              <div>
+                <strong>Guild membership</strong>
+                <span>Confirm departures manually so an incomplete screenshot never removes somebody automatically.</span>
+              </div>
+              <div className="member-status-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "active"}
+                  onClick={() => updateMemberStatus("active")}
+                >
+                  Active
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "left"}
+                  onClick={() => updateMemberStatus("left")}
+                >
+                  Left
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "kicked"}
+                  onClick={() => updateMemberStatus("kicked")}
+                >
+                  Kicked
+                </button>
+              </div>
+              {statusSaveState.error ? <small className="form-error" role="alert">{statusSaveState.error}</small> : null}
+            </div>
+          ) : null}
         </section>
         <section className="panel">
           <PanelHeading title="Needs" subtitle="Automatic checks against the current rules" />
@@ -3506,9 +3695,9 @@ function memberSnapshotForDate(member, date) {
 }
 
 function dailyHistory(member) {
-  if (!member.metricsCaptured) return [];
   const rawHistory = dailySnapshotHistory(member);
   if (rawHistory.length > 0) return rawHistory;
+  if (!member.metricsCaptured) return [];
   const rows = [];
   if (member.previousSnapshot) {
     rows.push({
@@ -3550,7 +3739,7 @@ function dailySnapshotHistory(member) {
   const rows = [];
   const bossSnapshotsByDate = dailyBossSnapshotsByDate(member.playerId);
   for (const day of dailyRawSnapshots) {
-    const snapshot = day.rows?.find((row) => row.playerId === member.playerId);
+    const snapshot = day.rows?.find((row) => resolvedSnapshotPlayerId(row) === member.playerId);
     if (!snapshot) continue;
     const previous = rows.at(-1);
     const bossSnapshot = bossSnapshotsByDate.get(day.date);
@@ -3578,10 +3767,16 @@ function dailyBossSnapshotsByDate(playerId) {
   const snapshots = new Map();
   if (!playerId || !Array.isArray(dailyBossRawSnapshots)) return snapshots;
   for (const day of dailyBossRawSnapshots) {
-    const snapshot = day.rows?.find((row) => row.playerId === playerId && typeof row.bossDamageToday === "number");
+    const snapshot = day.rows?.find(
+      (row) => resolvedSnapshotPlayerId(row) === playerId && typeof row.bossDamageToday === "number",
+    );
     if (snapshot) snapshots.set(day.date, snapshot);
   }
   return snapshots;
+}
+
+function resolvedSnapshotPlayerId(snapshot) {
+  return snapshot?.playerId ?? identityPlayerIdForName(snapshot?.name ?? snapshot?.rawName);
 }
 
 function metricDelta(current, previous) {
@@ -3641,12 +3836,12 @@ function memberKey(member) {
   return member.playerId ?? member.rowId;
 }
 
-function navigateToMember(member) {
-  window.location.href = `/members/${encodeURIComponent(memberKey(member))}`;
+function navigateToMember(member, router) {
+  router.push(`/members/${encodeURIComponent(memberKey(member))}`);
 }
 
 function roleLabel(role) {
-  return { leader: "Leader", officer: "Vice leader", elder: "Elder", member: "Member", boss: "Guild boss" }[role] ?? "Member";
+  return { leader: "Leader", officer: "Vice-leader", elder: "Elder", member: "Guild member", boss: "Guild boss" }[role] ?? "Guild member";
 }
 
 function rowStateClass(evaluation) {

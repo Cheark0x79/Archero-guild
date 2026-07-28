@@ -30,6 +30,7 @@ def export_dashboard_payload(dsn: str) -> dict[str, Any]:
             "rules": _rules(connection),
             "changes": [],
             "ocrQueue": [],
+            "identityLinks": _identity_links(connection),
         }
     return _jsonable(payload)
 
@@ -90,7 +91,7 @@ def _member_snapshots(connection) -> list[dict[str, Any]]:
 
 
 def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
+    rows = list(connection.execute(
         """
         SELECT gs.capture_date, gm.current_name, m.user_id, m.role, m.power,
                m.contribution_7d, m.boss_attacks, m.last_activity_days
@@ -99,7 +100,24 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
         JOIN guild_members gm ON gm.user_id = m.user_id
         ORDER BY gs.capture_date, gm.current_name
         """
-    ).fetchall()
+    ).fetchall())
+    unmatched_table = connection.execute(
+        "SELECT to_regclass('public.unmatched_member_metrics') AS table_name"
+    ).fetchone()
+    if unmatched_table and unmatched_table["table_name"]:
+        rows.extend(
+            connection.execute(
+                """
+                SELECT gs.capture_date, u.observed_name AS current_name,
+                       NULL::text AS user_id, u.role, u.power,
+                       u.contribution_7d, u.boss_attacks, u.last_activity_days
+                FROM unmatched_member_metrics u
+                JOIN guild_snapshots gs ON gs.id = u.snapshot_id
+                ORDER BY gs.capture_date, u.observed_name
+                """
+            ).fetchall()
+        )
+    rows.sort(key=lambda row: (row["capture_date"], row.get("current_name") or ""))
     by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_date[_iso(row["capture_date"])].append(_member_snapshot_row(row))
@@ -156,6 +174,27 @@ def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
 def _rules(connection) -> dict[str, Any]:
     rows = connection.execute("SELECT key, value FROM rule_settings").fetchall()
     return {row["key"]: row["value"] for row in rows}
+
+
+def _identity_links(connection) -> list[dict[str, Any]]:
+    exists = connection.execute("SELECT to_regclass('public.member_identity_links') AS table_name").fetchone()
+    if not exists or not exists["table_name"]:
+        return []
+    rows = connection.execute(
+        """
+        SELECT normalized_name, observed_name, user_id
+        FROM member_identity_links
+        ORDER BY observed_name
+        """
+    ).fetchall()
+    return [
+        {
+            "normalizedName": row["normalized_name"],
+            "observedName": row["observed_name"],
+            "playerId": row["user_id"],
+        }
+        for row in rows
+    ]
 
 
 def _iso(value: Any) -> str | None:

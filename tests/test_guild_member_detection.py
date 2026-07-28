@@ -24,16 +24,32 @@ class GuildMemberDetectionTests(unittest.TestCase):
         self.assertEqual((rows[1].bounds.x, rows[1].bounds.y, rows[1].bounds.width, rows[1].bounds.height), (58, 983, 960, 151))
         self.assertEqual((rows[6].bounds.x, rows[6].bounds.y, rows[6].bounds.width, rows[6].bounds.height), (58, 1871, 960, 142))
 
+    def test_detects_rows_after_uniform_resolution_scaling(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scaled_path = Path(directory) / "guild-members-1440.png"
+            with Image.open(FIXTURE) as image:
+                image.resize(
+                    (round(image.width * 4 / 3), round(image.height * 4 / 3)),
+                    Image.Resampling.NEAREST,
+                ).save(scaled_path)
+
+            rows = detect_member_rows(scaled_path)
+
+        self.assertEqual(len(rows), 7)
+        self.assertAlmostEqual(rows[0].bounds.height, 151, delta=2)
+
     def test_infers_pignouf_field_regions(self) -> None:
         pignouf = detect_member_rows(FIXTURE)[1]
 
-        self.assertEqual((pignouf.fields.name.x, pignouf.fields.name.y), (423, 1007))
+        self.assertGreater(pignouf.fields.name.x, pignouf.fields.role.right)
+        self.assertEqual(pignouf.fields.name.y, 1004)
         self.assertEqual((pignouf.fields.power.x, pignouf.fields.power.y), (240, 1077))
-        self.assertEqual((pignouf.fields.power_value.x, pignouf.fields.power_value.y), (312, 1077))
+        self.assertEqual((pignouf.fields.power_value.x, pignouf.fields.power_value.y), (322, 1066))
         self.assertEqual((pignouf.fields.boss_tries.x, pignouf.fields.boss_tries.y), (471, 1075))
-        self.assertEqual((pignouf.fields.boss_tries_value.x, pignouf.fields.boss_tries_value.y), (528, 1075))
+        self.assertEqual((pignouf.fields.boss_tries_value.x, pignouf.fields.boss_tries_value.y), (528, 1068))
+        self.assertEqual(pignouf.fields.boss_tries_value.width, 144)
         self.assertEqual((pignouf.fields.donation.x, pignouf.fields.donation.y), (711, 1074))
-        self.assertEqual((pignouf.fields.donation_value.x, pignouf.fields.donation_value.y), (744, 1074))
+        self.assertEqual((pignouf.fields.donation_value.x, pignouf.fields.donation_value.y), (749, 1068))
 
     def test_exports_row_and_field_crops(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   captures,
   changes,
@@ -9,10 +12,10 @@ import {
   rules,
   ocrQueue,
 } from "../../../sample-data.js";
-import { runObserverModule } from "../data/actions.js";
+import { projectRoot, runObserverModule } from "../data/actions.js";
 
 export async function loadDashboardData() {
-  const fallback = localPayload();
+  const fallback = await localPayload();
   if (!process.env.ARCHERO_DATABASE_URL && !process.env.DATABASE_URL) {
     return { ok: true, source: "local", data: fallback };
   }
@@ -129,7 +132,7 @@ function weekStart(date) {
   return current.toISOString().slice(0, 10);
 }
 
-function localPayload() {
+async function localPayload() {
   return {
     captures,
     changes,
@@ -140,6 +143,7 @@ function localPayload() {
     previousMemberSnapshots,
     rules,
     ocrQueue,
+    identityLinks: await localIdentityLinks(),
   };
 }
 
@@ -147,14 +151,26 @@ export function mergeWithLocalFallback(data, fallback) {
   return {
     captures: { ...fallback.captures, ...(data.captures ?? {}) },
     changes: arrayOrFallback(data.changes, fallback.changes),
-    dailyBossRawSnapshots: arrayOrFallback(data.dailyBossRawSnapshots, fallback.dailyBossRawSnapshots),
-    dailyRawSnapshots: arrayOrFallback(data.dailyRawSnapshots, fallback.dailyRawSnapshots),
+    dailyBossRawSnapshots: mergeDailySnapshots(data.dailyBossRawSnapshots, fallback.dailyBossRawSnapshots),
+    dailyRawSnapshots: mergeDailySnapshots(data.dailyRawSnapshots, fallback.dailyRawSnapshots),
     guildRoster: rosterOrFallback(data.guildRoster, fallback.guildRoster),
     memberSnapshots: arrayOrFallback(data.memberSnapshots, fallback.memberSnapshots),
     previousMemberSnapshots: arrayOrFallback(data.previousMemberSnapshots, fallback.previousMemberSnapshots),
     rules: { ...fallback.rules, ...(data.rules ?? {}) },
     ocrQueue: arrayOrFallback(data.ocrQueue, fallback.ocrQueue),
+    identityLinks: mergeIdentityLinks(data.identityLinks, fallback.identityLinks),
   };
+}
+
+export function mergeDailySnapshots(value, fallback) {
+  const byDate = new Map();
+  for (const day of Array.isArray(fallback) ? fallback : []) {
+    if (day?.date) byDate.set(day.date, day);
+  }
+  for (const day of Array.isArray(value) ? value : []) {
+    if (day?.date) byDate.set(day.date, day);
+  }
+  return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
 function rosterOrFallback(value, fallback) {
@@ -176,4 +192,25 @@ function rosterOrFallback(value, fallback) {
 
 function arrayOrFallback(value, fallback) {
   return Array.isArray(value) && value.length > 0 ? value : fallback;
+}
+
+function mergeIdentityLinks(value, fallback) {
+  const byName = new Map();
+  for (const link of Array.isArray(fallback) ? fallback : []) {
+    if (link?.normalizedName) byName.set(link.normalizedName, link);
+  }
+  for (const link of Array.isArray(value) ? value : []) {
+    if (link?.normalizedName) byName.set(link.normalizedName, link);
+  }
+  return [...byName.values()];
+}
+
+async function localIdentityLinks() {
+  try {
+    const payload = JSON.parse(await fs.readFile(path.join(projectRoot(), "data", "member-identities.json"), "utf8"));
+    return Array.isArray(payload) ? payload : [];
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return [];
+    throw error;
+  }
 }

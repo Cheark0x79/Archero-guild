@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,8 +111,9 @@ class StorageMigrateJsonTests(unittest.TestCase):
             imports_root = Path(directory) / "data" / "imports"
             imports_root.mkdir(parents=True)
 
-            with self.assertRaises(ValueError):
-                migrate_import_reports(imports_root=imports_root, dsn=None, dry_run=False)
+            with patch.dict(os.environ, {"ARCHERO_DATABASE_URL": "", "DATABASE_URL": ""}):
+                with self.assertRaises(ValueError):
+                    migrate_import_reports(imports_root=imports_root, dsn=None, dry_run=False)
 
 
 def _report_payload(member_path: str = "screenshots/raw/2026-07-16/guild-members-001.png", boss_path: str = "screenshots/raw/2026-07-16/guild-boss-001.png") -> dict[str, object]:

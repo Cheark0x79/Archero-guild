@@ -7,6 +7,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Sequence
 
+from observer.pipeline.image_geometry import normalize_analysis_image
+
 
 class GuildBossDetectionError(RuntimeError):
     pass
@@ -41,6 +43,13 @@ class BossRankingRow:
     index: int
     bounds: Rect
     fields: BossRankingFields
+
+
+@dataclass(frozen=True)
+class BossPodiumRegion:
+    rank: int
+    name_candidates: tuple[Rect, ...]
+    damage: Rect
 
 
 @dataclass(frozen=True)
@@ -174,6 +183,25 @@ def _best_text(values: list[str]) -> str:
     return sorted(cleaned, key=lambda value: (_name_signal_length(value), len(value)), reverse=True)[0]
 
 
+def _best_name_text(values: Sequence[str]) -> str:
+    cleaned = [candidate for value in values if (candidate := _clean_raw_name(value))]
+    if not cleaned:
+        return ""
+    counts: dict[str, int] = {}
+    for candidate in cleaned:
+        normalized = _normalize_match_text(candidate)
+        counts[normalized] = counts.get(normalized, 0) + 1
+    return sorted(
+        cleaned,
+        key=lambda candidate: (
+            counts[_normalize_match_text(candidate)],
+            _name_signal_length(candidate),
+            -len(candidate),
+        ),
+        reverse=True,
+    )[0]
+
+
 def _ocr_variants(
     image: object,
     pytesseract: object,
@@ -202,14 +230,30 @@ def _ocr_variants(
         base.point(lambda pixel: 255 if pixel > 160 else 0),
     ]
     if high_threshold:
-        variants.append(base.point(lambda pixel: 255 if pixel > 200 else 0))
+        color_base = ImageOps.autocontrast(
+            image.convert("RGB").resize((image.width * 5, image.height * 5), Image.Resampling.BICUBIC)
+        )
+        green_base = ImageOps.autocontrast(
+            image.convert("RGB").getchannel("G").resize(
+                (image.width * 5, image.height * 5),
+                Image.Resampling.BICUBIC,
+            )
+        )
+        variants.extend(
+            [
+                base.point(lambda pixel: 255 if pixel > 200 else 0),
+                color_base.point(lambda pixel: 255 if pixel > 160 else 0),
+                green_base.point(lambda pixel: 255 if pixel > 200 else 0),
+            ]
+        )
     texts: list[str] = []
+    supported_languages = _supported_ocr_languages(pytesseract, languages)
     for prepared in variants:
         for psm in psm_values:
             config = f"--psm {psm}"
             if whitelist is not None:
                 config += f" -c tessedit_char_whitelist={whitelist}"
-            for language in languages:
+            for language in supported_languages:
                 texts.append(pytesseract.image_to_string(prepared, lang=language, config=config).strip())
     return texts
 
@@ -225,8 +269,15 @@ def _match_roster_name(raw_name: str | Sequence[str], roster: Sequence[object]) 
             roster_name = _normalize_match_text(_roster_name(entry))
             if not roster_name:
                 continue
+            shorter_ratio = min(len(roster_name), len(normalized)) / max(len(roster_name), len(normalized))
+            if shorter_ratio < 0.65:
+                continue
             score = SequenceMatcher(None, roster_name, normalized).ratio()
-            if len(normalized) >= 3 and (roster_name in normalized or normalized in roster_name):
+            if (
+                len(normalized) >= 3
+                and shorter_ratio >= 0.70
+                and (roster_name in normalized or normalized in roster_name)
+            ):
                 score = max(score, 0.90)
             if best is None or score > best[2]:
                 best = (entry, candidate_name, score)
@@ -331,13 +382,18 @@ def detect_boss_ranking_rows(path: Path) -> list[BossRankingRow]:
         raise FileNotFoundError(path)
 
     with Image.open(path) as image:
-        rgb = image.convert("RGB")
+        rgb = normalize_analysis_image(image)
         intervals = _detect_ranking_intervals(rgb)
         bounds = [_detect_row_bounds(rgb, start, end) for start, end in intervals]
         return [BossRankingRow(index=index, bounds=rect, fields=_infer_fields(rect)) for index, rect in enumerate(bounds)]
 
 
-def extract_boss_rankings_from_screenshots(paths: list[Path], roster: Sequence[object]) -> list[ExtractedBossRanking]:
+def extract_boss_rankings_from_screenshots(
+    paths: list[Path],
+    roster: Sequence[object],
+    *,
+    include_podium: bool = True,
+) -> list[ExtractedBossRanking]:
     try:
         from PIL import Image  # type: ignore[import-not-found]
         import pytesseract  # type: ignore[import-not-found]
@@ -349,9 +405,10 @@ def extract_boss_rankings_from_screenshots(paths: list[Path], roster: Sequence[o
         rows = detect_boss_ranking_rows(path)
         source_name = _source_name(path)
         with Image.open(path) as image:
-            rgb = image.convert("RGB")
-            if path == paths[0]:
-                rankings.extend(_extract_podium_rankings(rgb, source_name, roster, pytesseract))
+            rgb = normalize_analysis_image(image)
+            if include_podium and path == paths[0]:
+                list_top = rows[0].bounds.y if rows else None
+                rankings.extend(_extract_podium_rankings(rgb, source_name, roster, pytesseract, list_top=list_top))
             previous_rank: int | None = None
             for row in rows:
                 ranking = _extract_list_ranking(rgb, row, source_name, roster, pytesseract, previous_rank)
@@ -377,7 +434,8 @@ def export_boss_ranking_crops(screenshot_path: Path, output_dir: Path) -> list[P
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    with Image.open(screenshot_path) as image:
+    with Image.open(screenshot_path) as source_image:
+        image = normalize_analysis_image(source_image)
         for row in rows:
             row_path = output_dir / f"boss-row-{row.index:02d}.png"
             image.crop(_box(row.bounds)).save(row_path, format="PNG")
@@ -407,13 +465,13 @@ def _extract_list_ranking(
             _boss_name_candidates(image, row, pytesseract, languages=("chi_tra", "chi_sim", "rus", "eng+chi_tra", "eng+chi_sim", "eng+rus"))
         )
         match = _match_roster_name(raw_name_candidates, roster)
-    raw_name = _best_text(raw_name_candidates)
+    raw_name = _best_name_text(raw_name_candidates)
     damage_text = _read_boss_damage_text(_crop(image, row.fields.damage), pytesseract)
     if previous_rank is not None:
         rank = previous_rank + 1
     else:
         rank = _read_boss_rank(_crop(image, row.fields.rank), pytesseract)
-    matched_raw_name = match[1] if match is not None else raw_name
+    matched_raw_name = (_clean_raw_name(match[1]) if match is not None else "") or raw_name
     return ExtractedBossRanking(
         source=f"{source_name} row {row.index}",
         row_index=row.index,
@@ -428,7 +486,7 @@ def _extract_list_ranking(
 
 
 def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
-    repaired = list(rankings)
+    repaired = _repair_missing_list_ranks(rankings)
     for _pass in range(3):
         changed = False
         ranked_indexes = sorted(
@@ -440,6 +498,8 @@ def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[Extr
             key=lambda index: repaired[index].boss_rank or 0,
         )
         previous_damage: int | None = None
+        previous_index: int | None = None
+        previous_upper_damage: int | None = None
         for index in ranked_indexes:
             ranking = repaired[index]
             current_damage = ranking.boss_damage_today
@@ -454,7 +514,29 @@ def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[Extr
                     current_damage = repaired[index].boss_damage_today
                     changed = True
             if previous_damage is not None and current_damage is not None and current_damage > previous_damage:
-                replacement = _downgraded_damage_text(ranking.damage_text, previous_damage)
+                prefixed_previous = (
+                    _prefixed_damage_text(
+                        repaired[previous_index].damage_text,
+                        minimum=current_damage,
+                        maximum=previous_upper_damage or 1_000_000_000_000_000,
+                    )
+                    if previous_index is not None
+                    else None
+                )
+                if prefixed_previous is not None and previous_index is not None:
+                    repaired[previous_index] = replace(
+                        repaired[previous_index],
+                        damage_text=prefixed_previous,
+                        boss_damage_today=parse_boss_damage(prefixed_previous),
+                    )
+                    previous_damage = repaired[previous_index].boss_damage_today
+                    changed = True
+
+                replacement = (
+                    _downgraded_damage_text(ranking.damage_text, previous_damage)
+                    if previous_damage is not None and current_damage > previous_damage
+                    else None
+                )
                 if replacement is not None:
                     repaired[index] = replace(
                         ranking,
@@ -463,14 +545,89 @@ def _repair_rank_damage_order(rankings: list[ExtractedBossRanking]) -> list[Extr
                     )
                     current_damage = repaired[index].boss_damage_today
                     changed = True
+                elif previous_index is not None and previous_damage is not None and current_damage > previous_damage:
+                    previous_ranking = repaired[previous_index]
+                    upgraded_previous = _upgraded_damage_text(
+                        previous_ranking.damage_text,
+                        1_000_000_000_000_000,
+                        minimum=current_damage,
+                    )
+                    if upgraded_previous is not None:
+                        repaired[previous_index] = replace(
+                            previous_ranking,
+                            damage_text=upgraded_previous,
+                            boss_damage_today=parse_boss_damage(upgraded_previous),
+                        )
+                        previous_damage = repaired[previous_index].boss_damage_today
+                        changed = True
             if current_damage is not None:
+                previous_upper_damage = previous_damage
                 previous_damage = current_damage
+                previous_index = index
+
+        # A missing unit can affect a whole descending block (for example
+        # 1.44M ... 1.13M followed by 848M, where the first block is really B).
+        # Repair backwards in the same pass so a later valid value anchors the
+        # entire preceding block before another forward pass can undo it.
+        for position in range(len(ranked_indexes) - 1, 0, -1):
+            current_index = ranked_indexes[position]
+            previous_index = ranked_indexes[position - 1]
+            current_damage = repaired[current_index].boss_damage_today
+            previous_ranking = repaired[previous_index]
+            previous_damage = previous_ranking.boss_damage_today
+            if current_damage is None or previous_damage is None or previous_damage >= current_damage:
+                continue
+            maximum = 1_000_000_000_000_000
+            repaired_text = _prefixed_damage_text(
+                previous_ranking.damage_text,
+                minimum=current_damage,
+                maximum=maximum,
+            ) or _upgraded_damage_text(
+                previous_ranking.damage_text,
+                maximum,
+                minimum=current_damage,
+            )
+            if repaired_text is None:
+                continue
+            repaired[previous_index] = replace(
+                previous_ranking,
+                damage_text=repaired_text,
+                boss_damage_today=parse_boss_damage(repaired_text),
+            )
+            changed = True
         if not changed:
             break
     return repaired
 
 
-def _upgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:
+def _repair_missing_list_ranks(rankings: list[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
+    repaired = list(rankings)
+    anchors = [
+        ranking
+        for ranking in repaired
+        if ranking.area == "list" and ranking.boss_rank is not None
+    ]
+    for index, ranking in enumerate(repaired):
+        if ranking.area != "list" or ranking.boss_rank is not None:
+            continue
+        candidates = {
+            anchor.boss_rank + ranking.row_index - anchor.row_index
+            for anchor in anchors
+            if anchor.boss_rank is not None
+        }
+        if len(candidates) != 1:
+            continue
+        inferred_rank = candidates.pop()
+        if inferred_rank > 0:
+            repaired[index] = replace(ranking, boss_rank=inferred_rank)
+    return repaired
+
+
+def repair_boss_ranking_order(rankings: list[ExtractedBossRanking]) -> list[ExtractedBossRanking]:
+    return _repair_rank_damage_order(rankings)
+
+
+def _upgraded_damage_text(damage_text: str | None, maximum: int, *, minimum: int = 0) -> str | None:
     match = re.fullmatch(r"(\d+(?:\.\d+)?|\.\d+)([Mm])", damage_text or "")
     if match is None:
         return None
@@ -485,9 +642,24 @@ def _upgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:
     for candidate_amount in candidates:
         candidate = f"{candidate_amount}B"
         parsed = parse_boss_damage(candidate)
-        if parsed is not None and parsed <= maximum:
+        if parsed is not None and minimum <= parsed <= maximum:
             return candidate
     return None
+
+
+def _prefixed_damage_text(damage_text: str | None, *, minimum: int, maximum: int) -> str | None:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?|\.\d+)([TtBbMm])", damage_text or "")
+    if match is None:
+        return None
+    amount = match.group(1)
+    unit = match.group(2).upper()
+    candidates: list[tuple[int, str]] = []
+    for prefix in range(1, 10):
+        candidate = f"{prefix}{amount}{unit}"
+        parsed = parse_boss_damage(candidate)
+        if parsed is not None and minimum <= parsed <= maximum:
+            candidates.append((parsed, candidate))
+    return min(candidates)[1] if candidates else None
 
 
 def _downgraded_damage_text(damage_text: str | None, maximum: int) -> str | None:
@@ -533,50 +705,92 @@ def _ocr_name_variants(image: object, pytesseract: object, *, languages: tuple[s
     gray = ImageOps.grayscale(image)
     prepared = ImageOps.autocontrast(gray.resize((gray.width * 5, gray.height * 5), Image.Resampling.LANCZOS))
     texts: list[str] = []
-    for language in languages:
+    for language in _supported_ocr_languages(pytesseract, languages):
         texts.append(pytesseract.image_to_string(prepared, lang=language, config="--psm 7").strip())
     return texts
 
 
-def _extract_podium_rankings(image: object, source_name: str, roster: Sequence[object], pytesseract: object) -> list[ExtractedBossRanking]:
-    width = image.width
-    height = image.height
-    specs = [
-        (
-            1,
-            [Rect(round(width * 0.393), round(height * 0.265), round(width * 0.273), round(height * 0.032))],
-            Rect(round(width * 0.42), round(height * 0.307), round(width * 0.27), round(height * 0.047)),
+def _supported_ocr_languages(pytesseract: object, requested: tuple[str, ...]) -> tuple[str, ...]:
+    get_languages = getattr(pytesseract, "get_languages", None)
+    if not callable(get_languages):
+        return requested
+    try:
+        available = set(get_languages(config=""))
+    except Exception:
+        return requested
+
+    supported = tuple(
+        language
+        for language in requested
+        if all(component in available for component in language.split("+"))
+    )
+    if supported:
+        return supported
+    return ("eng",) if "eng" in available else ()
+
+
+def boss_podium_regions(width: int, height: int, *, list_top: int | None = None) -> list[BossPodiumRegion]:
+    scale = width / 1080
+    anchor = list_top if list_top is not None else round(height * 0.39)
+
+    def anchored_rect(x: float, y_offset: int, rect_width: float, rect_height: int) -> Rect:
+        return Rect(
+            round(width * x),
+            round(anchor + y_offset * scale),
+            round(width * rect_width),
+            round(rect_height * scale),
+        )
+
+    return [
+        BossPodiumRegion(
+            rank=1,
+            name_candidates=(
+                anchored_rect(0.393, -245, 0.273, 72),
+            ),
+            damage=anchored_rect(0.46, -130, 0.19, 72),
         ),
-        (
-            2,
-            [
-                Rect(round(width * 0.065), round(height * 0.278), round(width * 0.225), round(height * 0.030)),
-                Rect(round(width * 0.055), round(height * 0.272), round(width * 0.255), round(height * 0.040)),
-                Rect(round(width * 0.06), round(height * 0.28), round(width * 0.29), round(height * 0.045)),
-            ],
-            Rect(round(width * 0.16), round(height * 0.324), round(width * 0.18), round(height * 0.035)),
+        BossPodiumRegion(
+            rank=2,
+            name_candidates=(
+                anchored_rect(0.065, -215, 0.225, 72),
+                anchored_rect(0.055, -221, 0.255, 82),
+                anchored_rect(0.06, -211, 0.29, 82),
+            ),
+            damage=anchored_rect(0.14, -105, 0.19, 72),
         ),
-        (
-            3,
-            [Rect(round(width * 0.731), round(height * 0.280), round(width * 0.205), round(height * 0.028))],
-            Rect(round(width * 0.71), round(height * 0.328), round(width * 0.20), round(height * 0.040)),
+        BossPodiumRegion(
+            rank=3,
+            name_candidates=(
+                anchored_rect(0.72, -193, 0.20, 70),
+            ),
+            damage=anchored_rect(0.77, -90, 0.18, 72),
         ),
     ]
+
+
+def _extract_podium_rankings(
+    image: object,
+    source_name: str,
+    roster: Sequence[object],
+    pytesseract: object,
+    *,
+    list_top: int | None = None,
+) -> list[ExtractedBossRanking]:
     rankings: list[ExtractedBossRanking] = []
-    for rank, name_rects, damage_rect in specs:
+    for region in boss_podium_regions(image.width, image.height, list_top=list_top):
         raw_name_candidates: list[str] = []
-        for name_rect in name_rects:
+        for name_rect in region.name_candidates:
             raw_name_candidates.extend(_ocr_variants(_crop(image, name_rect), pytesseract, psm_values=(7, 8, 13), high_threshold=True))
-        raw_name = _best_text(raw_name_candidates)
-        damage_text = _read_boss_damage_text(_crop(image, damage_rect), pytesseract)
+        raw_name = _best_name_text(raw_name_candidates)
+        damage_text = _read_boss_damage_text(_crop(image, region.damage), pytesseract)
         match = _match_roster_name(raw_name_candidates, roster)
-        matched_raw_name = match[1] if match is not None else raw_name
+        matched_raw_name = (_clean_raw_name(match[1]) if match is not None else "") or raw_name
         rankings.append(
             ExtractedBossRanking(
-                source=f"{source_name} podium {rank}",
-                row_index=rank - 1,
+                source=f"{source_name} podium {region.rank}",
+                row_index=region.rank - 1,
                 area="podium",
-                boss_rank=rank,
+                boss_rank=region.rank,
                 player_id=_roster_player_id(match) if match is not None else None,
                 name=_display_name_for_match(match, raw_name),
                 raw_name=matched_raw_name or None,
@@ -590,10 +804,14 @@ def _extract_podium_rankings(image: object, source_name: str, roster: Sequence[o
 def _detect_ranking_intervals(image: object) -> list[tuple[int, int]]:
     width = image.width
     height = image.height
+    scale = width / 1080
     x_start = max(0, int(width * 0.045))
     x_end = min(width, int(width * 0.17))
     y_start = int(height * 0.28)
     y_end = int(height * 0.86)
+    maximum_gap = max(1, round(5 * scale))
+    minimum_row_height = round(115 * scale)
+    maximum_row_height = round(180 * scale)
 
     row_like_y: list[int] = []
     for y in range(y_start, y_end):
@@ -606,8 +824,12 @@ def _detect_ranking_intervals(image: object) -> list[tuple[int, int]]:
         if samples and matches / samples > 0.35:
             row_like_y.append(y)
 
-    intervals = _merge_nearby_values(row_like_y, max_gap=5)
-    return [(start, end) for start, end in intervals if 115 <= end - start + 1 <= 180]
+    intervals = _merge_nearby_values(row_like_y, max_gap=maximum_gap)
+    return [
+        (start, end)
+        for start, end in intervals
+        if minimum_row_height <= end - start + 1 <= maximum_row_height
+    ]
 
 
 def _detect_row_bounds(image: object, y1: int, y2: int) -> Rect:

@@ -10,6 +10,7 @@ from typing import Protocol, Sequence
 from zoneinfo import ZoneInfo
 
 from observer.automation.adb import AdbClient
+from observer.automation.capture_bridge import capture_client_from_environment
 
 
 CAPTURE_KINDS = (
@@ -52,7 +53,7 @@ def capture_today(
     date_value = capture_date or today_europe_paris()
     day_dir = root / date_value
     output_path = next_capture_path(day_dir, kind)
-    screenshot_client = client or AdbClient(serial=serial)
+    screenshot_client = client or capture_client_from_environment(serial) or AdbClient(serial=serial)
     screenshot_client.screenshot(output_path)
     return CaptureResult(
         path=output_path,
