@@ -2524,7 +2524,7 @@ th.numeric {
 }
 
 .guild-check-table {
-  min-width: 1150px;
+  min-width: 1450px;
 }
 
 .check-table .col-check-status {
@@ -2535,12 +2535,25 @@ th.numeric {
   width: 190px;
 }
 
+.check-table .col-check-detected-name,
+.check-table .col-check-linked-name {
+  width: 180px;
+}
+
 .check-table .col-check-role {
   width: 130px;
 }
 
 .check-table .col-check-activity {
   width: 140px;
+}
+
+.check-table .col-check-image {
+  width: 160px;
+}
+
+.check-table .col-check-row {
+  width: 70px;
 }
 
 .check-table .col-check-power,

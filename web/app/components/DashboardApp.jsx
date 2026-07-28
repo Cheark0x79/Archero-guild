@@ -1933,13 +1933,15 @@ function CheckView({ dataVersion }) {
             <col className="col-check-status" />
             {checkMode === "guild" ? (
               <>
-                <col className="col-check-name" />
+                <col className="col-check-detected-name" />
+                <col className="col-check-linked-name" />
                 <col className="col-check-role" />
                 <col className="col-check-activity" />
                 <col className="col-check-power" />
                 <col className="col-check-boss" />
                 <col className="col-check-donation" />
-                <col className="col-check-source" />
+                <col className="col-check-image" />
+                <col className="col-check-row" />
               </>
             ) : (
               <>
@@ -1955,7 +1957,8 @@ function CheckView({ dataVersion }) {
             {checkMode === "guild" ? (
               <tr>
                 <th>Check</th>
-                <th>User</th>
+                <th>Detected name</th>
+                <th>Linked name</th>
                 <th>Role</th>
                 <th>Last connection</th>
                 <th className="numeric">Power</th>
@@ -1963,9 +1966,10 @@ function CheckView({ dataVersion }) {
                 <th className="numeric">Donation</th>
                 <th>
                   <button className={`sort-button active ${sourceSortDirection}`} type="button" onClick={toggleSourceSort}>
-                    Source
+                    Image
                   </button>
                 </th>
+                <th className="numeric">Row</th>
               </tr>
             ) : (
               <tr>
@@ -2002,8 +2006,13 @@ function CheckView({ dataVersion }) {
                     <>
                       <td>
                         <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          <strong>{row.detectedName || "Not detected"}</strong>
+                        </ReviewableValue>
+                      </td>
+                      <td>
+                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
                           <div className="player-cell">
-                            <strong>{row.name}</strong>
+                            <strong>{row.linkedName ?? "Not linked"}</strong>
                             <small>{row.playerId ?? "Missing ID"}</small>
                           </div>
                         </ReviewableValue>
@@ -2034,7 +2043,10 @@ function CheckView({ dataVersion }) {
                         </ReviewableValue>
                       </td>
                       <td>
-                        <span className="muted">{row.source}</span>
+                        <span className="muted">{checkSourceParts(row.source).image}</span>
+                      </td>
+                      <td className="numeric">
+                        <span className="muted">{checkSourceParts(row.source).row}</span>
                       </td>
                     </>
                   ) : (
@@ -3177,6 +3189,8 @@ function buildCheckRows(snapshots, date) {
         reviewId: entry.playerId,
         playerId: entry.playerId,
         name: entry.name,
+        detectedName: detectedGuildName(snapshot, entry.name),
+        linkedName: entry.name,
         role: checkRoleFor(entry.playerId, snapshot.role, currentRolesById),
         lastActivityDays: snapshot.lastActivityDays ?? null,
         activityText: snapshot.activityText ?? null,
@@ -3184,7 +3198,7 @@ function buildCheckRows(snapshots, date) {
         contribution7d: snapshot.contribution7d ?? null,
         bossAttacks: snapshot.bossAttacks ?? null,
         bossDamageToday: snapshot.bossDamageToday ?? null,
-        source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
+        source: snapshot.source || sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
       };
     });
   const unmatchedRows = snapshots
@@ -3194,6 +3208,8 @@ function buildCheckRows(snapshots, date) {
       reviewId: `unmatched:${snapshot.name ?? "member"}:${sourceFromVerification(snapshot.verificationNote) || index}`,
       playerId: null,
       name: snapshot.name ?? "Unmatched member",
+      detectedName: snapshot.name ?? detectedGuildName(snapshot, null),
+      linkedName: null,
       role: snapshot.role ?? "member",
       lastActivityDays: snapshot.lastActivityDays ?? null,
       activityText: snapshot.activityText ?? null,
@@ -3201,7 +3217,7 @@ function buildCheckRows(snapshots, date) {
       contribution7d: snapshot.contribution7d ?? null,
       bossAttacks: snapshot.bossAttacks ?? null,
       bossDamageToday: snapshot.bossDamageToday ?? null,
-      source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
+      source: snapshot.source || sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
     }));
   return [...matchedRows, ...unmatchedRows];
 }
@@ -3400,6 +3416,24 @@ function cleanBossRawName(value) {
 
 function sourceFromVerification(value) {
   return value?.replace(/^Screenshot check: /, "").replace(/^Previous screenshot check: /, "").replace(/\.$/, "") ?? "";
+}
+
+function detectedGuildName(snapshot, fallback) {
+  const rawName = String(snapshot?.rawName ?? "");
+  const firstCandidate = rawName
+    .split("|")
+    .map((value) => value.trim())
+    .find(Boolean);
+  return firstCandidate || snapshot?.name || fallback || "";
+}
+
+function checkSourceParts(source) {
+  const normalized = String(source ?? "").trim();
+  const match = normalized.match(/(?:^|\/)([^/\s]+\.png)\s+(?:podium\s+|row\s+)(\d+)/i);
+  return {
+    image: (match?.[1] ?? normalized) || "Unknown",
+    row: match?.[2] ?? "—",
+  };
 }
 
 function buildBossDashboardData() {

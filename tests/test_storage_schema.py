@@ -77,10 +77,20 @@ class StorageSchemaTests(unittest.TestCase):
             "contribution_7d": 0,
             "boss_attacks": 0,
             "last_activity_days": 1,
-            "raw_payload": {"activity_text": "1 d 10 h"},
+            "verification_note": "members-007.png row 0",
+            "raw_payload": {
+                "activity_text": "1 d 10 h",
+                "source": "members-007.png row 0",
+                "raw_name": "anxlety",
+                "match_score": 0.88,
+            },
         }
 
-        self.assertEqual(_member_snapshot_row(row)["activityText"], "1 d 10 h")
+        exported = _member_snapshot_row(row)
+        self.assertEqual(exported["activityText"], "1 d 10 h")
+        self.assertEqual(exported["source"], "members-007.png row 0")
+        self.assertEqual(exported["rawName"], "anxlety")
+        self.assertEqual(exported["matchScore"], 0.88)
 
 
 if __name__ == "__main__":
