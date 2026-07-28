@@ -93,6 +93,25 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(exported["detectedName"], "anxlety")
         self.assertEqual(exported["matchScore"], 0.88)
 
+    def test_member_export_prefers_a_detected_chinese_name(self) -> None:
+        row = {
+            "user_id": None,
+            "current_name": "Bh Bh 28 FA .",
+            "capture_date": "2026-07-28",
+            "role": "member",
+            "power": 1_160_000,
+            "contribution_7d": 1_400,
+            "boss_attacks": 2,
+            "last_activity_days": 0,
+            "verification_note": "members-007.png row 1",
+            "raw_payload": {
+                "name": "斯斯雞預料",
+                "raw_name": "斯斯雞預料 | Bh Bh 28 FA .",
+            },
+        }
+
+        self.assertEqual(_member_snapshot_row(row)["detectedName"], "斯斯雞預料")
+
 
 if __name__ == "__main__":
     unittest.main()

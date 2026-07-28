@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Any
 
-from observer.pipeline.guild_member_ocr import _select_observed_name
+from observer.pipeline.guild_member_ocr import _clean_observed_name, _contains_cjk, _select_observed_name
 
 
 def database_url_from_env() -> str | None:
@@ -154,7 +154,12 @@ def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
     activity_text = raw_payload.get("activity_text") if isinstance(raw_payload, dict) else None
     source = raw_payload.get("source") if isinstance(raw_payload, dict) else None
     raw_name = raw_payload.get("raw_name") if isinstance(raw_payload, dict) else None
-    detected_name = _select_observed_name(raw_name.split(" | ")) if isinstance(raw_name, str) else None
+    payload_name = raw_payload.get("name") if isinstance(raw_payload, dict) else None
+    detected_name = (
+        _clean_observed_name(payload_name)
+        if isinstance(payload_name, str) and _contains_cjk(payload_name)
+        else _select_observed_name(raw_name.split(" | ")) if isinstance(raw_name, str) else None
+    )
     return {
         "playerId": row["user_id"],
         "name": row.get("current_name"),

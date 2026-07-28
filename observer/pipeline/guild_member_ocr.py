@@ -103,11 +103,23 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
         _ocr_text(_relative_crop(image, row.bounds, 0.20, 0.12, 0.68, 0.40), pytesseract),
     ]
     match = _match_roster_name(raw_names, roster)
+    multilingual_observed_name: str | None = None
     if match is None and any(re.search(r"[\u0400-\u04ff]", entry.name) for entry in roster):
         russian_name = _ocr_text(primary_name_crop, pytesseract, language="rus")
         if russian_name:
             russian_roster = [entry for entry in roster if re.search(r"[\u0400-\u04ff]", entry.name)]
             match = _match_roster_name([russian_name], russian_roster)
+    if match is None and _should_try_cjk_ocr(raw_names, roster):
+        chinese_roster = [entry for entry in roster if _contains_cjk(entry.name)]
+        for language in ("chi_tra", "chi_sim"):
+            chinese_name = _clean_observed_name(_ocr_text(primary_name_crop, pytesseract, language=language))
+            if not _contains_cjk(chinese_name):
+                continue
+            match = _match_roster_name([chinese_name], chinese_roster)
+            if match is not None:
+                break
+            if multilingual_observed_name is None:
+                multilingual_observed_name = chinese_name
     parsed_power = _read_power(image, row, pytesseract)
     status_text = _ocr_text(_relative_crop(image, row.bounds, 0.84, 0.04, 0.14, 0.34), pytesseract)
     parsed_role, role_text = _read_role(image, row, pytesseract)
@@ -116,7 +128,8 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     parsed_activity = _parse_visible_activity_days(status_text)
 
     if match is None:
-        observed_name = _select_observed_name(raw_names)
+        observed_name = multilingual_observed_name or _select_observed_name(raw_names)
+        raw_name_candidates = [multilingual_observed_name, *raw_names] if multilingual_observed_name else raw_names
         return ExtractedMemberMetrics(
             player_id="",
             name=observed_name,
@@ -127,7 +140,7 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
             last_activity_days=parsed_activity,
             source=f"{source_name} row {row.index}",
             match_score=0.0,
-            raw_name=" | ".join(raw_names),
+            raw_name=" | ".join(raw_name_candidates),
             power_text=format_game_power(parsed_power),
             activity_text=format_activity_text(status_text, parsed_activity),
             role_text=format_role_text(parsed_role),
@@ -403,7 +416,7 @@ def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple
 
 
 def _normalize_match_text(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff]+", "", value.lower())
+    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", value.lower())
     return normalized.translate(str.maketrans({"1": "l", "i": "l", "o": "0"}))
 
 
@@ -457,6 +470,18 @@ def _clean_observed_name(value: str) -> str:
     cleaned = re.sub(r"^[^\w\u0400-\u04ff\u4e00-\u9fff]+", "", cleaned, flags=re.UNICODE)
     cleaned = re.sub(r"[^\w\u0400-\u04ff\u4e00-\u9fff]+$", "", cleaned, flags=re.UNICODE)
     return " ".join(cleaned.split())
+
+
+def _contains_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
+
+
+def _should_try_cjk_ocr(raw_names: list[str], roster: list[RosterEntry]) -> bool:
+    if not any(_contains_cjk(entry.name) for entry in roster):
+        return False
+    observed_name = _select_observed_name(raw_names)
+    tokens = observed_name.split()
+    return len(tokens) >= 2 or _contains_cjk(observed_name)
 
 
 def _raw_name_has_signal(value: str) -> bool:

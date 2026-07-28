@@ -14,6 +14,13 @@ from observer.storage.export_json import database_url_from_env
 
 _PLAYER_ID_PATTERN = re.compile(r"^\d{6,20}$")
 _MEMBER_STATUSES = {"active", "left", "kicked"}
+_GUILD_MEMBER_IDENTITY_UPSERT = """
+    INSERT INTO guild_members (user_id, current_name, status)
+    VALUES (%s, %s, 'active')
+    ON CONFLICT (user_id) DO UPDATE SET
+        status = 'active',
+        last_seen_at = now()
+"""
 
 
 def normalize_name(value: str) -> str:
@@ -103,17 +110,7 @@ def _assign_database_link(dsn: str, link: dict[str, str]) -> None:
     with psycopg.connect(dsn) as connection:
         _ensure_database_table(connection)
         with connection.transaction():
-            connection.execute(
-                """
-                INSERT INTO guild_members (user_id, current_name, status)
-                VALUES (%s, %s, 'active')
-                ON CONFLICT (user_id) DO UPDATE SET
-                    current_name = EXCLUDED.current_name,
-                    status = 'active',
-                    last_seen_at = now()
-                """,
-                (link["playerId"], link["observedName"]),
-            )
+            connection.execute(_GUILD_MEMBER_IDENTITY_UPSERT, (link["playerId"], link["observedName"]))
             connection.execute(
                 """
                 INSERT INTO member_names (user_id, name, first_seen_at, last_seen_at)

@@ -8,6 +8,7 @@ from observer.pipeline.guild_member_ocr import (
     _parse_role,
     _raw_name_has_signal,
     _select_observed_name,
+    _should_try_cjk_ocr,
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
@@ -73,6 +74,21 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match[0].player_id, "119933547")
         self.assertEqual(match[2], "АЛХИМИК |")
+
+    def test_matches_a_traditional_chinese_member_name(self) -> None:
+        roster = [RosterEntry("119950325", "斯斯雞預料")]
+
+        match = _match_roster_name(["斯斯雞預料"], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "119950325")
+
+    def test_chinese_ocr_is_conditional_on_fragmented_unknown_names(self) -> None:
+        roster = [RosterEntry("119950325", "斯斯雞預料")]
+
+        self.assertTrue(_should_try_cjk_ocr(["Bh Bh 28 FA ."], roster))
+        self.assertFalse(_should_try_cjk_ocr(["Alco123 |"], roster))
+        self.assertFalse(_should_try_cjk_ocr(["Bh Bh 28 FA ."], [RosterEntry("1", "LatinName")]))
 
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
         self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))

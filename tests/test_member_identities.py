@@ -7,12 +7,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from observer.storage.member_identities import assign_identity, list_identity_links, normalize_name, set_member_status
+from observer.storage.member_identities import (
+    _GUILD_MEMBER_IDENTITY_UPSERT,
+    assign_identity,
+    list_identity_links,
+    normalize_name,
+    set_member_status,
+)
 
 
 class MemberIdentityTests(unittest.TestCase):
     def test_normalize_name_is_case_and_whitespace_insensitive(self) -> None:
         self.assertEqual(normalize_name("  PIGNOUF\u00a0 "), "pignouf")
+
+    def test_identity_alias_never_overwrites_an_existing_canonical_name(self) -> None:
+        self.assertNotIn("current_name = EXCLUDED.current_name", _GUILD_MEMBER_IDENTITY_UPSERT)
 
     def test_local_identity_assignment_is_persistent_and_replaceable(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
