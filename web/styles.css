@@ -2524,7 +2524,7 @@ th.numeric {
 }
 
 .guild-check-table {
-  min-width: 1010px;
+  min-width: 1150px;
 }
 
 .check-table .col-check-status {
@@ -2537,6 +2537,10 @@ th.numeric {
 
 .check-table .col-check-role {
   width: 130px;
+}
+
+.check-table .col-check-activity {
+  width: 140px;
 }
 
 .check-table .col-check-power,

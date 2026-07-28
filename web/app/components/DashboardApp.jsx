@@ -166,6 +166,7 @@ function buildCurrentMembers() {
       previousSnapshot: null,
       lastSeenAt: latestDay.date,
       lastActivityDays: snapshot.lastActivityDays ?? null,
+      activityText: snapshot.activityText ?? null,
       metricsCaptured: true,
       metricsVerified: true,
       verificationNote: snapshot.verificationNote ?? "",
@@ -272,7 +273,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             <h1>{selectedMember?.name ?? title}</h1>
             <p>
               {selectedMember
-                ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays)}`
+                ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays, selectedMember.activityText)}`
                 : subtitle}
             </p>
           </div>
@@ -293,7 +294,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           <MembersView query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} sort={sort} setSort={setSort} rules={rules} />
         )}
         {activeRoute === "boss" && <BossView />}
-        {activeRoute === "check" && <CheckView />}
+        {activeRoute === "check" && <CheckView dataVersion={dataVersion} />}
         {activeRoute === "data" && <DataView />}
         {activeRoute === "admin" && <AdminOverview />}
         {activeRoute === "member" && selectedMember && (
@@ -1823,8 +1824,8 @@ function BossByBossRecordsPanel({ records, limit = 3 }) {
   );
 }
 
-function CheckView() {
-  const days = useMemo(() => buildCheckDays(), []);
+function CheckView({ dataVersion }) {
+  const days = useMemo(() => buildCheckDays(), [dataVersion]);
   const [dayIndex, setDayIndex] = useState(Math.max(0, days.length - 1));
   const [validatedRows, setValidatedRows] = useCheckValidation();
   const [checkMode, setCheckMode] = useState("guild");
@@ -1934,6 +1935,7 @@ function CheckView() {
               <>
                 <col className="col-check-name" />
                 <col className="col-check-role" />
+                <col className="col-check-activity" />
                 <col className="col-check-power" />
                 <col className="col-check-boss" />
                 <col className="col-check-donation" />
@@ -1955,6 +1957,7 @@ function CheckView() {
                 <th>Check</th>
                 <th>User</th>
                 <th>Role</th>
+                <th>Last connection</th>
                 <th className="numeric">Power</th>
                 <th className="numeric">Boss tries</th>
                 <th className="numeric">Donation</th>
@@ -2008,6 +2011,11 @@ function CheckView() {
                       <td>
                         <ReviewableValue field="role" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
                           {roleLabel(row.role)}
+                        </ReviewableValue>
+                      </td>
+                      <td>
+                        <ReviewableValue field="activity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                          {activityLabel(row.lastActivityDays, row.activityText)}
                         </ReviewableValue>
                       </td>
                       <td className="numeric">
@@ -2130,7 +2138,7 @@ function MemberRow({ member, rules }) {
         <DiscordDot member={member} />
       </td>
       <td>{roleLabel(member.role)}</td>
-      <td>{activityLabel(member.lastActivityDays)}</td>
+      <td>{activityLabel(member.lastActivityDays, member.activityText)}</td>
       <td className="numeric">
         <ValueWithDelta value={formatOptionalNumber(member.contribution7d)} delta={member.contributionDelta} formatter={formatNumber} />
       </td>
@@ -2269,7 +2277,7 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
               label="Boss damage"
               value={formatOptionalBossDamage(currentHistory?.bossDamage ?? member.bossDamageToday, currentHistory?.bossDamageText ?? member.bossDamageText)}
             />
-            <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays)} />
+            <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays, member.activityText)} />
             <DetailMetric label="Joined guild" value={member.joinedAt ?? "Not recorded"} />
           </div>
           {!member.playerId && sessionRole === "admin" ? (
@@ -3085,6 +3093,7 @@ function checkReviewFields(validatedRows, date, playerId) {
 const CHECK_FIELD_LABELS = {
   identity: "User",
   role: "Role",
+  activity: "Last connection",
   power: "Power",
   bossAttacks: "Boss tries",
   contribution7d: "Donation",
@@ -3169,6 +3178,8 @@ function buildCheckRows(snapshots, date) {
         playerId: entry.playerId,
         name: entry.name,
         role: checkRoleFor(entry.playerId, snapshot.role, currentRolesById),
+        lastActivityDays: snapshot.lastActivityDays ?? null,
+        activityText: snapshot.activityText ?? null,
         power: snapshot.power ?? null,
         contribution7d: snapshot.contribution7d ?? null,
         bossAttacks: snapshot.bossAttacks ?? null,
@@ -3184,6 +3195,8 @@ function buildCheckRows(snapshots, date) {
       playerId: null,
       name: snapshot.name ?? "Unmatched member",
       role: snapshot.role ?? "member",
+      lastActivityDays: snapshot.lastActivityDays ?? null,
+      activityText: snapshot.activityText ?? null,
       power: snapshot.power ?? null,
       contribution7d: snapshot.contribution7d ?? null,
       bossAttacks: snapshot.bossAttacks ?? null,
@@ -3674,6 +3687,7 @@ function memberSnapshotForDate(member, date) {
       bossDamageToday: null,
       bossDamageDelta: null,
       lastActivityDays: null,
+      activityText: null,
       lastSeenAt: null,
       verificationNote: isFormerStatus(status) ? `Missing from latest import on ${date}` : `No capture on ${date}`,
     };
@@ -3692,6 +3706,7 @@ function memberSnapshotForDate(member, date) {
     bossDamageText: row.bossDamageText,
     bossDamageDelta: row.bossDamageDelta,
     lastActivityDays: row.lastActivityDays,
+    activityText: row.activityText ?? null,
     lastSeenAt: row.date,
     verificationNote: row.source,
   };
@@ -3720,7 +3735,8 @@ function dailyHistory(member) {
       bossDamage: null,
       bossDamageDelta: null,
       lastActivityDays: member.previousSnapshot.lastActivityDays,
-      activity: activityLabel(member.previousSnapshot.lastActivityDays),
+      activityText: member.previousSnapshot.activityText ?? null,
+      activity: activityLabel(member.previousSnapshot.lastActivityDays, member.previousSnapshot.activityText),
       source: member.previousSnapshot.verificationNote || "Previous snapshot",
     });
   }
@@ -3736,7 +3752,8 @@ function dailyHistory(member) {
       bossDamage: member.bossDamageToday,
       bossDamageDelta: null,
       lastActivityDays: member.lastActivityDays,
-      activity: activityLabel(member.lastActivityDays),
+      activityText: member.activityText ?? null,
+      activity: activityLabel(member.lastActivityDays, member.activityText),
       source: member.verificationNote || "Current snapshot",
     },
   );
@@ -3765,7 +3782,8 @@ function dailySnapshotHistory(member) {
       bossDamageDelta: metricDelta(bossDamage, previous?.bossDamage),
       bossDamageText: bossSnapshot?.damageText ?? null,
       lastActivityDays: snapshot.lastActivityDays,
-      activity: activityLabel(snapshot.lastActivityDays),
+      activityText: snapshot.activityText ?? null,
+      activity: activityLabel(snapshot.lastActivityDays, snapshot.activityText),
       source: snapshot.verificationNote || "Daily raw snapshot",
     });
   }
@@ -3928,7 +3946,7 @@ function deltaLine(member) {
 function needDetail(flag, member, rules) {
   if (flag === "Missed boss") return `${member.bossAttacks ?? 0} boss tries recorded, below the ${rules.minBossTries} minimum.`;
   if (flag === "Low contribution") return `${formatNumber(member.contribution7d ?? 0)} donations, below the ${formatNumber(rules.minContribution7d)} rule.`;
-  if (flag === "Game absence") return `Last activity is ${activityLabel(member.lastActivityDays)}.`;
+  if (flag === "Game absence") return `Last activity is ${activityLabel(member.lastActivityDays, member.activityText)}.`;
   if (flag === "Low progression") return `${member.power14dPercent}% power growth over 14 days.`;
   if (flag === "Not in current guild") return "This record is kept for history but excluded from current guild metrics.";
   if (flag === "Excused absence") return member.absenceReason || "Officer-marked absence.";
@@ -4101,7 +4119,7 @@ function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeigh
       maxWidth: 190,
     });
     drawText(ctx, roleLabel(member.role), columns.role, baseline, { size: 18, weight: 700, maxWidth: 170 });
-    drawText(ctx, activityLabel(member.lastActivityDays), columns.activity, baseline, { size: 18, weight: 700, maxWidth: 230 });
+    drawText(ctx, activityLabel(member.lastActivityDays, member.activityText), columns.activity, baseline, { size: 18, weight: 700, maxWidth: 230 });
     drawText(ctx, formatOptionalNumber(member.contribution7d), columns.donation, baseline, { size: 18, weight: 750, align: "right" });
     drawText(ctx, formatOptionalNumber(member.bossAttacks), columns.bossTries, baseline, { size: 18, weight: 750, align: "right" });
     drawText(ctx, formatOptionalCompact(member.power), columns.power, baseline, { size: 18, weight: 750, align: "right" });

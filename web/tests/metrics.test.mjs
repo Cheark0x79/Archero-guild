@@ -303,6 +303,9 @@ test("activityLabel returns English labels", () => {
   assert.equal(activityLabel(0), "Today");
   assert.equal(activityLabel(1), "Yesterday");
   assert.equal(activityLabel(4), "4 days ago");
+  assert.equal(activityLabel(0, "Online"), "Online");
+  assert.equal(activityLabel(1, "1 d 10 h"), "1 d 10 h");
+  assert.equal(activityLabel(0, "31 min"), "31 min");
 });
 
 test("formatCompact keeps useful precision for power values", () => {

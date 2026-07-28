@@ -78,7 +78,8 @@ function formatFixed(value, fractionDigits) {
   });
 }
 
-export function activityLabel(days) {
+export function activityLabel(days, activityText = null) {
+  if (typeof activityText === "string" && activityText.trim()) return activityText.trim();
   if (days == null) return "Not recorded";
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
@@ -420,6 +421,7 @@ export function mergeRosterMetrics(roster, snapshots) {
       previousSnapshot: snapshot?.previousSnapshot ?? null,
       lastSeenAt: snapshot?.lastSeenAt ?? snapshot?.previousSnapshot?.lastSeenAt ?? null,
       lastActivityDays: snapshot?.lastActivityDays ?? null,
+      activityText: snapshot?.activityText ?? null,
       metricsCaptured: Boolean(snapshot),
       metricsVerified: snapshot?.metricsVerified === true,
       verificationNote: snapshot?.verificationNote ?? "",

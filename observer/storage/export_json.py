@@ -81,9 +81,17 @@ def _guild_roster(connection) -> list[dict[str, Any]]:
 def _member_snapshots(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT user_id, current_name, capture_date, role, power, contribution_7d,
-               boss_attacks, last_activity_days
-        FROM v_member_latest_metrics
+        SELECT *
+        FROM (
+            SELECT DISTINCT ON (m.user_id)
+                   m.user_id, gm.current_name, gs.capture_date, m.role, m.power,
+                   m.contribution_7d, m.boss_attacks, m.last_activity_days,
+                   m.raw_payload
+            FROM member_metrics m
+            JOIN guild_snapshots gs ON gs.id = m.snapshot_id
+            JOIN guild_members gm ON gm.user_id = m.user_id
+            ORDER BY m.user_id, gs.capture_date DESC, gs.id DESC
+        ) latest
         ORDER BY current_name
         """
     ).fetchall()
@@ -94,7 +102,8 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
     rows = list(connection.execute(
         """
         SELECT gs.capture_date, gm.current_name, m.user_id, m.role, m.power,
-               m.contribution_7d, m.boss_attacks, m.last_activity_days
+               m.contribution_7d, m.boss_attacks, m.last_activity_days,
+               m.raw_payload
         FROM member_metrics m
         JOIN guild_snapshots gs ON gs.id = m.snapshot_id
         JOIN guild_members gm ON gm.user_id = m.user_id
@@ -110,7 +119,8 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
                 """
                 SELECT gs.capture_date, u.observed_name AS current_name,
                        NULL::text AS user_id, u.role, u.power,
-                       u.contribution_7d, u.boss_attacks, u.last_activity_days
+                       u.contribution_7d, u.boss_attacks, u.last_activity_days,
+                       u.raw_payload
                 FROM unmatched_member_metrics u
                 JOIN guild_snapshots gs ON gs.id = u.snapshot_id
                 ORDER BY gs.capture_date, u.observed_name
@@ -125,6 +135,8 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
 
 
 def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
+    raw_payload = row.get("raw_payload")
+    activity_text = raw_payload.get("activity_text") if isinstance(raw_payload, dict) else None
     return {
         "playerId": row["user_id"],
         "name": row.get("current_name"),
@@ -136,6 +148,7 @@ def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
         "bossAttacks": row.get("boss_attacks"),
         "bossDamageToday": None,
         "lastActivityDays": row.get("last_activity_days"),
+        "activityText": activity_text,
         "metricsCaptured": True,
         "metricsVerified": True,
     }

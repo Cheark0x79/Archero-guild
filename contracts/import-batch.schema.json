@@ -53,6 +53,8 @@
           "contribution7d": { "type": ["integer", "null"], "minimum": 0 },
           "bossAttacks": { "type": ["integer", "null"], "minimum": 0, "maximum": 10 },
           "lastActivityDays": { "type": ["integer", "null"], "minimum": 0 },
+          "activityText": { "type": ["string", "null"], "maxLength": 32 },
+          "rawActivity": { "type": ["string", "null"], "maxLength": 128 },
           "source": { "type": "string", "minLength": 1, "maxLength": 255 },
           "rawName": { "type": ["string", "null"], "maxLength": 255 },
           "matchScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }

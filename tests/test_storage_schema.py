@@ -2,7 +2,7 @@ import re
 import unittest
 from pathlib import Path
 
-from observer.storage.export_json import _jsonable
+from observer.storage.export_json import _jsonable, _member_snapshot_row
 
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "observer" / "storage" / "schema.sql"
@@ -66,6 +66,21 @@ class StorageSchemaTests(unittest.TestCase):
 
     def test_export_normalizes_database_bytes_to_text(self) -> None:
         self.assertEqual(_jsonable({"name": b"Mund\xc3\xb5", "rows": [b"active"]}), {"name": "Mundõ", "rows": ["active"]})
+
+    def test_member_export_preserves_precise_activity_text(self) -> None:
+        row = {
+            "user_id": "120015103",
+            "current_name": "anxiety",
+            "capture_date": "2026-07-28",
+            "role": "member",
+            "power": 1_420_000,
+            "contribution_7d": 0,
+            "boss_attacks": 0,
+            "last_activity_days": 1,
+            "raw_payload": {"activity_text": "1 d 10 h"},
+        }
+
+        self.assertEqual(_member_snapshot_row(row)["activityText"], "1 d 10 h")
 
 
 if __name__ == "__main__":
