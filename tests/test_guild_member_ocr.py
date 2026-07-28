@@ -2,10 +2,12 @@ import unittest
 
 from observer.pipeline.guild_member_ocr import (
     RosterEntry,
+    _clean_observed_name,
     _match_roster_name,
     _parse_visible_activity_days,
     _parse_role,
     _raw_name_has_signal,
+    _select_observed_name,
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
@@ -75,6 +77,31 @@ class GuildMemberOcrTests(unittest.TestCase):
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
         self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))
         self.assertFalse(_raw_name_has_signal(" | pers? aA | "))
+
+    def test_observed_name_prefers_repeated_latin_crops_without_noise(self) -> None:
+        self.assertEqual(
+            _select_observed_name(["YYLsea .", "YYLsea .", "YYLsea .", "bers* YYLsea"]),
+            "YYLsea",
+        )
+        self.assertEqual(
+            _select_observed_name(["Alco123 |", "Alco123 |", "Alco123 |", "bers? Alco123 |"]),
+            "Alco123",
+        )
+
+    def test_observed_name_uses_consensus_and_trusted_wide_crop(self) -> None:
+        self.assertEqual(
+            _select_observed_name(["Srandontrandon", "jrandontrandon", "Brandontrandon", "Brandontrandon"]),
+            "Brandontrandon",
+        )
+        self.assertEqual(
+            _select_observed_name(["Blacksynde", "Blacksynde", "Blacksynde", "bers + Blacksynde"]),
+            "Blacksynde",
+        )
+
+    def test_clean_observed_name_removes_ui_and_boundary_punctuation(self) -> None:
+        self.assertEqual(_clean_observed_name("Pignouf ."), "Pignouf")
+        self.assertEqual(_clean_observed_name("Guild Members+ Ceddie12 |"), "Ceddie12")
+        self.assertEqual(_clean_observed_name("bers? Papixl |"), "Papixl")
 
     def test_empty_activity_area_means_member_is_online_today(self) -> None:
         self.assertEqual(_parse_visible_activity_days(""), 0)

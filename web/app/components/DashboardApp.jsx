@@ -93,10 +93,11 @@ function objectOrDefault(value, fallback) {
 function buildCurrentMembers() {
   const latestDay = [...dailyRawSnapshots].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
   const linkedSnapshots = (latestDay?.rows ?? [])
-    .filter((snapshot) => !snapshot.playerId && identityPlayerIdForName(snapshot.name))
+    .filter((snapshot) => !snapshot.playerId && identityPlayerIdForName(snapshotObservedName(snapshot)))
     .map((snapshot) => ({
       ...snapshot,
-      playerId: identityPlayerIdForName(snapshot.name),
+      name: snapshotObservedName(snapshot),
+      playerId: identityPlayerIdForName(snapshotObservedName(snapshot)),
       metricsCaptured: true,
       metricsVerified: true,
     }));
@@ -129,48 +130,51 @@ function buildCurrentMembers() {
     .filter(
       (snapshot) =>
         !snapshot.playerId
-        && snapshot.name
-        && !identityPlayerIdForName(snapshot.name)
-        && !rosterNames.has(normalizedMemberName(snapshot.name)),
+        && snapshotObservedName(snapshot)
+        && !identityPlayerIdForName(snapshotObservedName(snapshot))
+        && !rosterNames.has(normalizedMemberName(snapshotObservedName(snapshot))),
     )
-    .map((snapshot, index) => ({
-      rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(snapshot.name)}`,
-      playerId: null,
-      name: snapshot.name,
-      previousNames: [],
-      discord: "",
-      discordName: snapshot.name,
-      discordLinked: false,
-      searchAliases: [],
-      role: snapshot.role ?? "member",
-      joinedAt: null,
-      leftAt: null,
-      status: "active",
-      absenceUntil: null,
-      absenceReason: "",
-      warnings: [],
-      officerNote: "",
-      power: snapshot.power ?? null,
-      power7d: null,
-      power14dPercent: null,
-      contributionToday: null,
-      contribution7d: snapshot.contribution7d ?? null,
-      contributionDelta: null,
-      contributionTotal: null,
-      bossDamageToday: snapshot.bossDamageToday ?? null,
-      bossDamageTotal: null,
-      bossRank: null,
-      bossAttacks: snapshot.bossAttacks ?? null,
-      bossAttacksDelta: null,
-      powerDelta: null,
-      previousSnapshot: null,
-      lastSeenAt: latestDay.date,
-      lastActivityDays: snapshot.lastActivityDays ?? null,
-      activityText: snapshot.activityText ?? null,
-      metricsCaptured: true,
-      metricsVerified: true,
-      verificationNote: snapshot.verificationNote ?? "",
-    }));
+    .map((snapshot, index) => {
+      const observedName = snapshotObservedName(snapshot);
+      return {
+        rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(observedName)}`,
+        playerId: null,
+        name: observedName,
+        previousNames: [],
+        discord: "",
+        discordName: observedName,
+        discordLinked: false,
+        searchAliases: [],
+        role: snapshot.role ?? "member",
+        joinedAt: null,
+        leftAt: null,
+        status: "active",
+        absenceUntil: null,
+        absenceReason: "",
+        warnings: [],
+        officerNote: "",
+        power: snapshot.power ?? null,
+        power7d: null,
+        power14dPercent: null,
+        contributionToday: null,
+        contribution7d: snapshot.contribution7d ?? null,
+        contributionDelta: null,
+        contributionTotal: null,
+        bossDamageToday: snapshot.bossDamageToday ?? null,
+        bossDamageTotal: null,
+        bossRank: null,
+        bossAttacks: snapshot.bossAttacks ?? null,
+        bossAttacksDelta: null,
+        powerDelta: null,
+        previousSnapshot: null,
+        lastSeenAt: latestDay.date,
+        lastActivityDays: snapshot.lastActivityDays ?? null,
+        activityText: snapshot.activityText ?? null,
+        metricsCaptured: true,
+        metricsVerified: true,
+        verificationNote: snapshot.verificationNote ?? "",
+      };
+    });
 
   return [...rosterMembers, ...unresolvedMembers];
 }
@@ -178,6 +182,10 @@ function buildCurrentMembers() {
 function identityPlayerIdForName(name) {
   const normalized = normalizedMemberName(name);
   return identityLinks.find((link) => link.normalizedName === normalized)?.playerId ?? null;
+}
+
+function snapshotObservedName(snapshot) {
+  return snapshot?.detectedName || snapshot?.name || "";
 }
 
 function normalizedMemberName(value) {
@@ -3208,7 +3216,7 @@ function buildCheckRows(snapshots, date) {
       reviewId: `unmatched:${snapshot.name ?? "member"}:${sourceFromVerification(snapshot.verificationNote) || index}`,
       playerId: null,
       name: snapshot.name ?? "Unmatched member",
-      detectedName: snapshot.name ?? detectedGuildName(snapshot, null),
+      detectedName: detectedGuildName(snapshot, snapshot.name),
       linkedName: null,
       role: snapshot.role ?? "member",
       lastActivityDays: snapshot.lastActivityDays ?? null,
@@ -3419,12 +3427,12 @@ function sourceFromVerification(value) {
 }
 
 function detectedGuildName(snapshot, fallback) {
-  const rawName = String(snapshot?.rawName ?? "");
-  const firstCandidate = rawName
-    .split("|")
-    .map((value) => value.trim())
-    .find(Boolean);
-  return firstCandidate || snapshot?.name || fallback || "";
+  const value = snapshot?.detectedName || snapshot?.rawName || snapshot?.name || fallback || "";
+  return String(value)
+    .replace(/^[\s'"`´‘’“”|\\/:;,.+*?_-]*(?:guild\s*members?|members?|bers|ers|pers)\b[\s'"`´‘’“”|\\/:;,.+*?_-]*/i, "")
+    .replace(/[|\\]/g, "")
+    .replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, "")
+    .trim();
 }
 
 function checkSourceParts(source) {

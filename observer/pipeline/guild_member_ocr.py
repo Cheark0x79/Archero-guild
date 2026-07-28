@@ -106,8 +106,8 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     if match is None and any(re.search(r"[\u0400-\u04ff]", entry.name) for entry in roster):
         russian_name = _ocr_text(primary_name_crop, pytesseract, language="rus")
         if russian_name:
-            raw_names.insert(0, russian_name)
-            match = _match_roster_name(raw_names, roster)
+            russian_roster = [entry for entry in roster if re.search(r"[\u0400-\u04ff]", entry.name)]
+            match = _match_roster_name([russian_name], russian_roster)
     parsed_power = _read_power(image, row, pytesseract)
     status_text = _ocr_text(_relative_crop(image, row.bounds, 0.84, 0.04, 0.14, 0.34), pytesseract)
     parsed_role, role_text = _read_role(image, row, pytesseract)
@@ -116,11 +116,7 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     parsed_activity = _parse_visible_activity_days(status_text)
 
     if match is None:
-        observed_name = max(
-            (" ".join(value.split()) for value in raw_names[:3]),
-            key=lambda value: len(_normalize_match_text(value)),
-            default="",
-        )
+        observed_name = _select_observed_name(raw_names)
         return ExtractedMemberMetrics(
             player_id="",
             name=observed_name,
@@ -151,7 +147,7 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
         last_activity_days=parsed_activity,
         source=f"{source_name} row {row.index}",
         match_score=score,
-        raw_name=raw_name,
+        raw_name=_clean_observed_name(raw_name),
         power_text=format_game_power(parsed_power),
         activity_text=format_activity_text(status_text, parsed_activity),
         role_text=format_role_text(parsed_role),
@@ -422,6 +418,45 @@ def _normalized_name_candidates(value: str) -> list[str]:
                 candidates.append(stripped)
             break
     return list(dict.fromkeys(candidates))
+
+
+def _select_observed_name(raw_names: list[str]) -> str:
+    candidates = [
+        (index, cleaned, _normalize_match_text(cleaned))
+        for index, value in enumerate(raw_names[:4])
+        if (cleaned := _clean_observed_name(value))
+        and _normalize_match_text(cleaned)
+    ]
+    if not candidates:
+        return ""
+
+    counts: dict[str, int] = {}
+    for _index, _cleaned, normalized in candidates:
+        counts[normalized] = counts.get(normalized, 0) + 1
+    repeated = max(counts, key=counts.get)
+    if counts[repeated] > 1:
+        return next(cleaned for _index, cleaned, normalized in candidates if normalized == repeated)
+
+    priority = {3: 0.03, 0: 0.02, 1: 0.01, 2: 0.0}
+    scored = [
+        (
+            sum(SequenceMatcher(None, normalized, other_normalized).ratio() for _other_index, _other, other_normalized in candidates)
+            + priority.get(index, 0.0),
+            -index,
+            cleaned,
+        )
+        for index, cleaned, normalized in candidates
+    ]
+    return max(scored)[2]
+
+
+def _clean_observed_name(value: str) -> str:
+    cleaned = " ".join(str(value or "").split())
+    cleaned = re.sub(r"^[\s'\"`´‘’“”|\\/:;,.+*?_-]*(?:guild\s*members?|members?|bers|ers|pers)\b[\s'\"`´‘’“”|\\/:;,.+*?_-]*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("|", "").replace("\\", "")
+    cleaned = re.sub(r"^[^\w\u0400-\u04ff\u4e00-\u9fff]+", "", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"[^\w\u0400-\u04ff\u4e00-\u9fff]+$", "", cleaned, flags=re.UNICODE)
+    return " ".join(cleaned.split())
 
 
 def _raw_name_has_signal(value: str) -> bool:

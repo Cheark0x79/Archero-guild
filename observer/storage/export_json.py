@@ -7,6 +7,8 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Any
 
+from observer.pipeline.guild_member_ocr import _select_observed_name
+
 
 def database_url_from_env() -> str | None:
     return os.environ.get("ARCHERO_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -151,6 +153,8 @@ def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
     raw_payload = row.get("raw_payload")
     activity_text = raw_payload.get("activity_text") if isinstance(raw_payload, dict) else None
     source = raw_payload.get("source") if isinstance(raw_payload, dict) else None
+    raw_name = raw_payload.get("raw_name") if isinstance(raw_payload, dict) else None
+    detected_name = _select_observed_name(raw_name.split(" | ")) if isinstance(raw_name, str) else None
     return {
         "playerId": row["user_id"],
         "name": row.get("current_name"),
@@ -164,7 +168,8 @@ def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
         "lastActivityDays": row.get("last_activity_days"),
         "activityText": activity_text,
         "source": source or row.get("verification_note"),
-        "rawName": raw_payload.get("raw_name") if isinstance(raw_payload, dict) else None,
+        "rawName": raw_name,
+        "detectedName": detected_name,
         "matchScore": raw_payload.get("match_score") if isinstance(raw_payload, dict) else None,
         "metricsCaptured": True,
         "metricsVerified": True,

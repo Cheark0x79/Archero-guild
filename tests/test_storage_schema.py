@@ -90,6 +90,7 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(exported["activityText"], "1 d 10 h")
         self.assertEqual(exported["source"], "members-007.png row 0")
         self.assertEqual(exported["rawName"], "anxlety")
+        self.assertEqual(exported["detectedName"], "anxlety")
         self.assertEqual(exported["matchScore"], 0.88)
 
 
