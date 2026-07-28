@@ -171,11 +171,11 @@ export function buildSummary(members, rules) {
   const currentMembers = members.filter((member) => !isFormerMember(member));
   const verifiedMembers = currentMembers.filter((member) => member.metricsVerified);
   const activeToday = verifiedMembers.filter((member) => member.lastActivityDays === 0).length;
-  const totalContribution = verifiedMembers.reduce((sum, member) => sum + (member.contribution7d ?? 0), 0);
-  const totalContributionDelta = verifiedMembers.reduce((sum, member) => sum + (member.contributionDelta ?? 0), 0);
-  const bossDamage = verifiedMembers.reduce((sum, member) => sum + (member.bossDamageToday ?? 0), 0);
-  const bossAttacks = verifiedMembers.reduce((sum, member) => sum + (member.bossAttacks ?? 0), 0);
-  const bossAttacksDelta = verifiedMembers.reduce((sum, member) => sum + (member.bossAttacksDelta ?? 0), 0);
+  const totalContribution = sumKnown(verifiedMembers, "contribution7d");
+  const totalContributionDelta = sumKnown(verifiedMembers, "contributionDelta");
+  const bossDamage = sumKnown(verifiedMembers, "bossDamageToday");
+  const bossAttacks = sumKnown(verifiedMembers, "bossAttacks");
+  const bossAttacksDelta = sumKnown(verifiedMembers, "bossAttacksDelta");
   const verifiedMetrics = currentMembers.filter((member) => member.metricsVerified).length;
   const reviewRequired = currentMembers.filter((member) => member.metricsCaptured && !member.metricsVerified).length;
   const watchCount = currentMembers.filter((member) => {
@@ -190,7 +190,7 @@ export function buildSummary(members, rules) {
   const formerMembers = members.length - currentMembers.length;
 
   return {
-    members: `${currentMembers.length}/${rules.memberCapacity}`,
+    members: `${currentMembers.length}/${rules.memberCapacity ?? "?"}`,
     currentMembers: currentMembers.length,
     formerMembers,
     activeToday,
@@ -207,8 +207,26 @@ export function buildSummary(members, rules) {
     reviewRequired,
     discordLinked,
     discordMissing,
-    freeSlots: Math.max(0, rules.memberCapacity - currentMembers.length),
+    freeSlots: typeof rules.memberCapacity === "number"
+      ? Math.max(0, rules.memberCapacity - currentMembers.length)
+      : null,
+    availability: {
+      totalContribution: knownCount(verifiedMembers, "contribution7d"),
+      totalContributionDelta: knownCount(verifiedMembers, "contributionDelta"),
+      bossDamage: knownCount(verifiedMembers, "bossDamageToday"),
+      bossAttacks: knownCount(verifiedMembers, "bossAttacks"),
+      bossAttacksDelta: knownCount(verifiedMembers, "bossAttacksDelta"),
+    },
   };
+}
+
+function knownCount(members, key) {
+  return members.filter((member) => typeof member[key] === "number").length;
+}
+
+function sumKnown(members, key) {
+  const known = members.filter((member) => typeof member[key] === "number");
+  return known.length > 0 ? known.reduce((sum, member) => sum + member[key], 0) : null;
 }
 
 export function filterMembers(members, rules, query, statusFilter) {
@@ -387,7 +405,7 @@ export function mergeRosterMetrics(roster, snapshots) {
       rowId: entry.playerId ?? `unresolved-${index}`,
       playerId: entry.playerId,
       name: entry.name,
-      previousNames: snapshot?.previousNames ?? [],
+      previousNames: entry.previousNames ?? snapshot?.previousNames ?? [],
       discord: snapshot?.discord ?? "",
       discordName: entry.discordName ?? entry.name,
       discordLinked: Boolean(entry.discordLinked),

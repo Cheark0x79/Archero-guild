@@ -4,8 +4,10 @@ import argparse
 import json
 import os
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+
+from observer.storage.rules import read_rules
 
 
 def database_url_from_env() -> str | None:
@@ -20,14 +22,16 @@ def export_dashboard_payload(dsn: str) -> dict[str, Any]:
         raise RuntimeError("psycopg is required to export dashboard data from PostgreSQL") from exc
 
     with psycopg.connect(dsn, row_factory=dict_row) as connection:
+        member_snapshots, previous_member_snapshots = _member_snapshot_sets(connection)
         payload = {
             "captures": _captures(connection),
             "guildRoster": _guild_roster(connection),
-            "memberSnapshots": _member_snapshots(connection),
-            "previousMemberSnapshots": [],
+            "memberSnapshots": member_snapshots,
+            "previousMemberSnapshots": previous_member_snapshots,
             "dailyRawSnapshots": _daily_member_snapshots(connection),
             "dailyBossRawSnapshots": _daily_boss_snapshots(connection),
-            "rules": _rules(connection),
+            "bossDefinitions": _boss_definitions(connection),
+            "rules": _rules(connection, dsn),
             "changes": [],
             "ocrQueue": [],
         }
@@ -56,9 +60,21 @@ def _captures(connection) -> dict[str, Any]:
 
 
 def _guild_roster(connection) -> list[dict[str, Any]]:
+    name_rows = connection.execute(
+        """
+        SELECT user_id, name
+        FROM member_names
+        ORDER BY user_id, first_seen_at, name
+        """
+    ).fetchall()
+    names_by_member: dict[str, list[str]] = defaultdict(list)
+    for row in name_rows:
+        names_by_member[row["user_id"]].append(row["name"])
+
     rows = connection.execute(
         """
-        SELECT user_id, current_name, discord_name, discord_linked, status, joined_on, left_on
+        SELECT user_id, current_name, discord_name, discord_linked, status,
+               joined_on, left_on, metadata
         FROM guild_members
         ORDER BY current_name
         """
@@ -72,28 +88,102 @@ def _guild_roster(connection) -> list[dict[str, Any]]:
             "status": row["status"],
             "joinedAt": _iso(row["joined_on"]),
             "leftAt": _iso(row["left_on"]),
+            "previousNames": _previous_names(row["current_name"], names_by_member[row["user_id"]]),
+            "searchAliases": _search_aliases(row["metadata"]),
         }
         for row in rows
     ]
 
 
-def _member_snapshots(connection) -> list[dict[str, Any]]:
+def _previous_names(current_name: str, names: list[str]) -> list[str]:
+    return _unique_strings(
+        name for name in names
+        if name.casefold() != current_name.casefold()
+    )
+
+
+def _search_aliases(metadata: Any) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    values: list[Any] = []
+    for key in ("searchAliases", "search_aliases", "aliases"):
+        candidate = metadata.get(key)
+        if isinstance(candidate, list):
+            values.extend(candidate)
+        elif isinstance(candidate, str):
+            values.append(candidate)
+    return _unique_strings(values)
+
+
+def _unique_strings(values: Any) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        key = normalized.casefold()
+        if not normalized or key in seen:
+            continue
+        seen.add(key)
+        unique.append(normalized)
+    return unique
+
+
+def _member_snapshot_sets(connection) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows = connection.execute(
         """
-        SELECT user_id, current_name, capture_date, role, power, contribution_7d,
-               boss_attacks, last_activity_days
-        FROM v_member_latest_metrics
-        ORDER BY current_name
+        SELECT m.user_id, gm.current_name, gs.capture_date, gs.captured_at,
+               m.role, m.power, m.contribution_7d, m.boss_attacks,
+               COALESCE(
+                   m.boss_damage_today,
+                   (
+                       SELECT max(result.damage_value)
+                       FROM boss_daily_results result
+                       WHERE result.user_id = m.user_id
+                         AND result.capture_date = gs.capture_date
+                   )
+               ) AS boss_damage_today,
+               m.last_activity_days, m.verification_note
+        FROM member_metrics m
+        JOIN guild_snapshots gs ON gs.id = m.snapshot_id
+        JOIN guild_members gm ON gm.user_id = m.user_id
+        ORDER BY m.user_id, gs.capture_date, gs.captured_at
         """
     ).fetchall()
-    return [_member_snapshot_row(row) for row in rows]
+    histories: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        histories[row["user_id"]].append(row)
+
+    current: list[dict[str, Any]] = []
+    previous: list[dict[str, Any]] = []
+    for history in histories.values():
+        latest_row = history[-1]
+        previous_row = history[-2] if len(history) > 1 else None
+        current.append(_member_snapshot_row(latest_row, previous_row=previous_row, history=history))
+        if previous_row is not None:
+            earlier_row = history[-3] if len(history) > 2 else None
+            previous.append(_member_snapshot_row(previous_row, previous_row=earlier_row, history=history[:-1]))
+    current.sort(key=lambda row: (row.get("name") or "").casefold())
+    previous.sort(key=lambda row: (row.get("name") or "").casefold())
+    return current, previous
 
 
 def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT gs.capture_date, gm.current_name, m.user_id, m.role, m.power,
-               m.contribution_7d, m.boss_attacks, m.last_activity_days
+        SELECT gs.capture_date, gs.captured_at, gm.current_name, m.user_id,
+               m.role, m.power, m.contribution_7d, m.boss_attacks,
+               COALESCE(
+                   m.boss_damage_today,
+                   (
+                       SELECT max(result.damage_value)
+                       FROM boss_daily_results result
+                       WHERE result.user_id = m.user_id
+                         AND result.capture_date = gs.capture_date
+                   )
+               ) AS boss_damage_today,
+               m.last_activity_days, m.verification_note
         FROM member_metrics m
         JOIN guild_snapshots gs ON gs.id = m.snapshot_id
         JOIN guild_members gm ON gm.user_id = m.user_id
@@ -106,8 +196,13 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
     return [{"date": day, "rows": rows} for day, rows in sorted(by_date.items())]
 
 
-def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _member_snapshot_row(
+    row: dict[str, Any],
+    *,
+    previous_row: dict[str, Any] | None = None,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    snapshot = {
         "playerId": row["user_id"],
         "name": row.get("current_name"),
         "role": row.get("role") or "member",
@@ -116,26 +211,112 @@ def _member_snapshot_row(row: dict[str, Any]) -> dict[str, Any]:
         "power": row.get("power"),
         "contribution7d": row.get("contribution_7d"),
         "bossAttacks": row.get("boss_attacks"),
-        "bossDamageToday": None,
+        "bossDamageToday": row.get("boss_damage_today"),
         "lastActivityDays": row.get("last_activity_days"),
         "metricsCaptured": True,
         "metricsVerified": True,
+        "verificationNote": row.get("verification_note") or "",
     }
+    snapshot["powerDelta"] = _numeric_delta(row.get("power"), previous_row, "power")
+    snapshot["contributionDelta"] = _counter_delta(
+        row.get("contribution_7d"),
+        previous_row,
+        "contribution_7d",
+        current_date=row.get("capture_date"),
+        reset_each_week=True,
+    )
+    snapshot["bossAttacksDelta"] = _counter_delta(
+        row.get("boss_attacks"),
+        previous_row,
+        "boss_attacks",
+        current_date=row.get("capture_date"),
+    )
+    snapshot["power14dPercent"] = _power_growth_percent(row, history or [])
+    if previous_row is not None:
+        snapshot["previousSnapshot"] = {
+            "power": previous_row.get("power"),
+            "contribution7d": previous_row.get("contribution_7d"),
+            "bossAttacks": previous_row.get("boss_attacks"),
+            "lastSeenAt": _iso(previous_row.get("capture_date")),
+        }
+    return snapshot
+
+
+def _numeric_delta(current: Any, previous_row: dict[str, Any] | None, key: str) -> int | float | None:
+    previous = previous_row.get(key) if previous_row else None
+    if not isinstance(current, (int, float)) or not isinstance(previous, (int, float)):
+        return None
+    return current - previous
+
+
+def _counter_delta(
+    current: Any,
+    previous_row: dict[str, Any] | None,
+    key: str,
+    *,
+    current_date: Any,
+    reset_each_week: bool = False,
+) -> int | float | None:
+    delta = _numeric_delta(current, previous_row, key)
+    if delta is None:
+        return None
+    if reset_each_week and previous_row and _week_start(current_date) != _week_start(previous_row.get("capture_date")):
+        return None
+    return delta if delta >= 0 else None
+
+
+def _power_growth_percent(row: dict[str, Any], history: list[dict[str, Any]]) -> float | None:
+    current_power = row.get("power")
+    current_date = row.get("capture_date")
+    if not isinstance(current_power, (int, float)) or not isinstance(current_date, date):
+        return None
+    cutoff = current_date - timedelta(days=14)
+    baselines = [
+        item for item in history
+        if isinstance(item.get("capture_date"), date)
+        and item["capture_date"] <= cutoff
+        and isinstance(item.get("power"), (int, float))
+        and item["power"] > 0
+    ]
+    if not baselines:
+        return None
+    baseline = baselines[-1]["power"]
+    return round((current_power - baseline) / baseline * 100, 2)
+
+
+def _week_start(value: Any) -> date | None:
+    if not isinstance(value, date):
+        return None
+    return value - timedelta(days=value.weekday())
 
 
 def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT capture_date, boss_key, boss_name, user_id, player_name, boss_rank,
-               damage_value, damage_text, row_area, row_index
+        SELECT capture_date, boss_key, boss_name, weekday, user_id, player_name,
+               boss_rank, damage_value, damage_text, row_area, row_index
         FROM v_boss_daily_leaderboard
         ORDER BY capture_date, boss_rank NULLS LAST, damage_value DESC
         """
     ).fetchall()
-    by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_boss_day: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         day = _iso(row["capture_date"])
-        by_date[day].append(
+        key = (day, row["boss_key"])
+        group = by_boss_day.setdefault(
+            key,
+            {
+                "date": day,
+                "bossKey": row["boss_key"],
+                "boss": {
+                    "key": row["boss_key"],
+                    "name": row["boss_name"],
+                    "weekday": row["weekday"],
+                },
+                "rows": [],
+            },
+        )
+        group["rows"].append(
             {
                 "source": f"{row['boss_key']} rank {row['boss_rank'] or row['row_index']}",
                 "rowIndex": row["row_index"],
@@ -150,12 +331,41 @@ def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
                 "lastSeenAt": day,
             }
         )
-    return [{"date": day, "rows": rows} for day, rows in sorted(by_date.items())]
+    return [
+        group
+        for _, group in sorted(by_boss_day.items(), key=lambda item: item[0])
+    ]
 
 
-def _rules(connection) -> dict[str, Any]:
+def _boss_definitions(connection) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT boss_key, weekday, day_label, name, image_path, atk, def, spd, sort_order
+        FROM boss_definitions
+        WHERE is_active = TRUE
+        ORDER BY sort_order
+        """
+    ).fetchall()
+    return [
+        {
+            "key": row["boss_key"],
+            "weekday": row["weekday"],
+            "dayLabel": row["day_label"],
+            "name": row["name"],
+            "imagePath": row["image_path"],
+            "atk": row["atk"],
+            "def": row["def"],
+            "spd": row["spd"],
+            "sortOrder": row["sort_order"],
+        }
+        for row in rows
+    ]
+
+
+def _rules(connection, dsn: str) -> dict[str, Any]:
     rows = connection.execute("SELECT key, value FROM rule_settings").fetchall()
-    return {row["key"]: row["value"] for row in rows}
+    stored = {row["key"]: row["value"] for row in rows}
+    return stored or read_rules(dsn)
 
 
 def _iso(value: Any) -> str | None:

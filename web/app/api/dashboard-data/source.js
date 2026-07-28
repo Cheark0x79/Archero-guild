@@ -11,33 +11,99 @@ import {
 } from "../../../sample-data.js";
 import { runObserverModule } from "../data/actions.js";
 
-export async function loadDashboardData() {
-  const fallback = localPayload();
-  if (!process.env.ARCHERO_DATABASE_URL && !process.env.DATABASE_URL) {
-    return { ok: true, source: "local", data: fallback };
-  }
-
-  const result = await runObserverModule("observer.storage.export_json");
-  if (!result.ok || !result.data || typeof result.data !== "object") {
-    if (result.error) {
-      console.warn("Dashboard database export unavailable; using local dashboard data.");
-    }
+export async function loadDashboardData(options = {}) {
+  const environment = options.environment ?? process.env;
+  if (!environment.ARCHERO_DATABASE_URL && !environment.DATABASE_URL) {
     return {
       ok: true,
       source: "local",
-      warning: "Database export unavailable; using local dashboard data.",
-      data: fallback,
+      dataMode: "demo",
+      partial: false,
+      missingDomains: [],
+      data: localPayload(),
     };
   }
 
-  return { ok: true, source: "database", data: mergeWithLocalFallback(result.data, fallback) };
+  const cache = dashboardCache();
+  const now = Date.now();
+  if (!options.bypassCache && cache.value && cache.expiresAt > now) {
+    return cache.value;
+  }
+  if (cache.inFlight) return cache.inFlight;
+
+  const runExport = options.runExport ?? (() => runObserverModule("observer.storage.export_json"));
+  const request = Promise.resolve()
+    .then(runExport)
+    .then((result) => {
+      if ((!result.ok || !result.data || typeof result.data !== "object") && result.error) {
+        console.warn("Dashboard database export unavailable; returning no live data.");
+      }
+      const payload = dashboardPayloadFromDatabaseExport(result);
+      const ttl = payload.dataMode === "live"
+        ? cacheTtl(environment.ARCHERO_DATA_CACHE_TTL_MS, 15_000)
+        : cacheTtl(environment.ARCHERO_DATA_ERROR_CACHE_TTL_MS, 2_000);
+      if (ttl > 0) {
+        cache.value = payload;
+        cache.expiresAt = Date.now() + ttl;
+      }
+      return payload;
+    })
+    .finally(() => {
+      if (cache.inFlight === request) cache.inFlight = null;
+    });
+  cache.inFlight = request;
+  return request;
+}
+
+export function invalidateDashboardDataCache() {
+  const cache = dashboardCache();
+  cache.value = null;
+  cache.expiresAt = 0;
+}
+
+export function resetDashboardDataCacheForTest() {
+  const cache = dashboardCache();
+  cache.value = null;
+  cache.expiresAt = 0;
+  cache.inFlight = null;
+}
+
+export function dashboardPayloadFromDatabaseExport(result) {
+  if (!result?.ok || !result.data || typeof result.data !== "object" || Array.isArray(result.data)) {
+    return unavailableDatabasePayload("Database export unavailable; no live data returned.");
+  }
+  const missingDomains = DATA_DOMAINS.filter((key) => !hasValidDomain(result.data, key));
+  if (missingDomains.length === DATA_DOMAINS.length) {
+    return unavailableDatabasePayload("Database export returned an invalid payload; no live data returned.");
+  }
+  return {
+    ok: true,
+    source: "database",
+    dataMode: "live",
+    partial: missingDomains.length > 0,
+    missingDomains,
+    data: normalizeDatabasePayload(result.data),
+  };
+}
+
+function unavailableDatabasePayload(warning) {
+  return {
+    ok: false,
+    source: "database",
+    dataMode: "unavailable",
+    partial: true,
+    missingDomains: [...DATA_DOMAINS],
+    warning,
+    data: emptyPayload(),
+  };
 }
 
 export function bossRankingsFromData(data) {
+  const bossDefinitions = bossDefinitionsFromData(data);
   const currentPlayerIds = new Set((data.guildRoster ?? []).filter((member) => member.playerId && !isFormerStatus(member.status)).map((member) => member.playerId));
   const players = new Map();
   for (const day of data.dailyBossRawSnapshots ?? []) {
-    const boss = bossForDate(day.date);
+    const boss = bossDefinitionFromSnapshot(data, day);
     for (const row of day.rows ?? []) {
       if (!currentPlayerIds.has(row.playerId) || typeof row.bossDamageToday !== "number") continue;
       const current = players.get(row.playerId) ?? {
@@ -65,7 +131,7 @@ export function bossRankingsFromData(data) {
     .filter(Boolean)
     .sort((left, right) => right.damage - left.damage || left.name.localeCompare(right.name));
 
-  const byBoss = BOSS_ROTATION.map((boss) => ({
+  const byBoss = bossDefinitions.map((boss) => ({
     boss,
     rows: [...players.values()]
       .map((player) => {
@@ -102,6 +168,21 @@ export function bossRankingsFromData(data) {
   return { allTime, byBoss, weekly };
 }
 
+export function bossDefinitionFromSnapshot(data, snapshot) {
+  const definitions = bossDefinitionsFromData(data);
+  const explicitKey = snapshot?.boss?.key ?? snapshot?.bossKey;
+  if (explicitKey) {
+    const stored = definitions.find((boss) => boss.key === explicitKey);
+    return stored ?? {
+      key: explicitKey,
+      weekday: snapshot?.boss?.weekday ?? null,
+      dayLabel: snapshot?.boss?.dayLabel ?? null,
+      name: snapshot?.boss?.name ?? explicitKey,
+    };
+  }
+  return bossForDate(snapshot?.date, definitions);
+}
+
 const BOSS_ROTATION = [
   { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian" },
   { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon" },
@@ -116,10 +197,16 @@ function isFormerStatus(status) {
   return ["inactive", "left", "kicked"].includes(status);
 }
 
-function bossForDate(date) {
+function bossDefinitionsFromData(data) {
+  return Array.isArray(data.bossDefinitions) && data.bossDefinitions.length > 0
+    ? data.bossDefinitions
+    : BOSS_ROTATION;
+}
+
+function bossForDate(date, definitions = BOSS_ROTATION) {
   const [year, month, day] = String(date).split("-").map(Number);
   const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
-  return BOSS_ROTATION.find((boss) => boss.weekday === weekday) ?? BOSS_ROTATION[0];
+  return definitions.find((boss) => boss.weekday === weekday) ?? definitions[0] ?? BOSS_ROTATION[0];
 }
 
 function weekStart(date) {
@@ -134,6 +221,7 @@ function localPayload() {
     captures,
     changes,
     dailyBossRawSnapshots,
+    bossDefinitions: BOSS_ROTATION,
     dailyRawSnapshots,
     guildRoster,
     memberSnapshots,
@@ -143,37 +231,103 @@ function localPayload() {
   };
 }
 
-export function mergeWithLocalFallback(data, fallback) {
+const DATA_DOMAINS = [
+  "captures",
+  "changes",
+  "dailyBossRawSnapshots",
+  "bossDefinitions",
+  "dailyRawSnapshots",
+  "guildRoster",
+  "memberSnapshots",
+  "previousMemberSnapshots",
+  "rules",
+  "ocrQueue",
+];
+const REQUIRED_RULE_KEYS = [
+  "maxInactiveDays",
+  "minContribution7d",
+  "minPowerGrowth14dPercent",
+  "minBossTries",
+  "newMemberGraceDays",
+  "memberCapacity",
+];
+
+function emptyPayload() {
   return {
-    captures: { ...fallback.captures, ...(data.captures ?? {}) },
-    changes: arrayOrFallback(data.changes, fallback.changes),
-    dailyBossRawSnapshots: arrayOrFallback(data.dailyBossRawSnapshots, fallback.dailyBossRawSnapshots),
-    dailyRawSnapshots: arrayOrFallback(data.dailyRawSnapshots, fallback.dailyRawSnapshots),
-    guildRoster: rosterOrFallback(data.guildRoster, fallback.guildRoster),
-    memberSnapshots: arrayOrFallback(data.memberSnapshots, fallback.memberSnapshots),
-    previousMemberSnapshots: arrayOrFallback(data.previousMemberSnapshots, fallback.previousMemberSnapshots),
-    rules: { ...fallback.rules, ...(data.rules ?? {}) },
-    ocrQueue: arrayOrFallback(data.ocrQueue, fallback.ocrQueue),
+    captures: {
+      lastCapturedAt: null,
+      lastImportedAt: null,
+      baselineJoinedAt: null,
+      contribution30d: [],
+      averagePower8w: [],
+    },
+    changes: [],
+    dailyBossRawSnapshots: [],
+    bossDefinitions: [],
+    dailyRawSnapshots: [],
+    guildRoster: [],
+    memberSnapshots: [],
+    previousMemberSnapshots: [],
+    rules: {},
+    ocrQueue: [],
   };
 }
 
-function rosterOrFallback(value, fallback) {
-  if (!Array.isArray(value) || value.length === 0) return fallback;
-  const fallbackById = new Map((fallback ?? []).filter((member) => member.playerId).map((member) => [member.playerId, member]));
-  return value.map((member) => {
-    const local = member.playerId ? fallbackById.get(member.playerId) : null;
-    if (!local) return member;
-    const merged = {
-      ...member,
-      discordName: member.discordName ?? local.discordName,
-      discordLinked: Boolean(member.discordLinked || local.discordLinked),
-    };
-    const searchAliases = member.searchAliases ?? local.searchAliases;
-    if (searchAliases) merged.searchAliases = searchAliases;
-    return merged;
-  });
+export function normalizeDatabasePayload(data) {
+  const empty = emptyPayload();
+  return {
+    captures: { ...empty.captures, ...objectOrDefault(data.captures, {}) },
+    changes: arrayOrEmpty(data.changes),
+    dailyBossRawSnapshots: arrayOrEmpty(data.dailyBossRawSnapshots),
+    bossDefinitions: arrayOrEmpty(data.bossDefinitions),
+    dailyRawSnapshots: arrayOrEmpty(data.dailyRawSnapshots),
+    guildRoster: arrayOrEmpty(data.guildRoster),
+    memberSnapshots: arrayOrEmpty(data.memberSnapshots),
+    previousMemberSnapshots: arrayOrEmpty(data.previousMemberSnapshots),
+    rules: objectOrDefault(data.rules, {}),
+    ocrQueue: arrayOrEmpty(data.ocrQueue),
+  };
 }
 
-function arrayOrFallback(value, fallback) {
-  return Array.isArray(value) && value.length > 0 ? value : fallback;
+// Retained for internal compatibility with existing imports. Database payloads
+// are no longer completed with demo values.
+export function mergeWithLocalFallback(data, fallback) {
+  void fallback;
+  return normalizeDatabasePayload(data);
+}
+
+function arrayOrEmpty(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function objectOrDefault(value, fallback) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
+}
+
+function hasValidDomain(data, key) {
+  if (!(key in data)) return false;
+  if (key === "captures") {
+    return Boolean(data[key]) && typeof data[key] === "object" && !Array.isArray(data[key]);
+  }
+  if (key === "rules") {
+    return Boolean(data.rules)
+      && typeof data.rules === "object"
+      && !Array.isArray(data.rules)
+      && REQUIRED_RULE_KEYS.every((ruleKey) => typeof data.rules[ruleKey] === "number");
+  }
+  return Array.isArray(data[key]);
+}
+
+function dashboardCache() {
+  if (!globalThis.__archeroDashboardDataCache) {
+    globalThis.__archeroDashboardDataCache = { value: null, expiresAt: 0, inFlight: null };
+  }
+  return globalThis.__archeroDashboardDataCache;
+}
+
+function cacheTtl(value, fallback) {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(300_000, Math.floor(parsed)));
 }

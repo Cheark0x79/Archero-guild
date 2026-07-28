@@ -1,5 +1,5 @@
 import { buildSummary, evaluateMember, mergeRosterMetrics } from "../../../../metrics.js";
-import { bossRankingsFromData } from "../../dashboard-data/source.js";
+import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboard-data/source.js";
 
 const FORMER_STATUSES = new Set(["inactive", "left", "kicked"]);
 const ALLOWED_MEMBER_STATUSES = new Set(["active", "former", "all"]);
@@ -173,7 +173,7 @@ export function bossDaysFromData(data, searchParams) {
   const groups = (data.dailyBossRawSnapshots ?? [])
     .filter((day) => !date || day.date === date)
     .map((day) => {
-      const definition = bossDefinitionForDate(day.date);
+      const definition = bossDefinitionFromSnapshot(data, day);
       return {
         date: day.date,
         boss: definition,
@@ -216,7 +216,7 @@ export function memberBossesFromData(data, playerId) {
     const record = recordIndex >= 0 ? rows[recordIndex] : null;
     const appearances = (data.dailyBossRawSnapshots ?? []).flatMap((day) =>
       (day.rows ?? [])
-        .filter((row) => row.playerId === playerId && bossDefinitionForDate(day.date)?.key === boss.key && typeof row.bossDamageToday === "number")
+        .filter((row) => row.playerId === playerId && bossDefinitionFromSnapshot(data, day)?.key === boss.key && typeof row.bossDamageToday === "number")
         .map((row) => ({ date: day.date, damage: row.bossDamageToday, rank: row.bossRank ?? null })),
     );
     const latest = appearances.sort((left, right) => right.date.localeCompare(left.date))[0] ?? null;
@@ -392,21 +392,6 @@ function violationSummary(items) {
 
 function severityRank(value) {
   return value === "danger" ? 2 : value === "warning" ? 1 : 0;
-}
-
-function bossDefinitionForDate(date) {
-  const definitions = [
-    { key: "grim-reaper", weekday: 0, dayLabel: "Sun", name: "Grim Reaper" },
-    { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian" },
-    { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon" },
-    { key: "flame-demon", weekday: 3, dayLabel: "Wed", name: "Flame Demon" },
-    { key: "medusa", weekday: 4, dayLabel: "Thu", name: "Medusa" },
-    { key: "stoneman", weekday: 5, dayLabel: "Fri", name: "Stoneman" },
-    { key: "cyclops-mage", weekday: 6, dayLabel: "Sat", name: "Cyclops Mage" },
-  ];
-  const [year, month, day] = String(date).split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
-  return definitions.find((definition) => definition.weekday === weekday);
 }
 
 function dateParameter(value) {

@@ -1,17 +1,27 @@
-# Plan de deploiement homelab
+# Homelab deployment plan
 
-Ce document decrit la cible de deploiement pour Archero Observer sur une VM dediee dans le homelab Proxmox, ainsi que le workflow d'exploitation: provisioning, configuration, publication via Cloudflare, backups, monitoring, securite et mises a jour.
+This document describes a reproducible VM deployment target for Archero
+Observer in a Proxmox homelab. It covers provisioning, host configuration,
+Cloudflare publication, backups, monitoring, security, updates, and rollback.
 
-## Objectifs
+For the current Docker Compose procedure, use
+[`production-homelab.md`](production-homelab.md). This document is the broader
+operations plan and contains decisions that still require infrastructure-owner
+approval.
 
-- Isoler l'application dans une VM dediee plutot que sur l'hote Proxmox.
-- Rendre l'installation reproductible avec une couche IaC pour la VM et une couche de configuration serveur.
-- Publier le dashboard de maniere controlee a des utilisateurs externes.
-- Sauvegarder les donnees critiques: PostgreSQL, configuration, captures brutes, images normalisees et rapports d'import.
-- Avoir un chemin clair pour deployer une nouvelle version et revenir en arriere.
-- Garder les secrets hors Git.
+## Objectives
 
-## Architecture cible
+- Isolate the application in a dedicated VM instead of running it on the
+  Proxmox host.
+- Make VM provisioning and server configuration reproducible.
+- Publish the dashboard without opening inbound router ports.
+- Protect PostgreSQL, configuration, raw screenshots, normalized images, and
+  import reports.
+- Support atomic application releases and a documented rollback path.
+- Keep all secrets outside Git.
+- Test backups by restoring them, not only by creating archives.
+
+## Target architecture
 
 ```text
 Internet
@@ -20,23 +30,22 @@ Internet
 Cloudflare DNS / WAF / Access / Tunnel
   |
   v
-cloudflared dans la VM
+cloudflared in the application VM
   |
-  +--> 127.0.0.1:5181  dashboard Next.js
-  +--> 127.0.0.1:8080  future API interne si ajoutee
+  +--> 127.0.0.1:5181  Next.js dashboard and /api/v1
 
 Proxmox
   |
   v
 VM archero-observer
   |
-  +--> systemd timers/services
-  |     +--> observer Python: ADB, capture, OCR, import
-  |     +--> dashboard Next.js
+  +--> application runtime
+  |     +--> Python observer: ADB, capture, OCR, import
+  |     +--> Next.js dashboard and API
   |
-  +--> PostgreSQL local
+  +--> local PostgreSQL 16
   |
-  +--> filesystem applicatif
+  +--> application filesystem
         +--> /var/lib/archero-observer/screenshots/raw
         +--> /var/lib/archero-observer/screenshots/normalized
         +--> /var/lib/archero-observer/data/imports
@@ -44,38 +53,41 @@ VM archero-observer
         +--> /etc/archero-observer/secrets.env
 ```
 
-La premiere cible recommandee est une seule VM avec PostgreSQL local. C'est plus simple a sauvegarder, auditer et restaurer. Si l'usage grossit, PostgreSQL et le stockage images pourront etre externalises.
+The recommended first target is one VM with local PostgreSQL. This is easier to
+audit, back up, and restore. PostgreSQL and image storage can be externalized
+later if usage requires it.
 
-## Decisions initiales
+## Initial decisions
 
-| Sujet | Decision proposee | Raison |
+| Topic | Proposed decision | Reason |
 | --- | --- | --- |
-| Virtualisation | VM Proxmox dediee `archero-observer` | Isolation, snapshots, ressources controlees |
-| OS | Debian stable ou NixOS | Debian si l'on veut rester classique; NixOS si l'on veut tout declarer |
-| Base de donnees | PostgreSQL 16 local dans la VM | Deja present en dev, robuste, backup simple |
-| Images/captures | Fichiers locaux sous `/var/lib/archero-observer` | Le projet manipule deja des chemins de screenshots |
-| Exposition publique | Cloudflare Tunnel + Cloudflare Access | Pas d'ouverture directe de port entrant |
-| Auth externe | Cloudflare Access devant le dashboard | Evite de coder un login applicatif tant que le besoin est simple |
-| Services | systemd | Deja amorce dans `systemd/` |
-| Build | Nix pour le worker Python; build Next.js pour le dashboard | Aligne avec `flake.nix` et `web/package.json` |
+| Virtualization | Dedicated `archero-observer` Proxmox VM | Isolation, snapshots, and controlled resources |
+| Operating system | Debian stable or NixOS | Debian for conventional operations; NixOS for a fully declarative host |
+| Database | PostgreSQL 16 in the VM | Existing schema and tooling, reliable logical backups |
+| Images | Local files under `/var/lib/archero-observer` | Matches current capture and OCR paths |
+| Public exposure | Cloudflare Tunnel and Access | No public inbound port |
+| External identity | Cloudflare Access | Central identity and MFA before application authentication |
+| Runtime | Docker Compose initially; systemd or Nix units if selected | Compose is implemented today; host-native units remain an option |
+| Build | Versioned production Docker image | Same artifact for staging and production |
 
-Points a valider avant implementation: OS final, nom de domaine, methode de stockage long terme, outil de configuration exact si "Montcible" designe Ansible ou un autre orchestrateur.
+Before implementation, confirm the final OS, domain, backup destination,
+long-term storage, and configuration-management tool.
 
-## Couches d'automatisation
+## Automation layers
 
-### 1. Terraform pour Proxmox
+### Infrastructure provisioning
 
-Terraform doit provisionner uniquement l'infrastructure:
+Terraform should manage infrastructure only:
 
-- VM `archero-observer`;
-- CPU, RAM, disque systeme et eventuel disque data;
-- reseau, VLAN, IP statique ou reservation DHCP;
+- `archero-observer` VM;
+- CPU, RAM, system disk, and optional data disk;
+- network, VLAN, and static IP or DHCP reservation;
 - cloud-init;
-- utilisateur admin SSH;
-- tags Proxmox et description;
-- eventuellement stockage dedie pour `/var/lib/archero-observer`.
+- SSH administrator;
+- Proxmox tags and description;
+- optional dedicated storage mounted at `/var/lib/archero-observer`.
 
-Arborescence proposee:
+Suggested layout:
 
 ```text
 infra/
@@ -98,66 +110,68 @@ infra/
         monitoring/
 ```
 
-Le state Terraform ne doit pas etre stocke en clair dans le depot. Pour un homelab, options acceptables:
+Do not commit Terraform state. Acceptable homelab backends include:
 
-- backend local chiffre et sauvegarde;
-- backend S3 compatible MinIO avec versioning;
-- Terraform Cloud si l'on accepte le SaaS.
+- an encrypted and backed-up local backend;
+- a versioned S3-compatible MinIO backend;
+- Terraform Cloud when SaaS storage is acceptable.
 
-### 2. Configuration serveur
+### Server configuration
 
-La configuration serveur doit installer et maintenir:
+The selected configuration-management layer should install and maintain:
 
-- paquets systeme: `postgresql`, `nodejs` ou runtime Nix, `tesseract`, `android-tools`, `cloudflared`, outils de backup;
-- utilisateur systeme `archero-bot`;
-- dossiers avec permissions:
-  - `/opt/archero-observer` pour le code courant;
-  - `/var/lib/archero-observer` pour les donnees;
-  - `/etc/archero-observer` pour config et secrets;
-- services systemd:
-  - `archero-observer.service` pour la capture/import planifiee;
-  - `archero-observer.timer` pour l'execution quotidienne;
-  - `archero-dashboard.service` pour le dashboard;
-  - `cloudflared.service` pour l'exposition Cloudflare;
-  - timers de backup.
+- Docker Engine and Compose, or the chosen Node/Nix runtime;
+- PostgreSQL 16 when it is not containerized;
+- Tesseract and Android platform tools;
+- `cloudflared` when it is not containerized;
+- backup and monitoring tools;
+- a non-root `archero-bot` service account;
+- `/opt/archero-observer` for release artifacts;
+- `/var/lib/archero-observer` for persistent data;
+- `/etc/archero-observer` for configuration and secrets.
 
-Les secrets seront fournis hors Git via fichier protege, age/sops, Vaultwarden, 1Password CLI ou secret manager equivalent.
+Secrets must be delivered outside Git through a protected file, SOPS/Age,
+Vaultwarden, 1Password CLI, or an equivalent secret manager.
 
-## Runtime applicatif
+## Runtime
 
-### Worker d'observation
+### Observer worker
 
-Le worker Python est lance par systemd. La commande actuelle vise:
+The Python worker command is:
 
 ```text
 python -m observer.run --config /etc/archero-observer/config.json
 ```
 
-Le service doit tourner avec un utilisateur non-root, sans shell interactif, avec acces limite aux dossiers de donnees et a ADB si necessaire.
+Run it as a non-root user without an interactive shell. Grant access only to
+the required data directories and the selected ADB device.
 
-### Dashboard
+### Dashboard and public API
 
-Le dashboard Next.js doit ecouter uniquement en local:
+The Next.js service listens on:
 
 ```text
 127.0.0.1:5181
 ```
 
-L'acces externe passe par Cloudflare Tunnel. Le dashboard ne doit pas etre expose directement sur le LAN sauf besoin explicite.
+External traffic must pass through Cloudflare Tunnel. Do not expose this port
+to the LAN or WAN unless a documented requirement explicitly calls for it.
 
-### Base de donnees
+### PostgreSQL
 
-PostgreSQL tourne localement et n'ecoute que:
+PostgreSQL must not be exposed publicly. A host-native installation should
+listen only on:
 
 ```text
 127.0.0.1:5432
 ```
 
-Le compte applicatif doit avoir des droits limites a la base `archero_observer`. Le mot de passe de dev dans `docker-compose.yml` ne doit jamais etre reutilise en production.
+The application account should have access only to the `archero_observer`
+database. Never reuse the development password from `docker-compose.yml`.
 
-## Stockage des images et donnees
+## Data storage
 
-Structure cible:
+Target layout:
 
 ```text
 /var/lib/archero-observer/
@@ -171,243 +185,251 @@ Structure cible:
     staging/
 ```
 
-Regles:
+Rules:
 
-- les captures brutes sont immuables apres creation;
-- les images normalisees sont regenerables, mais utiles pour audit OCR;
-- les imports JSON sont conserves comme artefacts d'audit;
-- la base contient les donnees structurees;
-- les chemins stockes en base doivent rester relatifs a `/var/lib/archero-observer` si possible pour faciliter une restauration sur une nouvelle VM.
+- treat raw captures as immutable after creation;
+- normalized images are reproducible but useful for OCR audits;
+- retain import JSON as audit artifacts;
+- store structured application data in PostgreSQL;
+- prefer paths relative to `/var/lib/archero-observer` for portable restores.
 
-Evolution possible: pousser `screenshots/` et `data/imports/` vers un stockage objet S3 compatible, par exemple MinIO homelab, Backblaze B2, Cloudflare R2 ou Hetzner Object Storage. Dans ce cas, la VM garde un cache local recent et les sauvegardes longues vivent dans l'objet storage.
+Possible future object-storage targets include MinIO, Backblaze B2, Cloudflare
+R2, or Hetzner Object Storage. The VM can keep a recent working cache while
+long-term copies live in object storage.
 
-## Backups et restauration
+## Backups and restoration
 
-### Donnees a sauvegarder
+### Required backup set
 
-- dump PostgreSQL logique quotidien;
-- base PostgreSQL via backup physique si le volume grossit;
+- daily PostgreSQL logical dump;
+- physical PostgreSQL backup if the dataset becomes large;
 - `/etc/archero-observer/config.json`;
-- secrets via coffre separe, pas dans l'archive applicative;
-- `/var/lib/archero-observer/screenshots/raw`;
-- `/var/lib/archero-observer/screenshots/normalized`;
-- `/var/lib/archero-observer/data/imports`;
-- version de l'application deployee.
+- secret material in a separate protected vault;
+- raw and normalized screenshots;
+- import JSON reports;
+- the deployed application version and configuration.
 
-### Politique proposee
+### Proposed policy
 
 ```text
-Toutes les nuits:
-  pg_dump custom format
-  archive des fichiers applicatifs critiques
-  upload vers stockage backup
-  verification de presence et taille
+Every night:
+  create a custom-format pg_dump
+  archive critical application files
+  upload to the backup destination
+  verify presence, size, and command exit status
 
 Retention:
-  7 sauvegardes quotidiennes
-  4 sauvegardes hebdomadaires
-  12 sauvegardes mensuelles
+  7 daily backups
+  4 weekly backups
+  12 monthly backups
 ```
 
-Outils possibles:
+Candidate tools:
 
-- `restic` vers S3/B2/R2/MinIO;
-- `borgbackup` vers un NAS ou serveur SSH;
-- Proxmox Backup Server pour snapshot VM, en complement, pas comme seul backup applicatif.
+- `restic` to S3, B2, R2, or MinIO;
+- `borgbackup` to a NAS or SSH server;
+- Proxmox Backup Server for VM snapshots, as a complement rather than the only
+  application backup.
 
-La restauration doit etre testee regulierement sur une VM temporaire. Un backup non teste doit etre considere comme non prouve.
+Restore regularly into a temporary VM or isolated directory. A backup that has
+never been restored is not proven.
 
-## Securite et acces
+## Security
 
-### Acces public
-
-Flux recommande:
+### Public access
 
 ```text
-Utilisateur -> Cloudflare Access -> Cloudflare Tunnel -> dashboard local
+User -> Cloudflare Access -> Cloudflare Tunnel -> local application
 ```
 
-Cloudflare Access gere:
+Cloudflare Access should enforce:
 
-- login par email, Google, GitHub ou autre IdP;
-- allowlist d'utilisateurs ou groupes;
-- MFA cote fournisseur d'identite;
-- logs d'acces;
-- politique differente pour admin et lecture seule si necessaire.
+- authentication through an approved identity provider;
+- an explicit user or group allowlist;
+- MFA when supported;
+- access logs;
+- separate administrative and read-only policies when necessary.
 
-Tant que le dashboard ne gere pas de permissions fines, Cloudflare Access suffit comme premiere barriere. Si l'application gagne des actions sensibles, ajouter ensuite un login applicatif et des roles internes.
+The application keeps its own user and administrator roles as a second layer.
+Administrative routes remain under `/admin/*` and `/api/data/*`.
 
-### Durcissement VM
+### VM hardening
 
-- SSH par cle uniquement;
-- desactiver login root SSH;
-- firewall local: autoriser SSH depuis le LAN/admin, refuser le reste, pas de port HTTP entrant public;
-- services bindes sur `127.0.0.1`;
-- mises a jour securite OS automatisees ou cadence mensuelle explicite;
-- secrets en `0600`, proprietaire root ou utilisateur de service selon besoin;
-- utilisateur `archero-bot` sans privileges sudo;
-- logs systemd persistants avec retention bornee.
+- SSH keys only.
+- Disable root SSH login.
+- Allow SSH only from the management network.
+- Do not open public HTTP ports.
+- Bind local services to loopback interfaces.
+- Apply security updates automatically or on a documented monthly cadence.
+- Store secrets with mode `0600`.
+- Do not grant `archero-bot` sudo access.
+- Keep persistent system logs with bounded retention.
+- Keep `no-new-privileges`, dropped capabilities, and container resource limits.
 
 ### Secrets
 
-Secrets probables:
+Expected secrets include:
 
-- mot de passe PostgreSQL applicatif;
-- token Cloudflare Tunnel;
-- credentials backup;
-- eventuels tokens de notification monitoring.
+- PostgreSQL application password;
+- dashboard account passwords and session tokens;
+- public API keys;
+- Cloudflare Tunnel token;
+- backup credentials;
+- optional monitoring notification tokens.
 
-Ils doivent etre exclus du depot et injectes via `/etc/archero-observer/secrets.env` ou via un mecanisme chiffre type `sops`.
+Inject them through `/etc/archero-observer/secrets.env` or an encrypted secret
+workflow. Do not include them in application archives.
 
-## Monitoring et alerting
+## Monitoring and alerting
 
-Surveillance minimale:
+Minimum checks:
 
-- etat des services systemd;
-- succes/echec du timer `archero-observer.timer`;
-- age de la derniere capture/import;
-- nombre d'echecs OCR recents;
-- espace disque sur `/var/lib/archero-observer`;
-- taille et duree des backups;
-- disponibilite HTTP du dashboard via tunnel;
-- charge CPU/RAM de la VM;
-- statut PostgreSQL.
+- application, PostgreSQL, and tunnel health;
+- observer timer success or failure;
+- age of the latest capture and import;
+- recent OCR failure count;
+- free space under `/var/lib/archero-observer`;
+- backup size, duration, and latest successful timestamp;
+- HTTP availability through the tunnel;
+- VM CPU and memory;
+- PostgreSQL connectivity.
 
-Stack simple:
+Possible lightweight stack:
 
-- Prometheus node exporter + Grafana si deja present dans le homelab;
-- Uptime Kuma pour verifier le dashboard et le tunnel;
-- journald pour logs locaux;
-- alertes Discord, email ou ntfy.
+- Prometheus node exporter and Grafana;
+- Uptime Kuma for dashboard and tunnel checks;
+- journald for local logs;
+- Discord, email, or ntfy notifications.
 
-Un endpoint de health applicatif sera utile quand une API existe. En attendant, le monitoring peut verifier la page Next.js et les timers systemd.
+Use `/api/health` for application liveness and `/api/v1/health` for the public
+API process check. Data freshness must be monitored separately through API
+metadata.
 
-## Workflow de deploiement
+## Deployment workflow
 
-### Premiere installation
+### First installation
 
-1. Creer la VM avec Terraform.
-2. Appliquer la configuration serveur.
-3. Creer les dossiers et secrets.
-4. Installer PostgreSQL et appliquer `observer/storage/schema.sql`.
-5. Deployer le code dans `/opt/archero-observer/releases/<version>`.
-6. Construire le dashboard Next.js.
-7. Activer les services systemd.
-8. Configurer Cloudflare Tunnel et Access.
-9. Lancer un dry-run puis une capture controlee.
-10. Declencher un backup initial et tester une restauration minimale.
+1. Create the VM with Terraform.
+2. Apply server configuration.
+3. Create persistent directories and secrets.
+4. Install or start PostgreSQL and apply `observer/storage/schema.sql`.
+5. Build or pull the versioned application image.
+6. Start the application and tunnel.
+7. Configure Cloudflare Tunnel and Access.
+8. Run a dry-run observer cycle.
+9. Run public API and authentication smoke tests.
+10. Create an initial backup and perform a minimal restore.
 
-### Mise a jour applicative
+### Application update
 
-Workflow recommande:
-
-```text
-local/CI:
-  tests Python
-  tests web
-  build Nix
-  build Next.js
-  artefact versionne
-
-serveur:
-  upload nouvelle release
-  installation dans /opt/archero-observer/releases/<version>
-  migration DB si necessaire
-  switch symlink /opt/archero-observer/current
-  restart services
-  health checks
-```
-
-Les releases doivent etre atomiques:
+Recommended pipeline:
 
 ```text
-/opt/archero-observer/
-  current -> releases/2026-07-18T120000Z-gitsha
-  releases/
-    2026-07-18T120000Z-gitsha/
-    previous-version/
+CI:
+  Python tests
+  web tests
+  PostgreSQL contract tests
+  OpenAPI synchronization check
+  dependency audit
+  production image build
+  immutable image tag
+
+server:
+  create backup
+  pull the new image
+  apply a reviewed migration when required
+  replace the application container
+  wait for health checks
+  run API smoke tests
 ```
 
-Rollback:
+Releases should be immutable and identifiable by Git SHA or a version tag.
 
-1. arreter les services;
-2. repointer `current` vers la release precedente;
-3. restaurer la base seulement si une migration irreversible a ete appliquee;
-4. redemarrer;
-5. verifier dashboard, timer et logs.
+### Rollback
 
-Avant toute migration destructive, faire un dump PostgreSQL et noter explicitement la commande de rollback.
+1. Stop or replace only the application service.
+2. Select the previous immutable image.
+3. Restore PostgreSQL only when a migration made rollback impossible.
+4. Restart the application.
+5. Verify dashboard, API, observer schedule, and logs.
 
-## Environnements
+Before any destructive migration, create a PostgreSQL dump and document the
+exact application and schema rollback commands.
 
-| Environnement | Role | Donnees |
+## Environments
+
+| Environment | Purpose | Data |
 | --- | --- | --- |
-| Local dev | Developpement et tests | donnees exemples |
-| Staging VM ou namespace | Test de deploy avant prod | dump anonymise ou petit jeu de donnees |
-| Production VM | Service reel | donnees reelles |
+| Local development | Feature work and fast tests | Demonstration data or isolated development DB |
+| Isolated integration | Automated PostgreSQL contract | Dedicated synthetic test data |
+| Staging VM or namespace | Pre-production deployment test | Anonymized dump or small reviewed dataset |
+| Production VM | Live service | Real reviewed data |
 
-Si une seule VM est disponible au debut, creer au minimum un mode staging logique avec ports, base et dossiers separes. Ne pas tester les migrations directement sur la base de production sans dump recent.
+Never test migrations directly against production without a recent backup. If
+only one VM exists, use separate ports, database names, volumes, and directories
+for logical staging.
 
-## Plan de mise en oeuvre
+## Implementation phases
 
-### Phase 1: cadrage
+### Phase 1: decisions
 
-- Valider OS VM: Debian ou NixOS.
-- Valider outil de configuration: Ansible, Montcible si outil specifique, ou module NixOS.
-- Choisir domaine Cloudflare.
-- Choisir cible de backup: NAS, PBS, S3 compatible ou combinaison.
-- Definir taille initiale VM: par exemple 2 vCPU, 4 Go RAM, 40 Go systeme, disque data extensible.
+- Select Debian or NixOS.
+- Select Ansible, an internal tool, or a NixOS module.
+- Choose the Cloudflare domain.
+- Choose NAS, PBS, S3-compatible storage, or a combination for backups.
+- Define initial VM resources, for example 2 vCPU, 4 GiB RAM, a 40 GiB system
+  disk, and an expandable data disk.
 
-### Phase 2: IaC et VM
+### Phase 2: infrastructure as code
 
-- Ajouter `infra/terraform/proxmox`.
-- Creer une VM reproductible via cloud-init.
-- Sortir IP, hostname et informations utiles en outputs Terraform.
-- Documenter la creation du token Proxmox sans le commiter.
+- Add `infra/terraform/proxmox`.
+- Create a cloud-init VM.
+- Export IP, hostname, and useful identifiers.
+- Document Proxmox token creation without committing the token.
 
-### Phase 3: configuration serveur
+### Phase 3: server configuration
 
-- Ajouter roles de configuration.
-- Installer PostgreSQL, tesseract, android-tools, runtime Node/Nix.
-- Creer users, dossiers, permissions et services systemd.
-- Ajouter service dashboard manquant.
-- Configurer firewall local.
+- Add configuration roles or modules.
+- Install runtime, PostgreSQL, Tesseract, and Android tools.
+- Create users, directories, permissions, and services.
+- Configure the local firewall.
 
-### Phase 4: donnees et backups
+### Phase 4: data and backups
 
-- Ecrire scripts `backup` et `restore-check`.
-- Automatiser `pg_dump`.
-- Sauvegarder fichiers applicatifs.
-- Ajouter monitoring du dernier backup reussi.
-- Tester une restauration sur VM temporaire ou dossier temporaire.
+- Add `backup` and `restore-check` commands.
+- Automate `pg_dump` and application-file archives.
+- Monitor the latest successful backup.
+- Restore into a temporary target.
 
-### Phase 5: exposition securisee
+### Phase 5: secure exposure
 
-- Configurer Cloudflare Tunnel.
-- Mettre Cloudflare Access devant le dashboard.
-- Definir allowlist utilisateurs.
-- Verifier qu'aucun port web public n'est ouvert sur la VM.
+- Configure Cloudflare Tunnel.
+- Add Cloudflare Access.
+- Define the user allowlist and MFA policy.
+- Verify that no public VM web port is open.
 
-### Phase 6: deploiement versionne
+### Phase 6: versioned releases
 
-- Definir format des releases.
-- Ajouter script de deploy.
-- Ajouter check post-deploy.
-- Ajouter procedure rollback.
-- Brancher CI si besoin.
+- Define immutable version naming.
+- Add deployment and rollback commands.
+- Add post-deployment health and API checks.
+- Connect the workflow to CI when the registry is selected.
 
 ### Phase 7: monitoring
 
-- Ajouter checks services systemd.
-- Ajouter check age de derniere capture/import.
-- Ajouter alertes disque et backups.
-- Ajouter dashboard Grafana/Uptime Kuma selon la stack homelab existante.
+- Check application, PostgreSQL, and tunnel health.
+- Check latest capture and import age.
+- Alert on disk and backup failures.
+- Add Grafana and Uptime Kuma views when they fit the existing homelab.
 
-## Questions ouvertes
+## Open questions
 
-- "Montcible" designe-t-il Ansible, un outil interne, ou un autre gestionnaire de configuration?
-- Le serveur Proxmox dispose-t-il deja de Proxmox Backup Server ou d'un NAS?
-- Les utilisateurs externes doivent-ils etre seulement lecteurs, ou pourront-ils declencher des actions?
-- La capture ADB utilisera-t-elle un telephone physique branche a la VM, un emulateur, ou une autre machine de capture?
-- Faut-il conserver toutes les captures indefiniment ou appliquer une retention sur les images brutes?
-- Le homelab a-t-il deja Prometheus/Grafana/Uptime Kuma/ntfy?
+- Does “Montcible” refer to Ansible, an internal tool, or another configuration
+  manager?
+- Does the Proxmox environment already provide Proxmox Backup Server or a NAS?
+- Are external users read-only, or may they trigger application actions?
+- Will ADB use a physical device attached to the VM, an emulator, or a separate
+  capture workstation?
+- Should raw captures be retained indefinitely?
+- Which monitoring tools already exist in the homelab?
+- Which container registry should store immutable production images?

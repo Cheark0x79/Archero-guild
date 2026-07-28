@@ -57,6 +57,13 @@ test("API authentication accepts bearer and x-api-key credentials", () => {
   assert.equal(authorizeApiRequest(requestWith({ authorization: "Bearer wrong" }), "secret").reason, "invalid_api_key");
 });
 
+test("API authentication fails closed when production has no configured key", () => {
+  const result = authorizeApiRequest(requestWith(), "", { NODE_ENV: "production" });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.reason, "api_not_configured");
+});
+
 test("public members exclude private notes and support search and pagination", () => {
   const members = membersFromData(data);
   assert.equal(members[0].name, "Alice");
@@ -146,12 +153,20 @@ test("member resolver accepts IDs, normalized names, aliases, and typos", () => 
   const resolverData = {
     ...data,
     guildRoster: [
-      { playerId: "123", name: "Mundõ", discordName: "Mundo", searchAliases: ["Chef"], status: "active" },
+      {
+        playerId: "123",
+        name: "Mundõ",
+        previousNames: ["Old Mundo"],
+        discordName: "Mundo",
+        searchAliases: ["Chef"],
+        status: "active",
+      },
     ],
   };
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "123" })).match.matchedBy, "playerId");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mundo" })).match.playerId, "123");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "chef" })).match.matchedBy, "alias");
+  assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "old mundo" })).match.matchedBy, "previousName");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mndo" })).match.playerId, "123");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams()).error.code, "missing_query");
 });
@@ -173,6 +188,27 @@ test("member history and boss results can be filtered", () => {
   assert.equal(bossCatalogFromData(data).length, 7);
   assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-02-31" })).error.code, "invalid_date");
   assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-07-22", to: "2026-07-21" })).error.code, "invalid_date_range");
+});
+
+test("boss results prefer the boss identity stored by PostgreSQL over weekday inference", () => {
+  const explicitBossData = {
+    ...data,
+    bossDefinitions: [
+      { key: "special-boss", weekday: 4, dayLabel: "Special", name: "Special Boss" },
+    ],
+    dailyBossRawSnapshots: [
+      {
+        date: "2026-07-21",
+        bossKey: "special-boss",
+        rows: [{ playerId: "123", name: "Alice", bossDamageToday: 5000, bossRank: 1 }],
+      },
+    ],
+  };
+
+  const result = bossDaysFromData(explicitBossData, new URLSearchParams());
+
+  assert.equal(result.items[0].boss.key, "special-boss");
+  assert.equal(result.items[0].boss.name, "Special Boss");
 });
 
 test("member boss profile returns records and guild ranks for every boss", () => {

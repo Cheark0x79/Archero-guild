@@ -10,6 +10,7 @@ ARG APP_VERSION
 ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 WORKDIR /app
 COPY --from=dependencies /app/web/node_modules ./web/node_modules
+COPY docs/openapi.yaml ./docs/openapi.yaml
 COPY web ./web
 RUN npm --prefix web run build
 

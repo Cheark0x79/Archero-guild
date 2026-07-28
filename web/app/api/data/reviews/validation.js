@@ -1,3 +1,5 @@
+import { validateCaptureDate } from "../date.js";
+
 const REVIEW_KEY = /^\d{4}-\d{2}-\d{2}:[^\u0000-\u001f\u007f]{1,200}$/;
 const REVIEW_FIELDS = new Set(["identity", "role", "power", "bossAttacks", "contribution7d", "bossRank", "bossDamageToday"]);
 
@@ -6,6 +8,7 @@ export function normalizeReviews(value) {
   const normalized = {};
   for (const [key, review] of Object.entries(value)) {
     if (!REVIEW_KEY.test(key)) throw new Error(`invalid review key: ${key}`);
+    if (!validateCaptureDate(key.slice(0, 10))) throw new Error(`invalid review date: ${key.slice(0, 10)}`);
     if (review === "valid" || review === "invalid") {
       normalized[key] = review;
       continue;

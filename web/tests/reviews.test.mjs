@@ -31,3 +31,10 @@ test("rejects invalid reviews without a precise field", () => {
     /invalid review field/,
   );
 });
+
+test("rejects impossible calendar dates in review keys", () => {
+  assert.throws(
+    () => normalizeReviews({ "2026-02-31:row 0": "valid" }),
+    /invalid review date/,
+  );
+});

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { observerEnv, observerPythonCommand, parseJsonOutput, projectRoot } from "../actions.js";
+import { invalidateDashboardDataCache } from "../../dashboard-data/source.js";
 
 const PROGRESS_PREFIX = "__ARCHERO_PROGRESS__";
 const MAX_LOG_CHARS = 12000;
@@ -145,6 +146,7 @@ function runImportJob(job) {
         finishedAt: new Date().toISOString(),
       });
       if (state().currentJobId === job.id) state().currentJobId = null;
+      invalidateDashboardDataCache();
       pruneJobs(state());
       persistJobsSnapshot(state());
       return;
