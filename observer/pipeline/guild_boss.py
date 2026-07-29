@@ -281,7 +281,10 @@ def _match_roster_name(raw_name: str | Sequence[str], roster: Sequence[object]) 
                 score = max(score, 0.90)
             if best is None or score > best[2]:
                 best = (entry, candidate_name, score)
-    if best is None or best[2] < 0.65:
+    # Scores below 0.75 are too weak for an identity decision. In particular,
+    # English OCR can turn a CJK name into short Latin noise such as "SHAR",
+    # which used to be accepted as SHaze before multilingual OCR was tried.
+    if best is None or best[2] < 0.75:
         return None
     return (best[0], best[1])
 

@@ -16,6 +16,22 @@ export async function POST(request) {
   }
   try {
     const payload = await request.json();
+    if (payload?.action === "rename-unmatched") {
+      const captureDate = typeof payload?.captureDate === "string" ? payload.captureDate.trim() : "";
+      const source = typeof payload?.source === "string" ? payload.source.trim() : "";
+      const observedName = typeof payload?.observedName === "string" ? payload.observedName.trim() : "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(captureDate)) throw new Error("capture date must use YYYY-MM-DD");
+      if (!source || source.length > 240) throw new Error("source is required");
+      if (!observedName || observedName.length > 120) throw new Error("observed name is required");
+      const result = await runObserverModule(
+        "observer.storage.member_identities",
+        ["rename-unmatched", captureDate, source, observedName],
+      );
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: result.error || "OCR name correction failed" }, { status: result.status || 500 });
+      }
+      return NextResponse.json({ ok: true, member: result.data?.member });
+    }
     if (payload?.action === "status") {
       const playerId = typeof payload?.playerId === "string" ? payload.playerId.trim() : "";
       const status = typeof payload?.status === "string" ? payload.status.trim() : "";

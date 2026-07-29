@@ -1,10 +1,13 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from observer.pipeline.guild_member_ocr import (
     RosterEntry,
     _clean_observed_name,
     _match_roster_name,
     _parse_visible_activity_days,
+    _read_donation,
     _parse_role,
     _raw_name_has_signal,
     _select_observed_name,
@@ -17,6 +20,7 @@ from observer.pipeline.guild_member_ocr import (
     format_role_text,
     parse_power,
 )
+from observer.pipeline.guild_members import Rect
 
 
 class GuildMemberOcrTests(unittest.TestCase):
@@ -57,6 +61,29 @@ class GuildMemberOcrTests(unittest.TestCase):
 
         self.assertEqual(_select_integer_candidate(candidates), 550)
 
+    def test_donation_crops_exclude_the_icon_and_trailing_bar(self) -> None:
+        class RecordingImage:
+            def __init__(self) -> None:
+                self.boxes: list[tuple[int, int, int, int]] = []
+
+            def crop(self, box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+                self.boxes.append(box)
+                return box
+
+        image = RecordingImage()
+        row = SimpleNamespace(bounds=Rect(100, 200, 1_000, 100))
+
+        with patch(
+            "observer.pipeline.guild_member_ocr._read_integer_candidates",
+            return_value=[550],
+        ):
+            value = _read_donation(image, row, object())
+
+        self.assertEqual(value, 550)
+        self.assertTrue(image.boxes)
+        self.assertTrue(all(810 <= left <= 820 for left, _top, _right, _bottom in image.boxes))
+        self.assertTrue(all(right <= 960 for _left, _top, right, _bottom in image.boxes))
+
     def test_match_roster_name_removes_ui_prefixes_and_normalizes_zero(self) -> None:
         roster = [
             RosterEntry("1", "June00"),
@@ -83,11 +110,11 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match[0].player_id, "119950325")
 
-    def test_chinese_ocr_is_conditional_on_fragmented_unknown_names(self) -> None:
+    def test_chinese_ocr_runs_for_any_unmatched_row_when_roster_contains_cjk(self) -> None:
         roster = [RosterEntry("119950325", "斯斯雞預料")]
 
         self.assertTrue(_should_try_cjk_ocr(["Bh Bh 28 FA ."], roster))
-        self.assertFalse(_should_try_cjk_ocr(["Alco123 |"], roster))
+        self.assertTrue(_should_try_cjk_ocr(["Alco123 |"], roster))
         self.assertFalse(_should_try_cjk_ocr(["Bh Bh 28 FA ."], [RosterEntry("1", "LatinName")]))
 
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:

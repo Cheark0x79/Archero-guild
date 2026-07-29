@@ -48,3 +48,25 @@ test("rejects duplicate identities and invalid quality", () => {
   assert.match(result.errors.join(" "), /duplicate playerId/);
   assert.match(result.errors.join(" "), /quality gate/);
 });
+
+test("rejects a claimed pass when detected screenshots have no extracted rows", () => {
+  const batch = validBatch();
+  batch.members = [];
+
+  const result = validateImportBatch(batch, { requirePublishable: true });
+
+  assert.equal(result.valid, false);
+  assert.equal(result.publishable, false);
+  assert.match(result.errors.join(" "), /members is empty/);
+});
+
+test("rejects a claimed pass when a member row is incomplete", () => {
+  const batch = validBatch();
+  batch.members[0].contribution7d = null;
+
+  const result = validateImportBatch(batch, { requirePublishable: true });
+
+  assert.equal(result.valid, false);
+  assert.equal(result.publishable, false);
+  assert.match(result.errors.join(" "), /incomplete/);
+});

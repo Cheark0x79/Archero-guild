@@ -2609,6 +2609,33 @@ th.numeric {
   color: oklch(32% 0.1 155);
 }
 
+.check-good-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.check-name-form {
+  display: grid;
+  min-width: 190px;
+  gap: 6px;
+}
+
+.check-name-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid oklch(70% 0.12 25);
+  border-radius: 7px;
+  background: oklch(98% 0.015 25);
+  color: var(--ink);
+  padding: 7px 8px;
+  font: inherit;
+}
+
+.check-name-form .secondary-button {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
 .bad-fields-summary {
   max-width: 155px;
   color: oklch(42% 0.14 25);
@@ -2657,6 +2684,56 @@ th.numeric {
   font-size: 0.68rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.warning-tag-list {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.warning-history-item {
+  gap: 0.55rem;
+}
+
+.warning-history-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.warning-action-editor {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.7fr) minmax(14rem, 1.3fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+.warning-action-editor label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.warning-action-editor select,
+.warning-action-editor input {
+  width: 100%;
+  min-height: 2.3rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+}
+
+@media (max-width: 780px) {
+  .warning-action-editor {
+    grid-template-columns: 1fr;
+  }
 }
 
 .check-row-valid {

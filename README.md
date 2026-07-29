@@ -340,6 +340,10 @@ ne contient plus Tesseract ni ADB. `Dockerfile` construit la plateforme;
 La separation en deux depots pourra se faire apres stabilisation de ce contrat,
 en conservant l'historique Git des dossiers OCR.
 
+Le mode operatoire complet pour relier le PC OCR a une pre-production ou a la
+production, sans faire transiter les donnees par Git, est documente dans
+[`docs/ocr-distant.md`](docs/ocr-distant.md).
+
 ## Base de donnees
 
 Le schema initial est dans `observer/storage/schema.sql`. `docker-compose.yml` fournit uniquement PostgreSQL pour le developpement local. Le mot de passe inclus est un exemple de developpement et ne doit pas etre reutilise en production.

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from observer.import_capture import (
     ImportedScreenshot,
     ImportValidationError,
+    _upsert_daily_raw_snapshots,
     _unique_boss_rankings,
     _write_text_atomic,
     import_lock,
@@ -69,6 +70,28 @@ export const dailyBossRawSnapshots = [
 
 
 class ImportCaptureTests(unittest.TestCase):
+    def test_daily_raw_snapshot_keeps_an_unmatched_detected_name(self) -> None:
+        metric = ExtractedMemberMetrics(
+            player_id="",
+            name="NewPlayer",
+            role="member",
+            power=900_000,
+            donation=500,
+            boss_tries=2,
+            last_activity_days=0,
+            source="members-001.png row 2",
+            match_score=0,
+            raw_name="NewPlayer |",
+        )
+
+        content = _upsert_daily_raw_snapshots(SAMPLE_DATA, {"2026-07-28": [metric]})
+
+        self.assertIn(
+            'rawSnapshotMember("", "member", 900000, 500, 2, 0, '
+            '"members-001.png row 2", "2026-07-28", "NewPlayer")',
+            content,
+        )
+
     def test_read_roster_entries_excludes_departed_members(self) -> None:
         sample = """export const guildRoster = [
   { playerId: "active-1", name: "Active", discordLinked: true },

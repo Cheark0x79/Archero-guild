@@ -249,6 +249,25 @@ test("sortMembers sorts numeric columns and keeps missing values last", () => {
   );
 });
 
+test("sortMembers sorts precise last connection and always keeps missing values last", () => {
+  const rows = [
+    { ...member, name: "NotRecorded", lastActivityDays: null, activityText: null },
+    { ...member, name: "NineHours", playerId: "2", lastActivityDays: 0, activityText: "9 h" },
+    { ...member, name: "Online", playerId: "3", lastActivityDays: 0, activityText: "Online" },
+    { ...member, name: "SeventeenMinutes", playerId: "4", lastActivityDays: 0, activityText: "17 min" },
+    { ...member, name: "OneDayTenHours", playerId: "5", lastActivityDays: 1, activityText: "01d 10h" },
+  ];
+
+  assert.deepEqual(
+    sortMembers(rows, rules, { key: "activity", direction: "asc" }).map((row) => row.name),
+    ["Online", "SeventeenMinutes", "NineHours", "OneDayTenHours", "NotRecorded"],
+  );
+  assert.deepEqual(
+    sortMembers(rows, rules, { key: "activity", direction: "desc" }).map((row) => row.name),
+    ["OneDayTenHours", "NineHours", "SeventeenMinutes", "Online", "NotRecorded"],
+  );
+});
+
 test("sortMembers sorts roles by guild hierarchy", () => {
   const rows = [
     { ...member, name: "Member", role: "member" },

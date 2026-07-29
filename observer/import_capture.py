@@ -631,17 +631,21 @@ def _upsert_daily_raw_snapshots(content: str, daily_metrics: dict[str, list[Extr
     content = _ensure_raw_snapshot_member_helper(content)
     day_blocks: dict[str, str] = {}
     for day, metrics in sorted(daily_metrics.items()):
-        lines = [
-            (
+        lines = []
+        for metric in metrics:
+            unmatched_name = (
+                f", {_js_nullable_string(metric.name or metric.raw_name)}"
+                if not metric.player_id
+                else ""
+            )
+            lines.append(
                 f'    rawSnapshotMember("{metric.player_id}", "{metric.role or "member"}", '
                 f'{_nullable_valid_power(metric.power)}, '
                 f'{metric.donation if metric.donation is not None else "null"}, '
                 f'{metric.boss_tries if metric.boss_tries is not None else "null"}, '
                 f'{metric.last_activity_days if metric.last_activity_days is not None else "null"}, '
-                f'"{metric.source}", "{day}"),'
+                f'"{metric.source}", "{day}"{unmatched_name}),'
             )
-            for metric in metrics
-        ]
         rows = "\n".join(lines)
         day_blocks[day] = f'  {{\n    date: "{day}",\n    rows: [\n{rows}\n    ],\n  }},'
 
@@ -663,9 +667,10 @@ def _ensure_raw_snapshot_member_helper(content: str) -> str:
     if "function rawSnapshotMember(" in content:
         return content
 
-    helper = """function rawSnapshotMember(playerId, role, power, donation, bossAttacks, lastActivityDays, source, seenAt = null) {
+    helper = """function rawSnapshotMember(playerId, role, power, donation, bossAttacks, lastActivityDays, source, seenAt = null, name = null) {
   return {
     playerId,
+    name,
     role,
     power,
     contribution7d: donation,

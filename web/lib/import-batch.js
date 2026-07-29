@@ -38,6 +38,22 @@ export function validateImportBatch(batch, { requirePublishable = false } = {}) 
     batch.bossRankings.forEach((ranking, index) => validateBossRanking(ranking, index, errors));
     rejectDuplicateValues(batch.bossRankings, "rank", "bossRankings", errors);
   }
+  if (
+    Array.isArray(batch.sourceImages)
+    && batch.sourceImages.some((image) => image?.kind === "guild-members" && image.detectedRows > 0)
+    && Array.isArray(batch.members)
+    && batch.members.length === 0
+  ) {
+    errors.push("member screenshots detected rows but members is empty");
+  }
+  if (
+    Array.isArray(batch.sourceImages)
+    && batch.sourceImages.some((image) => image?.kind === "guild-boss" && image.detectedRows > 0)
+    && Array.isArray(batch.bossRankings)
+    && batch.bossRankings.length === 0
+  ) {
+    errors.push("boss screenshots detected rows but bossRankings is empty");
+  }
 
   const quality = batch.quality;
   if (!quality || typeof quality !== "object") {
@@ -79,6 +95,18 @@ function validateMember(member, index, errors) {
   if (!nullableNonNegativeInteger(member.contribution7d)) errors.push(`${prefix}.contribution7d is invalid`);
   if (!nullableIntegerBetween(member.bossAttacks, 0, 10)) errors.push(`${prefix}.bossAttacks is invalid`);
   if (!nullableNonNegativeInteger(member.lastActivityDays)) errors.push(`${prefix}.lastActivityDays is invalid`);
+  if (
+    member
+    && (
+      !isBoundedString(member.role, 1, 32)
+      || !Number.isSafeInteger(member.power)
+      || !Number.isSafeInteger(member.contribution7d)
+      || !Number.isSafeInteger(member.bossAttacks)
+      || !Number.isSafeInteger(member.lastActivityDays)
+    )
+  ) {
+    errors.push(`${prefix} is incomplete and cannot be published`);
+  }
 }
 
 function validateBossRanking(ranking, index, errors) {

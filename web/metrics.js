@@ -86,6 +86,28 @@ export function activityLabel(days, activityText = null) {
   return `${days} days ago`;
 }
 
+export function activityAgeMinutes(days, activityText = null) {
+  const text = typeof activityText === "string" ? activityText.trim().toLowerCase() : "";
+  if (text) {
+    if (["online", "connected", "en ligne"].includes(text)) return 0;
+    if (text === "today" || text === "aujourd'hui") return 24 * 60 - 1;
+    if (text === "yesterday" || text === "hier") return 24 * 60;
+
+    const dayMatch = text.match(/(\d+)\s*(?:d|day|days|jour|jours)\b/);
+    const hourMatch = text.match(/(\d+)\s*(?:h|hour|hours|heure|heures)\b/);
+    const minuteMatch = text.match(/(\d+)\s*(?:m|min|mins|minute|minutes)\b/);
+    if (dayMatch || hourMatch || minuteMatch) {
+      return Number(dayMatch?.[1] ?? 0) * 24 * 60
+        + Number(hourMatch?.[1] ?? 0) * 60
+        + Number(minuteMatch?.[1] ?? 0);
+    }
+  }
+
+  if (days == null) return null;
+  if (days === 0) return 24 * 60 - 1;
+  return days * 24 * 60;
+}
+
 export function dateOnly(value, fallback = null) {
   for (const candidate of [value, fallback]) {
     if (typeof candidate !== "string") continue;
@@ -349,7 +371,7 @@ function sortValue(member, rules, key) {
     case "role":
       return roleRank[member.role] ?? roleRank.member;
     case "activity":
-      return member.lastActivityDays ?? Number.POSITIVE_INFINITY;
+      return activityAgeMinutes(member.lastActivityDays, member.activityText);
     case "donation":
       return member.contribution7d;
     case "bossTries":

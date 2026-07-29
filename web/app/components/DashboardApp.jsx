@@ -29,6 +29,7 @@ import {
   sortMembers,
 } from "../../metrics.js";
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
+import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
@@ -48,9 +49,9 @@ let dashboardDataCachedAt = 0;
 let dashboardDataPromise = null;
 const DASHBOARD_DATA_CACHE_MS = 15_000;
 
-function loadDashboardData() {
+function loadDashboardData({ force = false } = {}) {
   const now = Date.now();
-  if (dashboardDataCache && now - dashboardDataCachedAt < DASHBOARD_DATA_CACHE_MS) {
+  if (!force && dashboardDataCache && now - dashboardDataCachedAt < DASHBOARD_DATA_CACHE_MS) {
     return Promise.resolve(dashboardDataCache);
   }
   if (dashboardDataPromise) return dashboardDataPromise;
@@ -227,16 +228,18 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState({ key: null, direction: "asc" });
   const [detailRanges, setDetailRanges] = useState({ progression: "1w", mi: "1w", donation: "1w" });
+  const [warningActions, setWarningActions] = useState({});
   const [annotations, setAnnotations] = useState(() =>
     Object.fromEntries(members.map((member) => [memberKey(member), { notes: [], warnings: [...(member.warnings ?? [])] }])),
   );
 
   useEffect(() => {
     let cancelled = false;
-    loadDashboardData()
+    loadDashboardData({ force: true })
       .then((payload) => {
         if (cancelled || !payload?.data) return;
         applyDashboardData(payload.data);
+        setWarningActions(payload.data.warningActions ?? {});
         setDataWarning(payload.warning ?? "");
         if (!window.localStorage.getItem(RULES_STORAGE_KEY)) {
           setRules(normalizeRules({ ...defaultRules, currentDate: currentImportDate() }));
@@ -247,7 +250,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialRoute]);
 
   useEffect(() => {
     if (initialSessionRole) return undefined;
@@ -267,6 +270,27 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
   const selectedMember = selectedMemberCandidate;
   const [title, subtitle] = routeMeta[activeRoute];
+
+  async function updateWarningAction(event, nextAction) {
+    const response = await fetch("/api/warning-actions", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        playerId: event.playerId,
+        date: event.date,
+        type: event.type,
+        status: nextAction.status,
+        note: nextAction.note ?? "",
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error ?? "Unable to save warning status.");
+    setWarningActions((current) => ({
+      ...current,
+      [automaticWarningKey(event.playerId, event.date, event.type)]: payload.action,
+    }));
+    return payload.action;
+  }
 
   return (
     <div className="app-shell">
@@ -314,6 +338,8 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             annotations={annotations}
             setAnnotations={setAnnotations}
             sessionRole={sessionRole}
+            warningActions={warningActions}
+            updateWarningAction={updateWarningAction}
           />
         )}
         {activeRoute === "member" && !selectedMember && (
@@ -325,7 +351,15 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           </section>
         )}
         {activeRoute === "rankings" && <Rankings />}
-        {activeRoute === "activity" && <HistoryView annotations={annotations} />}
+        {activeRoute === "activity" && (
+          <HistoryView
+            annotations={annotations}
+            rules={rules}
+            sessionRole={sessionRole}
+            warningActions={warningActions}
+            updateWarningAction={updateWarningAction}
+          />
+        )}
         {activeRoute === "settings" && <RulesView rules={rules} setRules={setRules} />}
       </main>
     </div>
@@ -1195,7 +1229,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
                   ["name", "Name"],
                   ["discord", "Discord"],
                   ["role", "Role"],
-                  ["activity", "Activity"],
+                  ["activity", "Last connection"],
                   ["donation", "Donation"],
                   ["bossTries", "Boss tries"],
                   ["power", "Power"],
@@ -1839,6 +1873,8 @@ function CheckView({ dataVersion }) {
   const [checkMode, setCheckMode] = useState("guild");
   const [sourceSortDirection, setSourceSortDirection] = useState("asc");
   const [checkQuery, setCheckQuery] = useState("");
+  const [manualNames, setManualNames] = useState({});
+  const [nameSaveState, setNameSaveState] = useState({ reviewId: null, error: "" });
   const selectedDay = days[dayIndex] ?? null;
   const rows = selectedDay?.rows ?? [];
   const visibleRows = rows.filter((row) => row.captureType === checkMode && checkRowMatchesQuery(row, checkQuery));
@@ -1896,6 +1932,38 @@ function CheckView({ dataVersion }) {
       else next[key] = { status: "invalid", fields };
       return next;
     });
+  }
+
+  async function saveDetectedName(event, row) {
+    event.preventDefault();
+    if (!selectedDay || nameSaveState.reviewId) return;
+    const observedName = String(manualNames[row.reviewId] ?? "").trim();
+    if (!observedName) {
+      setNameSaveState({ reviewId: null, error: "Enter the name visible on the screenshot." });
+      return;
+    }
+    setNameSaveState({ reviewId: row.reviewId, error: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          action: "rename-unmatched",
+          captureDate: selectedDay.date,
+          source: row.source,
+          observedName,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.member) throw new Error(payload?.error || "OCR name correction failed.");
+      dashboardDataCache = null;
+      window.location.reload();
+    } catch (error) {
+      setNameSaveState({
+        reviewId: null,
+        error: error instanceof Error ? error.message : "OCR name correction failed.",
+      });
+    }
   }
 
   return (
@@ -2007,15 +2075,36 @@ function CheckView({ dataVersion }) {
                       date={selectedDay?.date}
                       isValid={isValid}
                       invalidFields={invalidFields}
+                      disabled={checkMode === "guild" && !row.detectedName}
                       onMarkValid={() => setRowGood(row.reviewId)}
                     />
                   </td>
                   {checkMode === "guild" ? (
                     <>
                       <td>
-                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          <strong>{row.detectedName || "Not detected"}</strong>
-                        </ReviewableValue>
+                        {row.detectedName ? (
+                          <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
+                            <strong>{row.detectedName}</strong>
+                          </ReviewableValue>
+                        ) : (
+                          <form className="check-name-form" onSubmit={(event) => saveDetectedName(event, row)}>
+                            <input
+                              aria-label={`Detected name for ${checkSourceParts(row.source).image} row ${checkSourceParts(row.source).row}`}
+                              onChange={(event) =>
+                                setManualNames((current) => ({ ...current, [row.reviewId]: event.target.value }))
+                              }
+                              placeholder="Enter detected name"
+                              value={manualNames[row.reviewId] ?? ""}
+                            />
+                            <button
+                              className="secondary-button"
+                              disabled={Boolean(nameSaveState.reviewId)}
+                              type="submit"
+                            >
+                              {nameSaveState.reviewId === row.reviewId ? "Saving…" : "Save"}
+                            </button>
+                          </form>
+                        )}
                       </td>
                       <td>
                         <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
@@ -2088,11 +2177,12 @@ function CheckView({ dataVersion }) {
           </tbody>
         </table>
       </div>
+      {nameSaveState.error ? <p className="form-error" role="alert">{nameSaveState.error}</p> : null}
     </section>
   );
 }
 
-function CheckReviewButtons({ label, date, isValid, invalidFields, onMarkValid }) {
+function CheckReviewButtons({ label, date, isValid, invalidFields, disabled = false, onMarkValid }) {
   const badLabels = Object.keys(invalidFields).map(checkFieldLabel);
   return (
     <div className="check-toggle-group">
@@ -2101,6 +2191,7 @@ function CheckReviewButtons({ label, date, isValid, invalidFields, onMarkValid }
         type="button"
         aria-label={`${isValid ? "Uncheck good" : "Mark good"} ${label} on ${date}`}
         aria-pressed={isValid}
+        disabled={disabled}
         title={isValid ? "Uncheck good" : "Mark good"}
         onClick={onMarkValid}
       >
@@ -2178,13 +2269,44 @@ function MemberRow({ member, rules }) {
   );
 }
 
-function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnotations, sessionRole }) {
-  const evaluation = evaluateMember(member, rules);
-  const history = dailyHistory(member);
+function MemberDetail({
+  member,
+  rules,
+  ranges,
+  setRanges,
+  annotations,
+  setAnnotations,
+  sessionRole,
+  warningActions,
+  updateWarningAction,
+}) {
+  const rawEvaluation = evaluateMember(member, rules);
+  const history = evaluateWarningHistory(dailyHistory(member), rules, member);
+  const automaticWarnings = history.flatMap((row) =>
+    row.warnings.map((warning) => ({
+      ...warning,
+      date: row.date,
+      id: `${row.date}:${warning.type}`,
+      playerId: member.playerId,
+      action: warningActions[automaticWarningKey(member.playerId, row.date, warning.type)] ?? defaultWarningAction(),
+    })),
+  ).sort((left, right) => right.date.localeCompare(left.date));
+  const latestWarningDate = history.at(-1)?.date;
+  const latestAutomaticWarnings = automaticWarnings.filter((warning) => warning.date === latestWarningDate);
+  const actionableWarnings = latestAutomaticWarnings.filter((warning) => !warningActionClosed(warning.action?.status));
+  const evaluation = latestAutomaticWarnings.length > 0 && actionableWarnings.length === 0
+    ? {
+        status: latestAutomaticWarnings.some((warning) => warning.action?.status === "excused") ? "Excused" : "Active",
+        severity: "positive",
+        flags: [],
+      }
+    : rawEvaluation;
   const currentHistory = history.find((row) => row.date === currentImportDate());
   const weeklyHistory = filterHistoryByRange(history, "1w");
   const memberAnnotations = annotations[memberKey(member)] ?? { notes: [], warnings: [] };
-  const needs = evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
+  const needs = latestAutomaticWarnings.length > 0
+    ? actionableWarnings.map((warning) => ({ label: warning.label, severity: warning.severity, detail: warning.detail }))
+    : evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
   const [playerIdDraft, setPlayerIdDraft] = useState("");
   const [identitySaveState, setIdentitySaveState] = useState({ saving: false, error: "" });
   const [statusSaveState, setStatusSaveState] = useState({ saving: false, error: "" });
@@ -2391,6 +2513,12 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
           <PanelHeading title="Daily history" subtitle="Captured days in the current week." />
           <HistoryTable rows={weeklyHistory} />
         </section>
+        <AutomaticWarningHistory
+          events={automaticWarnings}
+          title="Automatic warning history"
+          canManage={sessionRole === "admin"}
+          onUpdate={updateWarningAction}
+        />
         <AnnotationPanel
           title="Warnings"
           subtitle="Officer-tracked behavior issues"
@@ -2483,12 +2611,22 @@ function Rankings() {
   );
 }
 
-function HistoryView({ annotations }) {
+function HistoryView({ annotations, rules, sessionRole, warningActions, updateWarningAction }) {
   const currentMembers = currentMembersList();
   const latestWeeklyDonation = latestWeeklyDonationLeaders(12);
   const maxContribution = Math.max(...latestWeeklyDonation.rows.map((member) => member.peak ?? 0), 1);
   const rows = latestWeeklyDonation.rows;
   const warnings = currentMembers.flatMap((member) => (annotations[memberKey(member)]?.warnings ?? []).map((warning) => ({ member, warning })));
+  const automaticWarnings = currentMembers
+    .flatMap((member) =>
+      warningHistoryEvents(dailyHistory(member), rules, member).map((warning) => ({
+        ...warning,
+        member,
+        playerId: member.playerId,
+        action: warningActions[automaticWarningKey(member.playerId, warning.date, warning.type)] ?? defaultWarningAction(),
+      })),
+    )
+    .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
   return (
     <div className="dashboard-grid">
       <section className="panel chart-panel wide">
@@ -2513,8 +2651,15 @@ function HistoryView({ annotations }) {
         <PanelHeading title="Announced absences" subtitle="Excused members are not pushed into the watch list" />
         <p className="muted">No announced absences recorded yet.</p>
       </section>
+      <AutomaticWarningHistory
+        events={automaticWarnings}
+        title="Automatic warning history"
+        showMember
+        canManage={sessionRole === "admin"}
+        onUpdate={updateWarningAction}
+      />
       <section className="panel">
-        <PanelHeading title="Warnings" subtitle="Officer-tracked behavior notes" />
+        <PanelHeading title="Officer warnings" subtitle="Manual behavior notes" />
         <div className="event-list">
           {warnings.length === 0 ? (
             <p className="muted">No warnings recorded yet.</p>
@@ -2814,6 +2959,7 @@ function HistoryTable({ rows }) {
             <th>Boss tries</th>
             <th>Boss damage</th>
             <th>Activity</th>
+            <th>Warnings</th>
             <th>Source</th>
           </tr>
         </thead>
@@ -2835,6 +2981,15 @@ function HistoryTable({ rows }) {
               </td>
               <td>{row.activity}</td>
               <td>
+                <div className="warning-tag-list">
+                  {(row.warnings ?? []).length > 0
+                    ? row.warnings.map((warning) => (
+                        <StatusPill label={warning.label} severity={warning.severity} key={warning.type} />
+                      ))
+                    : <span className="muted">—</span>}
+                </div>
+              </td>
+              <td>
                 <span className="muted">{row.source}</span>
               </td>
             </tr>
@@ -2842,6 +2997,103 @@ function HistoryTable({ rows }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function AutomaticWarningHistory({ events, title, showMember = false, canManage = false, onUpdate }) {
+  const visibleEvents = events.slice(0, 100);
+  return (
+    <section className="panel wide">
+      <PanelHeading
+        title={title}
+        subtitle={`${events.length} rule warning(s) recorded; they remain visible after the current status is resolved.`}
+      />
+      <div className="event-list">
+        {events.length === 0 ? (
+          <p className="muted">No automatic warnings recorded yet.</p>
+        ) : (
+          visibleEvents.map((event) => (
+            <AutomaticWarningEvent
+              event={event}
+              showMember={showMember}
+              canManage={canManage}
+              onUpdate={onUpdate}
+              key={`${showMember ? memberKey(event.member) : "member"}-${event.id}`}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function AutomaticWarningEvent({ event, showMember, canManage, onUpdate }) {
+  const action = event.action ?? defaultWarningAction();
+  const [note, setNote] = useState(action.note ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setNote(action.note ?? "");
+  }, [action.note]);
+
+  async function save(nextAction) {
+    if (!canManage || !onUpdate || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onUpdate(event, nextAction);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save warning status.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="event-item warning-history-item">
+      <header>
+        <strong>{showMember ? event.member.name : event.label}</strong>
+        <span className="muted">{event.date}</span>
+      </header>
+      <div className="warning-history-labels">
+        {showMember ? <StatusPill label={event.label} severity={event.severity} /> : null}
+        <StatusPill label={warningActionLabel(action.status)} severity={warningActionSeverity(action.status)} />
+      </div>
+      <span>{event.detail}</span>
+      {canManage ? (
+        <div className="warning-action-editor">
+          <label>
+            Officer follow-up
+            <select
+              value={action.status}
+              disabled={saving}
+              onChange={(changeEvent) => save({ ...action, status: changeEvent.target.value, note })}
+            >
+              <option value="pending">To review</option>
+              <option value="noted">Noted</option>
+              <option value="contacted">Member contacted</option>
+              <option value="excused">Excused / announced</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
+          <label>
+            Note
+            <input
+              value={note}
+              maxLength={500}
+              placeholder="Optional officer note"
+              onChange={(changeEvent) => setNote(changeEvent.target.value)}
+            />
+          </label>
+          <button type="button" className="secondary-button" disabled={saving} onClick={() => save({ ...action, note })}>
+            {saving ? "Saving…" : "Save note"}
+          </button>
+        </div>
+      ) : action.note ? <small className="muted">{action.note}</small> : null}
+      {action.updatedAt ? <small className="muted">Follow-up updated {formatDateTime(action.updatedAt)}</small> : null}
+      {error ? <small className="form-error">{error}</small> : null}
+    </article>
   );
 }
 
@@ -3997,6 +4249,34 @@ function needDetail(flag, member, rules) {
 
 function annotationValueKey(type) {
   return type === "warnings" ? "reason" : "note";
+}
+
+function automaticWarningKey(playerId, date, type) {
+  return `${playerId}:${date}:${type}`;
+}
+
+function defaultWarningAction() {
+  return { status: "pending", note: "", updatedAt: null };
+}
+
+function warningActionLabel(status) {
+  return {
+    pending: "To review",
+    noted: "Noted",
+    contacted: "Member contacted",
+    excused: "Excused",
+    resolved: "Resolved",
+  }[status] ?? "To review";
+}
+
+function warningActionSeverity(status) {
+  if (status === "excused" || status === "resolved") return "positive";
+  if (status === "contacted") return "warning";
+  return "neutral";
+}
+
+function warningActionClosed(status) {
+  return status === "excused" || status === "resolved";
 }
 
 function todayLabel() {

@@ -81,6 +81,59 @@ def set_member_status(
     return {"playerId": player_id, "status": status}
 
 
+def rename_unmatched_member(capture_date: str, source: str, observed_name: str) -> dict[str, str]:
+    try:
+        from datetime import date
+
+        date.fromisoformat(capture_date)
+    except ValueError as exc:
+        raise ValueError("capture date must use YYYY-MM-DD") from exc
+    clean_source = " ".join(source.strip().split())
+    clean_name = " ".join(observed_name.strip().split())
+    if not clean_source or len(clean_source) > 240:
+        raise ValueError("source is required")
+    if not clean_name or len(clean_name) > 120:
+        raise ValueError("observed name is required")
+
+    dsn = database_url_from_env()
+    if not dsn:
+        raise ValueError("manual OCR name correction requires PostgreSQL")
+
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    with psycopg.connect(dsn) as connection:
+        with connection.transaction():
+            rows = connection.execute(
+                """
+                SELECT u.id, u.raw_payload
+                FROM unmatched_member_metrics u
+                JOIN guild_snapshots gs ON gs.id = u.snapshot_id
+                WHERE gs.capture_date = %s
+                  AND trim(u.verification_note) = %s
+                """,
+                (capture_date, clean_source),
+            ).fetchall()
+            if len(rows) != 1:
+                raise ValueError(
+                    f"expected one unmatched member for {capture_date} / {clean_source}, found {len(rows)}"
+                )
+            row_id, raw_payload = rows[0]
+            payload = raw_payload if isinstance(raw_payload, dict) else {}
+            payload = {**payload, "name": clean_name}
+            connection.execute(
+                """
+                UPDATE unmatched_member_metrics
+                SET observed_name = %s,
+                    normalized_name = %s,
+                    raw_payload = %s
+                WHERE id = %s
+                """,
+                (clean_name, normalize_name(clean_name), Jsonb(payload), row_id),
+            )
+    return {"captureDate": capture_date, "source": clean_source, "observedName": clean_name}
+
+
 def _list_database_links(dsn: str) -> list[dict[str, Any]]:
     import psycopg
     from psycopg.rows import dict_row
@@ -276,18 +329,30 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument("player_id")
     status_parser.add_argument("status", choices=sorted(_MEMBER_STATUSES))
     status_parser.add_argument("observed_name", nargs="?", default="")
+    rename_parser = subparsers.add_parser("rename-unmatched")
+    rename_parser.add_argument("capture_date")
+    rename_parser.add_argument("source")
+    rename_parser.add_argument("observed_name")
     args = parser.parse_args(argv)
 
     if args.command == "list":
         payload: object = {"links": list_identity_links()}
     elif args.command == "assign":
         payload = {"link": assign_identity(args.observed_name, args.player_id)}
-    else:
+    elif args.command == "status":
         payload = {
             "member": set_member_status(
                 args.player_id,
                 args.status,
                 observed_name=args.observed_name,
+            )
+        }
+    else:
+        payload = {
+            "member": rename_unmatched_member(
+                args.capture_date,
+                args.source,
+                args.observed_name,
             )
         }
     print(json.dumps(payload, ensure_ascii=False))

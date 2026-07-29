@@ -296,11 +296,15 @@ def _select_power_cluster(candidates: list[tuple[int, bool, bool]]) -> int:
 
 
 def _read_donation(image: object, row: MemberRow, pytesseract: object) -> int | None:
+    # Keep the crop tightly around the digits. Wider crops include the green
+    # donation icon on the left and the empty progress bar on the right. Those
+    # shapes made Tesseract turn 850/590 into 0 and 550 into 5500.
     crops = [
-        (0.755, 0.58, 0.15, 0.34),
-        (0.745, 0.56, 0.17, 0.38),
-        (0.72, 0.56, 0.20, 0.38),
-        (0.700, 0.58, 0.24, 0.34),
+        (0.715, 0.56, 0.12, 0.38),
+        (0.720, 0.56, 0.12, 0.38),
+        (0.715, 0.58, 0.13, 0.34),
+        (0.720, 0.58, 0.13, 0.34),
+        (0.710, 0.54, 0.14, 0.42),
     ]
     candidates: list[int] = []
     for crop in crops:
@@ -477,11 +481,11 @@ def _contains_cjk(value: str) -> bool:
 
 
 def _should_try_cjk_ocr(raw_names: list[str], roster: list[RosterEntry]) -> bool:
-    if not any(_contains_cjk(entry.name) for entry in roster):
-        return False
-    observed_name = _select_observed_name(raw_names)
-    tokens = observed_name.split()
-    return len(tokens) >= 2 or _contains_cjk(observed_name)
+    # The English model can turn an entire Chinese name into one plausible
+    # Latin token. Do not use that noisy token to decide whether the Chinese
+    # model is allowed to run: once regular matching failed, the presence of a
+    # CJK roster entry is the reliable signal.
+    return any(_contains_cjk(entry.name) for entry in roster)
 
 
 def _raw_name_has_signal(value: str) -> bool:

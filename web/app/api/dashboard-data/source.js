@@ -13,6 +13,7 @@ import {
   ocrQueue,
 } from "../../../sample-data.js";
 import { projectRoot, runObserverModule } from "../data/actions.js";
+import { readWarningActions } from "../../../lib/warning-actions.js";
 
 export async function loadDashboardData() {
   const fallback = await localPayload();
@@ -144,6 +145,7 @@ async function localPayload() {
     rules,
     ocrQueue,
     identityLinks: await localIdentityLinks(),
+    warningActions: await readWarningActions(projectRoot()),
   };
 }
 
@@ -159,6 +161,7 @@ export function mergeWithLocalFallback(data, fallback) {
     rules: { ...fallback.rules, ...(data.rules ?? {}) },
     ocrQueue: arrayOrFallback(data.ocrQueue, fallback.ocrQueue),
     identityLinks: mergeIdentityLinks(data.identityLinks, fallback.identityLinks),
+    warningActions: fallback.warningActions,
   };
 }
 

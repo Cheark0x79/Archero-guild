@@ -98,6 +98,31 @@ test("rules and violations expose actionable guild compliance", () => {
   assert.deepEqual(result.items[0].evaluation.flags, ["Game absence", "Low contribution", "Missed boss"]);
 });
 
+test("an excused warning stays in history but leaves the actionable watchlist", () => {
+  const excusedData = {
+    ...data,
+    memberSnapshots: [{ ...data.memberSnapshots[0], contribution7d: 100 }],
+    dailyRawSnapshots: [{
+      date: "2026-07-22",
+      rows: [{ playerId: "123", power: 900000, contribution7d: 100, bossAttacks: 2, lastActivityDays: 0 }],
+    }],
+    warningActions: {
+      "123:2026-07-22:low_contribution": {
+        playerId: "123",
+        date: "2026-07-22",
+        type: "low_contribution",
+        status: "excused",
+        note: "Absence announced.",
+        updatedAt: "2026-07-22T12:00:00.000Z",
+      },
+    },
+  };
+  const result = violationsFromData(excusedData, new URLSearchParams());
+  assert.equal(result.items.length, 0);
+  assert.equal(result.history.length, 1);
+  assert.equal(result.history[0].action.status, "excused");
+});
+
 test("member rankings support power, contribution, attacks, deltas, and activity", () => {
   const result = memberRankingsFromData(data, new URLSearchParams({ metric: "power", limit: "5" }));
   assert.equal(result.metric, "power");
@@ -159,13 +184,38 @@ test("member resolver accepts IDs, normalized names, aliases, and typos", () => 
 test("member history and boss results can be filtered", () => {
   const historicalData = {
     ...data,
+    rules: { ...data.rules, minPowerGrowth14dPercent: 1 },
     dailyRawSnapshots: [
-      { date: "2026-07-21", rows: [{ playerId: "123", power: 800000, contribution7d: 900, bossAttacks: 1 }] },
+      { date: "2026-07-01", rows: [{ playerId: "123", power: 800000, contribution7d: 900, bossAttacks: 2, lastActivityDays: 0 }] },
+      { date: "2026-07-21", rows: [{ playerId: "123", power: 800000, contribution7d: 100, bossAttacks: 1, lastActivityDays: 5 }] },
       { date: "2026-07-22", rows: [{ playerId: "123", power: 900000, contribution7d: 1200, bossAttacks: 2 }] },
     ],
   };
   const history = memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-07-22" }));
   assert.deepEqual(history.items.map((row) => row.date), ["2026-07-22"]);
+  assert.deepEqual(history.items[0].warnings, []);
+  const fullHistory = memberHistoryFromData(historicalData, "123", new URLSearchParams());
+  assert.deepEqual(
+    fullHistory.items.find((row) => row.date === "2026-07-21").warnings.map((warning) => warning.label),
+    ["Game absence", "Low contribution", "Low progression", "Missed boss"],
+  );
+  assert.equal(fullHistory.warningSummary.total, 4);
+
+  const violations = violationsFromData(historicalData, new URLSearchParams());
+  assert.equal(violations.history.some((event) => event.date === "2026-07-21" && event.label === "Missed boss"), true);
+  assert.equal(violations.historyPagination.total, 4);
+  assert.equal(violations.historyPagination.hasMore, false);
+  const limitedViolations = violationsFromData(historicalData, new URLSearchParams({
+    playerId: "123",
+    from: "2026-07-21",
+    to: "2026-07-21",
+    limit: "2",
+  }));
+  assert.equal(limitedViolations.history.length, 2);
+  assert.equal(limitedViolations.historyPagination.total, 4);
+  assert.equal(limitedViolations.historyPagination.hasMore, true);
+  assert.equal(violationsFromData(historicalData, new URLSearchParams({ limit: "0" })).error.code, "invalid_limit");
+  assert.equal(violationsFromData(historicalData, new URLSearchParams({ from: "2026-07-22", to: "2026-07-21" })).error.code, "invalid_date_range");
 
   const bossDays = bossDaysFromData(data, new URLSearchParams({ date: "2026-07-21" }));
   assert.equal(bossDays.items[0].boss.key, "fire-dragon");

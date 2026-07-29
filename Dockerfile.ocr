@@ -20,4 +20,4 @@ COPY observer ./observer
 COPY config ./config
 COPY contracts ./contracts
 
-ENTRYPOINT ["python", "-m", "observer.ocr.batch"]
+ENTRYPOINT ["python", "-m", "observer.ocr.remote"]

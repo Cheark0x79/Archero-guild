@@ -186,6 +186,13 @@ class GuildBossDamageTests(unittest.TestCase):
 
         self.assertIsNone(_match_roster_name("ANXUMUK", [Entry()]))
 
+    def test_rejects_short_latin_noise_before_cjk_fallback(self) -> None:
+        class Entry:
+            player_id = "1"
+            name = "SHaze"
+
+        self.assertIsNone(_match_roster_name("SHAR", [Entry()]))
+
     def test_does_not_match_a_short_name_fragment(self) -> None:
         class Entry:
             player_id = "1"

@@ -12,6 +12,7 @@ from observer.storage.member_identities import (
     assign_identity,
     list_identity_links,
     normalize_name,
+    rename_unmatched_member,
     set_member_status,
 )
 
@@ -47,6 +48,14 @@ class MemberIdentityTests(unittest.TestCase):
 
             set_member_status("119999999", "left", observed_name="Pignouf", data_path=path)
             self.assertEqual(list_identity_links(data_path=path)[0]["status"], "left")
+
+    def test_manual_ocr_name_correction_validates_its_target(self) -> None:
+        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
+            rename_unmatched_member("28-07-2026", "members-001.png row 2", "YYLsea")
+        with self.assertRaisesRegex(ValueError, "source is required"):
+            rename_unmatched_member("2026-07-28", " ", "YYLsea")
+        with self.assertRaisesRegex(ValueError, "observed name is required"):
+            rename_unmatched_member("2026-07-28", "members-001.png row 2", " ")
 
 
 if __name__ == "__main__":

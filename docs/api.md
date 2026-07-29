@@ -86,7 +86,7 @@ Résout un membre avec `q` (obligatoire) depuis un Player ID, un nom normalisé,
 
 ### `GET /api/v1/members/{playerId}/history`
 
-Historique quotidien des métriques d’un membre. Les paramètres `from` et `to` utilisent le format `YYYY-MM-DD`.
+Historique quotidien des métriques d’un membre. Chaque journée contient aussi les alertes métier calculées (`game_absence`, `low_contribution`, `low_progression`, `missed_boss`), leur suivi d’officier dans `action`, et la réponse fournit `warningSummary`. Les statuts de suivi sont `pending`, `noted`, `contacted`, `excused` et `resolved`. Les paramètres `from` et `to` utilisent le format `YYYY-MM-DD`.
 
 ### `GET /api/v1/members/{playerId}/bosses`
 
@@ -94,7 +94,7 @@ Retourne le record global, le classement hebdomadaire et, pour chaque boss, le m
 
 ### `GET /api/v1/violations`
 
-Liste les membres dont l’évaluation est `warning` ou `danger`, avec un résumé par règle enfreinte. Filtres : `severity=warning|danger` et `flag`.
+Retourne séparément la watchlist actuelle (`members`) et l’historique des alertes automatiques (`history`). Une alerte marquée `excused` ou `resolved` disparaît de la watchlist actuelle mais reste dans l’historique avec sa date, la note et le statut de suivi. Filtres : `severity=warning|danger`, `flag`, `playerId`, `from`, `to` et `limit` (1 à 1000, 200 par défaut). `historyPagination` indique le total et s’il reste des résultats.
 
 ### `GET /api/v1/rankings/members`
 

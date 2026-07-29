@@ -12,11 +12,27 @@ const endpoints = [
   endpoint("Guild", "GET", "/api/v1/rules", "Guild rules", "Thresholds used for contributions, activity, progression, and bosses.", true, {}, {
     maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2, memberCapacity: 40,
   }),
-  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Members with a warning or critical violation.", true, {
-    severity: "[optional query] warning | danger", flag: "[optional query] absence | contribution | boss",
+  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Current violations and durable history of automatic rule warnings.", true, {
+    severity: "[optional query] warning | danger",
+    flag: "[optional query] absence | contribution | progression | boss",
+    playerId: "[optional query] member Player ID for warning history",
+    from: "[optional query] earliest history date in YYYY-MM-DD format",
+    to: "[optional query] latest history date in YYYY-MM-DD format",
+    limit: "[optional query] 1–1000 history events · default: 200",
   }, {
     summary: { total: 5, warning: 3, danger: 2 },
     members: [{ playerId: "119974403", name: "Ac1s", severity: "warning", flags: ["Low contribution"] }],
+    history: [{
+      date: "2026-07-21",
+      playerId: "119974403",
+      name: "Ac1s",
+      type: "missed_boss",
+      label: "Missed boss",
+      value: 1,
+      threshold: 2,
+      action: { status: "contacted", note: "Discord message sent.", updatedAt: "2026-07-21T12:00:00.000Z" },
+    }],
+    historyPagination: { limit: 200, total: 12, hasMore: false },
   }),
   endpoint("Members", "GET", "/api/v1/members", "List members", "Paginated list and search for current or former members.", true, {
     q: "[optional query] name or Player ID",
@@ -41,13 +57,14 @@ const endpoints = [
     metrics: { power: 10550000, contribution7d: 2280, bossAttacks: 2 },
     evaluation: { status: "Active", severity: "positive", flags: [] },
   }),
-  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily history of a member's metrics.", true, {
+  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily metrics and durable automatic warning history.", true, {
     playerId: "[required path] member Player ID",
     from: "[optional query] earliest date in YYYY-MM-DD format",
     to: "[optional query] latest date in YYYY-MM-DD format",
   }, {
     playerId: "119934456",
-    items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2 }],
+    items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2, warnings: [] }],
+    warningSummary: { total: 4, byType: { missed_boss: 1 }, lastWarningAt: "2026-07-21" },
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participation, and guild rank for each of the seven bosses.", true, {
     playerId: "[required path] member Player ID",
