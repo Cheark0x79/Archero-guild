@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 
 import { dailyBossRawSnapshots, dailyRawSnapshots, guildRoster, memberSnapshots } from "../sample-data.js";
-
-const reviews = JSON.parse(await fs.readFile(new URL("../../data/reviews.json", import.meta.url), "utf8"));
 
 test("guild roster does not contain duplicate active player ids", () => {
   const ids = guildRoster.filter((member) => member.playerId && !["kicked", "left", "inactive"].includes(member.status)).map((member) => member.playerId);
@@ -23,8 +20,6 @@ test("latest member snapshots match the latest raw guild import rows", () => {
       continue;
     }
     for (const key of ["power", "contribution7d", "bossAttacks"]) {
-      const review = reviews[`${latest.date}:${member.playerId}`];
-      if (review?.status === "invalid" && review.fields?.[key]) continue;
       if (member[key] !== raw[key]) mismatches.push(`${member.playerId}: ${key} ${member[key]} != ${raw[key]}`);
     }
   }
