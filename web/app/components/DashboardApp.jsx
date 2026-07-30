@@ -2438,7 +2438,7 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
 function RulesView({ rules, setRules }) {
   const ruleRows = [
     ["maxInactiveDays", "Absent", "days without activity", "High alert", "number"],
-    ["minContribution7d", "Watch", "minimum 7-day donation", "Medium alert", "number"],
+    ["minContribution7d", "Low donation", "minimum 7-day donation", "Medium alert", "number"],
     ["minPowerGrowth14dPercent", "Low progression", "minimum 14-day power growth %", "Medium alert", "number"],
     ["minBossTries", "Missed boss", "minimum boss tries per event day", "High alert", "number"],
     ["newMemberGraceDays", "New member", "grace period in days", "Rule pause", "number"],
@@ -2740,6 +2740,18 @@ function AutomaticWarningEvent({ event, showMember, canManage, onUpdate }) {
       <span>{event.detail}</span>
       {canManage ? (
         <div className="warning-action-editor">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={saving}
+            onClick={() => save({
+              ...action,
+              status: action.status === "ignored" ? "pending" : "ignored",
+              note,
+            })}
+          >
+            {saving ? "Saving…" : action.status === "ignored" ? "Restore warning" : "Ignore warning"}
+          </button>
           <label>
             Officer follow-up
             <select
@@ -2752,6 +2764,7 @@ function AutomaticWarningEvent({ event, showMember, canManage, onUpdate }) {
               <option value="contacted">Member contacted</option>
               <option value="excused">Excused / announced</option>
               <option value="resolved">Resolved</option>
+              <option value="ignored">Ignored</option>
             </select>
           </label>
           <label>
@@ -2936,18 +2949,34 @@ function useStoredRules() {
   const [rules, setRules] = useState(initialRules);
   const hydrated = useRef(false);
   useEffect(() => {
+    let browserRules = initialRules;
     try {
       const stored = JSON.parse(localStorage.getItem(RULES_STORAGE_KEY) ?? "{}");
-      setRules(normalizeRules({ ...defaultRules, ...stored, currentDate: currentImportDate() }));
+      browserRules = normalizeRules({ ...defaultRules, ...stored, currentDate: currentImportDate() });
+      setRules(browserRules);
     } catch {
       setRules(initialRules);
     }
     let active = true;
     fetch("/api/data/rules")
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => {
+      .then(async (payload) => {
         if (active && payload?.rules) {
           setRules(normalizeRules({ ...defaultRules, ...payload.rules, currentDate: currentImportDate() }));
+          return;
+        }
+        if (active && payload?.ok && window.location.pathname.startsWith("/admin")) {
+          const { currentDate, ...persistedRules } = browserRules;
+          const response = await fetch("/api/data/rules", {
+            method: "PUT",
+            headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" },
+            body: JSON.stringify({ rules: persistedRules }),
+          });
+          if (!response.ok) return;
+          const saved = await response.json();
+          if (active && saved?.rules) {
+            setRules(normalizeRules({ ...defaultRules, ...saved.rules, currentDate: currentImportDate() }));
+          }
         }
       })
       .catch(() => {})
@@ -3689,17 +3718,18 @@ function warningActionLabel(status) {
     contacted: "Member contacted",
     excused: "Excused",
     resolved: "Resolved",
+    ignored: "Ignored",
   }[status] ?? "To review";
 }
 
 function warningActionSeverity(status) {
-  if (status === "excused" || status === "resolved") return "positive";
+  if (status === "excused" || status === "resolved" || status === "ignored") return "positive";
   if (status === "contacted") return "warning";
   return "neutral";
 }
 
 function warningActionClosed(status) {
-  return status === "excused" || status === "resolved";
+  return status === "excused" || status === "resolved" || status === "ignored";
 }
 
 function todayLabel() {

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export const WARNING_ACTION_STATUSES = new Set(["pending", "noted", "contacted", "excused", "resolved"]);
+export const WARNING_ACTION_STATUSES = new Set(["pending", "noted", "contacted", "excused", "resolved", "ignored"]);
 export const WARNING_TYPES = new Set(["game_absence", "low_contribution", "low_progression", "missed_boss"]);
 
 export function warningActionKey(playerId, date, type) {

@@ -50,7 +50,7 @@ demonstration mode and an API key. They cover:
 - exact Player ID, normalized-name, alias, and typo resolution;
 - missing resolver query;
 - existing and unknown member details;
-- violation filtering and invalid severity;
+- warning filtering by concrete warning type;
 - ascending and descending member rankings;
 - invalid ranking metrics;
 - boss results filtered by date and player;

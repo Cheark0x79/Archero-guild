@@ -111,8 +111,25 @@ test("rules and violations expose actionable guild compliance", () => {
     memberSnapshots: [{ ...data.memberSnapshots[0], contribution7d: 100, bossAttacks: 0, lastActivityDays: 5 }],
   };
   const result = violationsFromData(violatingData, new URLSearchParams());
-  assert.equal(result.summary.total, 1);
-  assert.deepEqual(result.items[0].evaluation.flags, ["Game absence", "Low contribution", "Missed boss"]);
+  assert.equal(result.summary.totalMembers, 1);
+  assert.deepEqual(result.items[0], {
+    playerId: "123",
+    name: "Alice",
+    lastSeenAt: "2026-07-22",
+    evaluation: {
+      status: "Absent",
+      warnings: [
+        { type: "game_absence", label: "Game absence" },
+        { type: "low_contribution", label: "Low contribution" },
+        { type: "missed_boss", label: "Missed boss" },
+      ],
+    },
+  });
+  assert.deepEqual(result.summary.warningCountsByType, {
+    game_absence: 1,
+    low_contribution: 1,
+    missed_boss: 1,
+  });
 });
 
 test("warning endpoints fail explicitly when evaluation rules are missing", () => {
@@ -147,6 +164,30 @@ test("an excused warning stays in history but leaves the actionable watchlist", 
   assert.equal(result.items.length, 0);
   assert.equal(result.history.length, 1);
   assert.equal(result.history[0].action.status, "excused");
+});
+
+test("an ignored warning no longer counts in the current list or ranking", () => {
+  const ignoredData = {
+    ...data,
+    memberSnapshots: [{ ...data.memberSnapshots[0], contribution7d: 100 }],
+    dailyRawSnapshots: [{
+      date: "2026-07-22",
+      rows: [{ playerId: "123", power: 900000, contribution7d: 100, bossAttacks: 2, lastActivityDays: 0 }],
+    }],
+    warningActions: {
+      "123:2026-07-22:low_contribution": {
+        playerId: "123",
+        date: "2026-07-22",
+        type: "low_contribution",
+        status: "ignored",
+        note: "",
+        updatedAt: "2026-07-22T12:00:00.000Z",
+      },
+    },
+  };
+
+  assert.equal(violationsFromData(ignoredData, new URLSearchParams()).items.length, 0);
+  assert.equal(warningRankingsFromData(ignoredData, new URLSearchParams()).rankings.length, 0);
 });
 
 test("member rankings support power, contribution, attacks, deltas, and activity", () => {
@@ -237,7 +278,7 @@ test("member history and boss results can be filtered", () => {
 
   const violations = violationsFromData(historicalData, new URLSearchParams());
   assert.equal(violations.history.some((event) => event.date === "2026-07-21" && event.label === "Missed boss"), true);
-  assert.equal(violations.historyPagination.total, 4);
+  assert.equal(violations.historyPagination.totalWarnings, 4);
   assert.equal(violations.historyPagination.hasMore, false);
   const limitedViolations = violationsFromData(historicalData, new URLSearchParams({
     playerId: "123",
@@ -246,7 +287,7 @@ test("member history and boss results can be filtered", () => {
     limit: "2",
   }));
   assert.equal(limitedViolations.history.length, 2);
-  assert.equal(limitedViolations.historyPagination.total, 4);
+  assert.equal(limitedViolations.historyPagination.totalWarnings, 4);
   assert.equal(limitedViolations.historyPagination.hasMore, true);
   assert.equal(violationsFromData(historicalData, new URLSearchParams({ limit: "0" })).error.code, "invalid_limit");
   assert.equal(violationsFromData(historicalData, new URLSearchParams({ from: "2026-07-22", to: "2026-07-21" })).error.code, "invalid_date_range");
@@ -288,23 +329,31 @@ test("warning list, ranking, and member detail expose current and historical dat
     type: "missed_boss",
     scope: "current",
   }));
-  assert.equal(currentBoss.summary.total, 1);
-  assert.equal(currentBoss.items[0].playerId, "123");
-  assert.equal(currentBoss.items[0].value, 0);
+  assert.equal(currentBoss.summary.totalWarnings, 1);
+  assert.equal(currentBoss.warnings[0].playerId, "123");
+  assert.equal(currentBoss.warnings[0].value, 0);
 
   const history = warningsFromData(warningData, new URLSearchParams({
     scope: "history",
     from: "2026-07-21",
   }));
-  assert.equal(history.summary.total, 8);
+  assert.equal(history.summary.totalWarnings, 8);
+  assert.equal("danger" in history.summary, false);
+  assert.equal(history.warnings.every((event) => !("severity" in event)), true);
   assert.equal(history.pagination.hasMore, false);
 
   const ranking = warningRankingsFromData(warningData, new URLSearchParams());
-  assert.equal(ranking.scope, "history");
-  assert.equal(ranking.rows[0].playerId, "123");
-  assert.equal(ranking.rows[0].total, 6);
-  assert.equal(ranking.rows[1].playerId, "789");
-  assert.equal(ranking.rows[1].total, 2);
+  assert.deepEqual(Object.keys(ranking).sort(), ["rankings", "totalMembers"]);
+  assert.equal(ranking.rankings[0].playerId, "123");
+  assert.equal(ranking.rankings[0].totalWarnings, 6);
+  assert.deepEqual(
+    Object.keys(ranking.rankings[0]).sort(),
+    ["lastWarningAt", "name", "playerId", "rank", "totalWarnings", "warningCountsByType"],
+  );
+  assert.equal("danger" in ranking.rankings[0], false);
+  assert.equal("warning" in ranking.rankings[0], false);
+  assert.equal(ranking.rankings[1].playerId, "789");
+  assert.equal(ranking.rankings[1].totalWarnings, 2);
 
   const violations = violationsFromData(warningData, new URLSearchParams({
     type: "missed_boss",
@@ -313,12 +362,18 @@ test("warning list, ranking, and member detail expose current and historical dat
   assert.equal(violations.items.every((member) => member.playerId === "123"), true);
   assert.equal(violations.history.length, 2);
   assert.equal(violations.history.every((event) => event.type === "missed_boss" && event.playerId === "123"), true);
-  assert.equal(violations.warningSummary.total, 2);
+  assert.equal(violations.history.every((event) => !("severity" in event)), true);
+  assert.equal("danger" in violations.summary, false);
+  assert.equal(violations.warningSummary.totalWarnings, 2);
 
   const memberWarnings = memberWarningsFromData(warningData, "123", new URLSearchParams());
   assert.equal(memberWarnings.playerId, "123");
-  assert.equal(memberWarnings.warningSummary.total, 6);
-  assert.equal(memberWarnings.items.every((event) => event.playerId === "123"), true);
+  assert.equal(memberWarnings.summary.totalWarnings, 6);
+  assert.equal(memberWarnings.warnings.every((event) =>
+    Object.keys(event).every((key) =>
+      ["date", "type", "label", "value", "threshold", "baselineDate"].includes(key),
+    )
+  ), true);
 
   assert.equal(warningsFromData(warningData, new URLSearchParams({ type: "unknown" })).error.code, "invalid_warning_type");
   assert.equal(violationsFromData(warningData, new URLSearchParams({ type: "unknown" })).error.code, "invalid_warning_type");

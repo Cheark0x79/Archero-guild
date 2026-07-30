@@ -14,12 +14,19 @@ const endpoints = [
   }),
   endpoint("Guild", "GET", "/api/v1/warnings", "Warnings", "Current members who reached one or more guild warning thresholds.", true, {
     type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
-    severity: "[optional query] warning | danger",
     flag: "[optional query] absence | contribution | progression | boss",
     playerId: "[optional query] member Player ID",
   }, {
-    summary: { total: 5, warning: 3, danger: 2 },
-    members: [{ playerId: "100000001", name: "ExampleMember", severity: "warning", flags: ["Low contribution"] }],
+    summary: { totalMembers: 5, warningCountsByType: { low_contribution: 3, game_absence: 2 } },
+    members: [{
+      playerId: "100000001",
+      name: "ExampleMember",
+      lastSeenAt: "2026-07-29",
+      evaluation: {
+        status: "Watch",
+        warnings: [{ type: "low_contribution", label: "Low contribution" }],
+      },
+    }],
   }),
   endpoint("Members", "GET", "/api/v1/members", "List members", "Paginated list and search for current or former members.", true, {
     q: "[optional query] name or Player ID",
@@ -56,7 +63,6 @@ const endpoints = [
   endpoint("Members", "GET", "/api/v1/members/{playerId}/warnings", "Member warnings", "All warning events and totals for one member.", true, {
     playerId: "[required path] member Player ID",
     type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
-    severity: "[optional query] warning | danger",
     scope: "[optional query] current | history · default: history",
     from: "[optional query] earliest date in YYYY-MM-DD format",
     to: "[optional query] latest date in YYYY-MM-DD format",
@@ -64,9 +70,9 @@ const endpoints = [
   }, {
     playerId: "100000001",
     name: "ExampleMember",
-    warningSummary: { total: 4, warning: 3, danger: 1, byType: { missed_boss: 2 }, lastWarningAt: "2026-07-29" },
-    items: [{ date: "2026-07-29", type: "missed_boss", value: 0, threshold: 2 }],
-    pagination: { limit: 200, total: 4, hasMore: false },
+    summary: { totalWarnings: 4, warningCountsByType: { missed_boss: 2 }, lastWarningAt: "2026-07-29" },
+    warnings: [{ date: "2026-07-29", type: "missed_boss", label: "Missed boss", value: 0, threshold: 2 }],
+    pagination: { limit: 200, totalWarnings: 4, hasMore: false },
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participation, and guild rank for each of the seven bosses.", true, {
     playerId: "[required path] member Player ID",
@@ -84,20 +90,17 @@ const endpoints = [
   }),
   endpoint("Rankings", "GET", "/api/v1/rankings/warnings", "Warning ranking", "Members ordered by their accumulated warning count.", true, {
     type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
-    severity: "[optional query] warning | danger",
     scope: "[optional query] current | history · default: history",
     from: "[optional query] earliest date in YYYY-MM-DD format",
     to: "[optional query] latest date in YYYY-MM-DD format",
     order: "[optional query] asc | desc · default: desc",
     limit: "[optional query] 1–100 members · default: 10",
   }, {
-    scope: "history",
-    order: "desc",
     totalMembers: 5,
-    rows: [{
-      rank: 1, playerId: "100000001", name: "ExampleMember", total: 7,
-      byType: { game_absence: 1, missed_boss: 2, low_contribution: 4 },
-      warning: 6, danger: 1, lastWarningAt: "2026-07-29",
+    rankings: [{
+      rank: 1, playerId: "100000001", name: "ExampleMember", totalWarnings: 7,
+      warningCountsByType: { game_absence: 1, missed_boss: 2, low_contribution: 4 },
+      lastWarningAt: "2026-07-29",
     }],
   }),
   endpoint("Bosses", "GET", "/api/v1/bosses", "Boss catalogue", "Boss rotation, records, and current record holders.", true, {}, [

@@ -62,10 +62,10 @@ Keys must remain server-side and must only be transmitted over HTTPS.
 | `GET /api/v1/members/{playerId}` | `playerId` | Public member detail |
 | `GET /api/v1/members/{playerId}/history` | `playerId`, `from`, `to` | Daily metric history |
 | `GET /api/v1/members/{playerId}/bosses` | `playerId` | Global, weekly, and per-boss records |
-| `GET /api/v1/warnings` | `type`, `severity`, `flag`, `playerId` | Members with current warnings |
+| `GET /api/v1/warnings` | `type`, `flag`, `playerId` | Members with current warnings |
 | `GET /api/v1/rankings/members` | `metric`, `order`, `limit` | Member metric ranking |
-| `GET /api/v1/rankings/warnings` | `type`, `severity`, `scope`, `from`, `to`, `order`, `limit` | Members ranked by accumulated warnings |
-| `GET /api/v1/members/{playerId}/warnings` | `playerId`, `type`, `severity`, `scope`, `from`, `to`, `limit` | Filtered warning history for one member |
+| `GET /api/v1/rankings/warnings` | `type`, `scope`, `from`, `to`, `order`, `limit` | Members ranked by accumulated warnings |
+| `GET /api/v1/members/{playerId}/warnings` | `playerId`, `type`, `scope`, `from`, `to`, `limit` | Filtered warning history for one member |
 | `GET /api/v1/bosses` | None | Boss catalog and records |
 | `GET /api/v1/boss-results` | `date`, `boss`, `playerId`, `limit` | Daily boss results |
 | `GET /api/v1/rankings/boss/all-time` | `limit` | Best historical score per member |

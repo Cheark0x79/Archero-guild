@@ -88,16 +88,18 @@ await check("member detail: unknown", async () => {
   assert.equal(result.body.error.code, "member_not_found");
 });
 
-await check("violations: warning filter", async () => {
-  const result = await get("/api/v1/violations?severity=warning");
+await check("warnings: low donation type", async () => {
+  const result = await get("/api/v1/warnings?type=low_contribution");
   assert.equal(result.status, 200);
-  assert.ok(result.body.data.members.every((member) => member.evaluation.severity === "warning"));
+  assert.ok(result.body.data.members.every((member) =>
+    member.evaluation.warnings.some((warning) => warning.type === "low_contribution"),
+  ));
 });
 
-await check("violations: invalid severity", async () => {
-  const result = await get("/api/v1/violations?severity=critical");
+await check("warnings: invalid type", async () => {
+  const result = await get("/api/v1/warnings?type=critical");
   assert.equal(result.status, 400);
-  assert.equal(result.body.error.code, "invalid_severity");
+  assert.equal(result.body.error.code, "invalid_warning_type");
 });
 
 await check("rankings: highest power", async () => {

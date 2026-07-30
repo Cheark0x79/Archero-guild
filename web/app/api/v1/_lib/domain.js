@@ -99,12 +99,8 @@ export function violationsFromData(data, searchParams) {
   const rulesError = warningRulesError(data);
   if (rulesError) return { error: rulesError };
   const type = searchParams.get("type");
-  const severity = searchParams.get("severity");
   if (type && !WARNING_TYPES.has(type)) {
     return { error: { code: "invalid_warning_type", message: `type must be one of: ${[...WARNING_TYPES].join(", ")}.` } };
-  }
-  if (severity && !["warning", "danger"].includes(severity)) {
-    return { error: { code: "invalid_severity", message: "severity must be warning or danger." } };
   }
   const from = dateParameter(searchParams.get("from"));
   const to = dateParameter(searchParams.get("to"));
@@ -126,9 +122,9 @@ export function violationsFromData(data, searchParams) {
     .filter((member) => ["warning", "danger"].includes(member.evaluation.severity))
     .filter((member) => !playerId || member.playerId === playerId)
     .filter((member) => !type || member.evaluation.flags.some((item) => warningTypeForFlag(item) === type))
-    .filter((member) => !severity || member.evaluation.severity === severity)
     .filter((member) => !flag || member.evaluation.flags.some((item) => normalize(item).includes(flag)))
-    .sort((left, right) => severityRank(right.evaluation.severity) - severityRank(left.evaluation.severity) || left.name.localeCompare(right.name));
+    .map(compactWarningMember)
+    .sort((left, right) => left.name.localeCompare(right.name));
   const allHistory = (data.guildRoster ?? [])
     .filter((member) => member.playerId)
     .filter((member) => !playerId || member.playerId === playerId)
@@ -137,10 +133,9 @@ export function violationsFromData(data, searchParams) {
         .filter((event) => !from || event.date >= from)
         .filter((event) => !to || event.date <= to)
         .filter((event) => !type || event.type === type)
-        .filter((event) => !severity || event.severity === severity)
         .filter((event) => !flag || normalize(event.label).includes(flag))
         .map((event) => ({
-          ...event,
+          ...withoutWarningSeverity(event),
           playerId: member.playerId,
           name: member.name,
           action: warningAction(data, member.playerId, event),
@@ -154,7 +149,7 @@ export function violationsFromData(data, searchParams) {
     history: allHistory.slice(0, historyLimit),
     historyPagination: {
       limit: historyLimit,
-      total: allHistory.length,
+      totalWarnings: allHistory.length,
       hasMore: allHistory.length > historyLimit,
     },
   };
@@ -170,20 +165,19 @@ export function warningsFromData(data, searchParams) {
   const events = warningEventsForData(data)
     .filter((event) => !query.playerId || event.playerId === query.playerId)
     .filter((event) => !query.type || event.type === query.type)
-    .filter((event) => !query.severity || event.severity === query.severity)
     .filter((event) => !query.from || event.date >= query.from)
     .filter((event) => !query.to || event.date <= query.to)
     .filter((event) => query.scope !== "current" || latestDates.get(event.playerId) === event.date)
-    .sort((left, right) => right.date.localeCompare(left.date) || severityRank(right.severity) - severityRank(left.severity) || left.name.localeCompare(right.name));
+    .sort((left, right) => right.date.localeCompare(left.date) || left.name.localeCompare(right.name));
 
   return {
     scope: query.scope,
     type: query.type,
     summary: warningEventSummary(events),
-    items: events.slice(0, query.limit),
+    warnings: events.slice(0, query.limit).map(withoutWarningSeverity),
     pagination: {
       limit: query.limit,
-      total: events.length,
+      totalWarnings: events.length,
       hasMore: events.length > query.limit,
     },
   };
@@ -206,8 +200,8 @@ export function warningRankingsFromData(data, searchParams) {
 
   const latestDates = latestSnapshotDates(data);
   const events = warningEventsForData(data)
+    .filter((event) => !warningActionClosed(event.action?.status))
     .filter((event) => !query.type || event.type === query.type)
-    .filter((event) => !query.severity || event.severity === query.severity)
     .filter((event) => !query.from || event.date >= query.from)
     .filter((event) => !query.to || event.date <= query.to)
     .filter((event) => query.scope !== "current" || latestDates.get(event.playerId) === event.date);
@@ -216,35 +210,27 @@ export function warningRankingsFromData(data, searchParams) {
     const current = grouped.get(event.playerId) ?? {
       playerId: event.playerId,
       name: event.name,
-      total: 0,
-      byType: {},
-      warning: 0,
-      danger: 0,
+      totalWarnings: 0,
+      warningCountsByType: {},
       lastWarningAt: null,
-      links: {
-        api: `/api/v1/members/${encodeURIComponent(event.playerId)}/warnings`,
-        web: `/members/${encodeURIComponent(event.playerId)}`,
-      },
     };
-    current.total += 1;
-    current.byType[event.type] = (current.byType[event.type] ?? 0) + 1;
-    current[event.severity] = (current[event.severity] ?? 0) + 1;
+    current.totalWarnings += 1;
+    current.warningCountsByType[event.type] = (current.warningCountsByType[event.type] ?? 0) + 1;
     if (!current.lastWarningAt || event.date > current.lastWarningAt) current.lastWarningAt = event.date;
     grouped.set(event.playerId, current);
   }
   const rows = [...grouped.values()]
     .sort((left, right) => {
-      const totalDifference = order === "asc" ? left.total - right.total : right.total - left.total;
-      return totalDifference || right.danger - left.danger || left.name.localeCompare(right.name);
+      const totalDifference = order === "asc"
+        ? left.totalWarnings - right.totalWarnings
+        : right.totalWarnings - left.totalWarnings;
+      return totalDifference || left.name.localeCompare(right.name);
     })
     .slice(0, query.limit)
     .map((row, index) => ({ rank: index + 1, ...row }));
   return {
-    scope: query.scope,
-    type: query.type,
-    order,
     totalMembers: grouped.size,
-    rows,
+    rankings: rows,
   };
 }
 
@@ -258,8 +244,8 @@ export function memberWarningsFromData(data, playerId, searchParams) {
   return {
     playerId,
     name: member?.name ?? playerId,
-    warningSummary: result.summary,
-    items: result.items,
+    summary: result.summary,
+    warnings: result.warnings.map(compactMemberWarning),
     pagination: result.pagination,
   };
 }
@@ -330,7 +316,7 @@ export function memberHistoryFromData(data, playerId, searchParams) {
   const enrichedItems = items.map((row) => ({
     ...row,
     warnings: row.warnings.map((warning) => ({
-      ...warning,
+      ...withoutWarningSeverity(warning),
       action: warningAction(data, playerId, { ...warning, date: row.date }),
     })),
   }));
@@ -397,7 +383,6 @@ function warningRulesError(data) {
 
 function warningQuery(searchParams, options) {
   const type = searchParams.get("type");
-  const severity = searchParams.get("severity");
   const scope = searchParams.get("scope") ?? options.defaultScope ?? "current";
   const from = dateParameter(searchParams.get("from"));
   const to = dateParameter(searchParams.get("to"));
@@ -405,9 +390,6 @@ function warningQuery(searchParams, options) {
   const playerId = options.allowPlayerId === false ? null : searchParams.get("playerId")?.trim();
   if (type && !WARNING_TYPES.has(type)) {
     return { error: { code: "invalid_warning_type", message: `type must be one of: ${[...WARNING_TYPES].join(", ")}.` } };
-  }
-  if (severity && !["warning", "danger"].includes(severity)) {
-    return { error: { code: "invalid_severity", message: "severity must be warning or danger." } };
   }
   if (!["current", "history"].includes(scope)) {
     return { error: { code: "invalid_scope", message: "scope must be current or history." } };
@@ -421,21 +403,48 @@ function warningQuery(searchParams, options) {
   if (limit === null) {
     return { error: { code: "invalid_limit", message: `limit must be an integer between 1 and ${options.maximumLimit}.` } };
   }
-  return { type, severity, scope, from, to, limit, playerId };
+  return { type, scope, from, to, limit, playerId };
 }
 
 function warningEventSummary(events) {
-  const byType = {};
-  let warning = 0;
-  let danger = 0;
+  const warningCountsByType = {};
   let lastWarningAt = null;
   for (const event of events) {
-    byType[event.type] = (byType[event.type] ?? 0) + 1;
-    if (event.severity === "warning") warning += 1;
-    if (event.severity === "danger") danger += 1;
+    warningCountsByType[event.type] = (warningCountsByType[event.type] ?? 0) + 1;
     if (!lastWarningAt || event.date > lastWarningAt) lastWarningAt = event.date;
   }
-  return { total: events.length, warning, danger, byType, lastWarningAt };
+  return { totalWarnings: events.length, warningCountsByType, lastWarningAt };
+}
+
+function withoutWarningSeverity(event) {
+  const { severity: _severity, ...warning } = event;
+  return warning;
+}
+
+function compactMemberWarning(event) {
+  return {
+    date: event.date,
+    type: event.type,
+    label: event.label,
+    value: event.value,
+    threshold: event.threshold,
+    ...(event.baselineDate ? { baselineDate: event.baselineDate } : {}),
+  };
+}
+
+function compactWarningMember(member) {
+  return {
+    playerId: member.playerId,
+    name: member.name,
+    lastSeenAt: member.lastSeenAt,
+    evaluation: {
+      status: member.evaluation.status,
+      warnings: member.evaluation.flags.map((label) => ({
+        type: warningTypeForFlag(label),
+        label,
+      })),
+    },
+  };
 }
 
 function warningAction(data, playerId, event) {
@@ -458,7 +467,7 @@ function effectiveViolationMember(data, member) {
     const type = warningTypeForFlag(flag);
     if (!type) return true;
     const action = data.warningActions?.[warningActionKey(member.playerId, latestDate, type)];
-    return !["excused", "resolved"].includes(action?.status);
+    return !warningActionClosed(action?.status);
   });
   if (flags.length === member.evaluation.flags.length) return member;
   return {
@@ -694,20 +703,21 @@ function levenshtein(left, right) {
 }
 
 function violationSummary(items) {
-  const byFlag = {};
+  const warningCountsByType = {};
   for (const member of items) {
-    for (const flag of member.evaluation.flags) byFlag[flag] = (byFlag[flag] ?? 0) + 1;
+    for (const warning of member.evaluation.warnings) {
+      const type = warning.type ?? "unknown";
+      warningCountsByType[type] = (warningCountsByType[type] ?? 0) + 1;
+    }
   }
   return {
-    total: items.length,
-    warning: items.filter((member) => member.evaluation.severity === "warning").length,
-    danger: items.filter((member) => member.evaluation.severity === "danger").length,
-    byFlag,
+    totalMembers: items.length,
+    warningCountsByType,
   };
 }
 
-function severityRank(value) {
-  return value === "danger" ? 2 : value === "warning" ? 1 : 0;
+function warningActionClosed(status) {
+  return ["excused", "resolved", "ignored"].includes(status);
 }
 
 function dateParameter(value) {

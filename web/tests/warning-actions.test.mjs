@@ -35,7 +35,18 @@ test("warning officer follow-up rejects unknown statuses and types", () => {
     /warning type/,
   );
   assert.throws(
-    () => normalizeWarningAction({ playerId: "123", date: "2026-07-28", type: "missed_boss", status: "ignored" }),
+    () => normalizeWarningAction({ playerId: "123", date: "2026-07-28", type: "missed_boss", status: "archived" }),
     /warning status/,
   );
+});
+
+test("warning officer can ignore a warning", () => {
+  const ignored = normalizeWarningAction({
+    playerId: "123",
+    date: "2026-07-28",
+    type: "missed_boss",
+    status: "ignored",
+    note: "",
+  });
+  assert.equal(ignored.status, "ignored");
 });

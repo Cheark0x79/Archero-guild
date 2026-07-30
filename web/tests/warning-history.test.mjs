@@ -32,6 +32,7 @@ test("warning history keeps a bad day after the next snapshot is healthy", () =>
   const events = warningHistoryEvents(rows, rules);
   assert.equal(events.length, 4);
   assert.equal(events.every((event) => event.date === "2026-07-15"), true);
+  assert.equal(events.every((event) => event.severity === "warning"), true);
   assert.deepEqual(warningHistorySummary(events), {
     total: 4,
     byType: {

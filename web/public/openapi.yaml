@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Archero Observer API
-  version: 1.2.0
+  version: 1.3.0
   description: Read-only API intended for Discord bots and other server-side integrations.
 servers:
   - url: /api/v1
@@ -56,7 +56,6 @@ paths:
       summary: List members with current guild warnings
       parameters:
         - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
-        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: flag, in: query, schema: { type: string } }
         - { name: playerId, in: query, schema: { type: string } }
       responses:
@@ -77,7 +76,6 @@ paths:
       summary: Legacy alias for warning data
       parameters:
         - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
-        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: flag, in: query, schema: { type: string } }
         - { name: playerId, in: query, schema: { type: string } }
         - { name: from, in: query, schema: { type: string, format: date } }
@@ -119,7 +117,6 @@ paths:
       summary: Rank members by accumulated warnings
       parameters:
         - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
-        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: scope, in: query, schema: { type: string, enum: [current, history], default: history } }
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
@@ -263,7 +260,6 @@ paths:
       parameters:
         - { name: playerId, in: path, required: true, schema: { type: string } }
         - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
-        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: scope, in: query, schema: { type: string, enum: [current, history], default: history } }
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
@@ -460,22 +456,38 @@ components:
         memberCapacity: { type: [number, "null"] }
     ViolationSummary:
       type: object
-      required: [total, warning, danger, byFlag]
+      required: [totalMembers, warningCountsByType]
       properties:
-        total: { type: integer }
-        warning: { type: integer }
-        danger: { type: integer }
-        byFlag:
+        totalMembers: { type: integer }
+        warningCountsByType:
           type: object
           additionalProperties: { type: integer }
+    CurrentWarningMember:
+      type: object
+      required: [playerId, name, lastSeenAt, evaluation]
+      properties:
+        playerId: { type: [string, "null"] }
+        name: { type: string }
+        lastSeenAt: { type: [string, "null"] }
+        evaluation:
+          type: object
+          required: [status, warnings]
+          properties:
+            status: { type: string }
+            warnings:
+              type: array
+              items:
+                type: object
+                required: [type, label]
+                properties:
+                  type: { type: [string, "null"], enum: [game_absence, low_contribution, low_progression, missed_boss, null] }
+                  label: { type: string }
     WarningSummary:
       type: object
-      required: [total, warning, danger, byType, lastWarningAt]
+      required: [totalWarnings, warningCountsByType, lastWarningAt]
       properties:
-        total: { type: integer }
-        warning: { type: integer }
-        danger: { type: integer }
-        byType:
+        totalWarnings: { type: integer }
+        warningCountsByType:
           type: object
           additionalProperties: { type: integer }
         lastWarningAt: { type: [string, "null"], format: date }
@@ -483,12 +495,12 @@ components:
       type: object
       required: [status, note, updatedAt]
       properties:
-        status: { type: string, enum: [pending, contacted, excused, resolved] }
+        status: { type: string, enum: [pending, noted, contacted, excused, resolved, ignored] }
         note: { type: string }
         updatedAt: { type: [string, "null"], format: date-time }
     WarningEvent:
       type: object
-      required: [id, date, playerId, name, type, label, severity, value, threshold, detail, action]
+      required: [id, date, playerId, name, type, label, value, threshold, detail, action]
       properties:
         id: { type: string }
         date: { type: string, format: date }
@@ -496,19 +508,27 @@ components:
         name: { type: string }
         type: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] }
         label: { type: string }
-        severity: { type: string, enum: [warning, danger] }
         value: { type: number }
         threshold: { type: number }
         detail: { type: string }
         baselineDate: { type: string, format: date }
         action: { $ref: "#/components/schemas/WarningAction" }
+    CompactWarningEvent:
+      type: object
+      required: [date, type, label, value, threshold]
+      properties:
+        date: { type: string, format: date }
+        type: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] }
+        label: { type: string }
+        value: { type: number }
+        threshold: { type: number }
+        baselineDate: { type: string, format: date }
     MemberWarning:
       type: object
-      required: [type, label, severity, value, threshold, detail, action]
+      required: [type, label, value, threshold, detail, action]
       properties:
         type: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] }
         label: { type: string }
-        severity: { type: string, enum: [warning, danger] }
         value: { type: number }
         threshold: { type: number }
         detail: { type: string }
@@ -611,7 +631,7 @@ components:
             summary: { $ref: "#/components/schemas/ViolationSummary" }
             members:
               type: array
-              items: { $ref: "#/components/schemas/Member" }
+              items: { $ref: "#/components/schemas/CurrentWarningMember" }
         meta: { $ref: "#/components/schemas/Meta" }
     ViolationsResponse:
       type: object
@@ -625,7 +645,7 @@ components:
             warningSummary: { $ref: "#/components/schemas/WarningSummary" }
             members:
               type: array
-              items: { $ref: "#/components/schemas/Member" }
+              items: { $ref: "#/components/schemas/CurrentWarningMember" }
             history:
               type: array
               items: { $ref: "#/components/schemas/WarningEvent" }
@@ -633,39 +653,33 @@ components:
         meta: { $ref: "#/components/schemas/Meta" }
     WarningPagination:
       type: object
-      required: [limit, total, hasMore]
+      required: [limit, totalWarnings, hasMore]
       properties:
         limit: { type: integer }
-        total: { type: integer }
+        totalWarnings: { type: integer }
         hasMore: { type: boolean }
     WarningRankingRow:
       type: object
-      required: [rank, playerId, name, total, byType, warning, danger, lastWarningAt, links]
+      required: [rank, playerId, name, totalWarnings, warningCountsByType, lastWarningAt]
       properties:
         rank: { type: integer }
         playerId: { type: string }
         name: { type: string }
-        total: { type: integer }
-        byType:
+        totalWarnings: { type: integer }
+        warningCountsByType:
           type: object
           additionalProperties: { type: integer }
-        warning: { type: integer }
-        danger: { type: integer }
         lastWarningAt: { type: string, format: date }
-        links: { $ref: "#/components/schemas/MemberLinks" }
     WarningRankingResponse:
       type: object
       required: [data, meta]
       properties:
         data:
           type: object
-          required: [scope, type, order, totalMembers, rows]
+          required: [totalMembers, rankings]
           properties:
-            scope: { type: string, enum: [current, history] }
-            type: { type: [string, "null"] }
-            order: { type: string, enum: [asc, desc] }
             totalMembers: { type: integer }
-            rows:
+            rankings:
               type: array
               items: { $ref: "#/components/schemas/WarningRankingRow" }
         meta: { $ref: "#/components/schemas/Meta" }
@@ -727,14 +741,14 @@ components:
       properties:
         data:
           type: object
-          required: [playerId, name, warningSummary, items, pagination]
+          required: [playerId, name, summary, warnings, pagination]
           properties:
             playerId: { type: string }
             name: { type: string }
-            warningSummary: { $ref: "#/components/schemas/WarningSummary" }
-            items:
+            summary: { $ref: "#/components/schemas/WarningSummary" }
+            warnings:
               type: array
-              items: { $ref: "#/components/schemas/WarningEvent" }
+              items: { $ref: "#/components/schemas/CompactWarningEvent" }
             pagination: { $ref: "#/components/schemas/WarningPagination" }
         meta: { $ref: "#/components/schemas/Meta" }
     MemberList:

@@ -46,7 +46,7 @@ function warningsForRow(row, previousRows, rules, member) {
     warnings.push({
       type: "game_absence",
       label: "Game absence",
-      severity: "danger",
+      severity: "warning",
       value: activityDays,
       threshold: rules.maxInactiveDays,
       detail: `${activityDays} day(s) without connection; maximum ${rules.maxInactiveDays}.`,
