@@ -77,6 +77,22 @@ test("evaluateMember detects inactive and low contribution", () => {
   ]);
 });
 
+test("evaluateMember excuses an announced absence only until its end date", () => {
+  const absentMember = {
+    ...member,
+    contribution7d: 0,
+    lastActivityDays: 8,
+    absenceUntil: "2026-08-05",
+  };
+  const excused = evaluateMember(absentMember, { ...rules, currentDate: "2026-08-05" });
+  const expired = evaluateMember(absentMember, { ...rules, currentDate: "2026-08-06" });
+
+  assert.equal(excused.status, "Excused");
+  assert.deepEqual(excused.flags, ["Excused absence"]);
+  assert.equal(expired.status, "Absent");
+  assert.deepEqual(expired.flags, ["Game absence", "Low contribution"]);
+});
+
 test("evaluateMember does not mark missing metrics as inactive", () => {
   const result = evaluateMember(
     {
@@ -256,6 +272,25 @@ test("sortMembers sorts numeric columns and keeps missing values last", () => {
   );
 });
 
+test("sortMembers sorts precise last connection and always keeps missing values last", () => {
+  const rows = [
+    { ...member, name: "NotRecorded", lastActivityDays: null, activityText: null },
+    { ...member, name: "NineHours", playerId: "2", lastActivityDays: 0, activityText: "9 h" },
+    { ...member, name: "Online", playerId: "3", lastActivityDays: 0, activityText: "Online" },
+    { ...member, name: "SeventeenMinutes", playerId: "4", lastActivityDays: 0, activityText: "17 min" },
+    { ...member, name: "OneDayTenHours", playerId: "5", lastActivityDays: 1, activityText: "01d 10h" },
+  ];
+
+  assert.deepEqual(
+    sortMembers(rows, rules, { key: "activity", direction: "asc" }).map((row) => row.name),
+    ["Online", "SeventeenMinutes", "NineHours", "OneDayTenHours", "NotRecorded"],
+  );
+  assert.deepEqual(
+    sortMembers(rows, rules, { key: "activity", direction: "desc" }).map((row) => row.name),
+    ["OneDayTenHours", "NineHours", "SeventeenMinutes", "Online", "NotRecorded"],
+  );
+});
+
 test("sortMembers sorts roles by guild hierarchy", () => {
   const rows = [
     { ...member, name: "Member", role: "member" },
@@ -310,6 +345,9 @@ test("activityLabel returns English labels", () => {
   assert.equal(activityLabel(0), "Today");
   assert.equal(activityLabel(1), "Yesterday");
   assert.equal(activityLabel(4), "4 days ago");
+  assert.equal(activityLabel(0, "Online"), "Online");
+  assert.equal(activityLabel(1, "1 d 10 h"), "1 d 10 h");
+  assert.equal(activityLabel(0, "31 min"), "31 min");
 });
 
 test("formatCompact keeps useful precision for power values", () => {

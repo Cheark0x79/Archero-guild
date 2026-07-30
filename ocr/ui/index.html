@@ -1,0 +1,223 @@
+<link rel="stylesheet" href="/assets/styles.css">
+<main class="shell">
+  <header class="hero">
+    <div>
+      <p class="eyebrow">LOCAL WORKSTATION</p>
+      <h1>Archero OCR Console</h1>
+      <p>Build one capture session, correct the extracted values, then choose where its reviewed JSON is published.</p>
+    </div>
+    <div class="service-state">
+      <span id="service-dot"></span>
+      <strong id="service-label">Connecting…</strong>
+      <small id="agent-version"></small>
+    </div>
+  </header>
+
+  <section class="session-bar">
+    <nav class="stepper" aria-label="OCR workflow">
+      <button type="button" class="step-link active" data-go-step="1"><span>1</span>Captures</button>
+      <button type="button" class="step-link" data-go-step="2"><span>2</span>Extraction</button>
+      <button type="button" class="step-link" data-go-step="3"><span>3</span>Review</button>
+      <button type="button" class="step-link" data-go-step="4"><span>4</span>Destination</button>
+    </nav>
+    <button id="refresh" type="button" class="button secondary">Refresh</button>
+  </section>
+
+  <div id="message" role="status" aria-live="polite"></div>
+
+  <section class="wizard-panel active" data-step-panel="1">
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <span class="step">STEP 01</span>
+          <h2>Choose one data source</h2>
+        </div>
+        <span id="upload-count" class="counter">No files selected</span>
+      </div>
+      <div class="upload-controls">
+        <label>
+          Data source
+          <select id="upload-kind">
+            <option value="guild-members">Guild members</option>
+            <option value="guild-boss">Guild boss</option>
+          </select>
+        </label>
+        <label class="drop-zone">
+          <input id="upload-files" type="file" accept="image/png" multiple>
+          <strong>Select PNG screenshots</strong>
+          <span>Only the files selected now belong to this extraction session.</span>
+        </label>
+        <div class="upload-actions">
+          <button id="reset-session" class="button secondary destructive" type="button">Reset current source</button>
+          <button id="upload" class="button primary" type="button" disabled>Upload and continue</button>
+        </div>
+      </div>
+      <div id="upload-selection" class="file-selection">
+        <p class="muted">A new upload replaces the active screenshots for this source. Older files are archived and cannot be reused by OCR.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="wizard-panel" data-step-panel="2">
+    <article class="panel extract-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="step">STEP 02</span>
+          <h2>Extract locally with Tesseract</h2>
+        </div>
+        <span id="quality-badge" class="badge neutral">No batch</span>
+      </div>
+      <div class="extract-summary">
+        <span id="extract-kind" class="badge neutral">No source selected</span>
+        <strong id="extract-count">Upload screenshots in Step 1</strong>
+      </div>
+      <p id="scan-help" class="muted">Validate this single source to start local OCR. No destination is contacted.</p>
+      <button id="scan" class="button primary" type="button" disabled>Validate and extract</button>
+      <div id="extraction-progress" class="extraction-progress" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <div>
+          <strong>Extraction in progress…</strong>
+          <small>Tesseract is reading the selected screenshots locally.</small>
+        </div>
+      </div>
+      <dl class="metrics">
+        <div><dt>Members</dt><dd id="members-count">—</dd></div>
+        <div><dt>Boss rows</dt><dd id="boss-count">—</dd></div>
+        <div><dt>Coverage</dt><dd id="coverage">—</dd></div>
+        <div><dt>Completeness</dt><dd id="completeness">—</dd></div>
+      </dl>
+      <div id="quality-warnings" class="warnings"></div>
+    </article>
+  </section>
+
+  <section class="wizard-panel" data-step-panel="3">
+    <div class="review-layout">
+      <aside class="panel reference-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step">REFERENCE</span>
+            <h2>Screenshot</h2>
+          </div>
+        </div>
+        <label>
+          Source image
+          <select id="reference-image"></select>
+        </label>
+        <div class="reference-frame">
+          <img id="reference-preview" alt="Selected OCR source screenshot">
+          <p id="reference-empty" class="muted">Upload screenshots to display a reference image.</p>
+        </div>
+        <div class="reference-navigation">
+          <button id="reference-previous" class="button secondary compact" type="button">Previous</button>
+          <span id="reference-position" class="counter">0 / 0</span>
+          <button id="reference-next" class="button secondary compact" type="button">Next</button>
+        </div>
+      </aside>
+
+      <article class="panel review-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step">STEP 03</span>
+            <h2>Review and correct extracted data</h2>
+          </div>
+          <code id="batch-key">No reviewed batch</code>
+        </div>
+        <div class="review-scope">
+          <span>Reviewing</span>
+          <strong id="review-scope-label">No source extracted</strong>
+          <span id="review-count" class="counter">0 rows</span>
+          <button id="add-row" class="button secondary compact" type="button">Add manual row</button>
+        </div>
+        <section id="missing-members" class="missing-members" hidden>
+          <div>
+            <strong>Missing from this capture</strong>
+            <span id="missing-members-source" class="muted"></span>
+          </div>
+          <span id="missing-members-count" class="counter">0 missing</span>
+          <div id="missing-members-list" class="missing-members-list"></div>
+        </section>
+        <div class="table-wrap">
+          <table>
+            <thead id="review-head"></thead>
+            <tbody id="review-body"></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+
+    <section class="panel corrections-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="step">LEARNING LOG</span>
+          <h2>Correction history</h2>
+        </div>
+        <span id="correction-count" class="counter">0 corrections</span>
+      </div>
+      <p class="muted">Every change records the OCR value and your corrected value for future tuning.</p>
+      <div id="correction-list" class="correction-list"></div>
+    </section>
+  </section>
+
+  <section class="wizard-panel" data-step-panel="4">
+    <div class="grid two">
+      <article class="panel destination-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="step">STEP 04</span>
+            <h2>Choose and configure destination</h2>
+          </div>
+          <span id="target-state" class="badge neutral">Local only</span>
+        </div>
+        <label>
+          Data date
+          <input id="capture-date" type="date">
+          <small>This date labels the corrected batch when it is published.</small>
+        </label>
+        <label>
+          Destination
+          <select id="target"></select>
+        </label>
+        <label>
+          Backend URL or private IP
+          <input id="target-url" type="url" placeholder="http://192.168.1.50:5181">
+        </label>
+        <label>
+          Ingestion token
+          <input id="target-token" type="password" autocomplete="new-password" placeholder="Leave empty to keep the current token">
+        </label>
+        <p class="muted">HTTP is accepted only for localhost or a private LAN IP. Public destinations require HTTPS.</p>
+        <button id="save-target" class="button secondary" type="button">Save destination</button>
+      </article>
+
+      <article class="panel publish-card">
+        <div>
+          <span class="step">FINAL ACTION</span>
+          <h2>Clear or publish reviewed JSON</h2>
+          <p class="muted">Publish validates the corrected batch remotely and never reruns Tesseract.</p>
+          <strong id="publish-scope">No source ready</strong>
+        </div>
+        <div class="preflight-row">
+          <button id="preflight" class="button secondary" type="button">Check destination</button>
+          <span id="preflight-state" class="badge neutral">Not checked</span>
+        </div>
+        <p id="preflight-help" class="muted">Check connectivity, authentication and batch validity before sending.</p>
+        <label>
+          Publication confirmation
+          <input id="confirmation" type="text" autocomplete="off">
+          <small id="confirmation-help"></small>
+        </label>
+        <div class="publish-actions">
+          <button id="clear" class="button secondary destructive" type="button">Clear extracted data</button>
+          <button id="publish" class="button danger" type="button" disabled>Publish reviewed batch</button>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <footer class="wizard-actions">
+    <button id="previous-step" class="button secondary" type="button">Previous</button>
+    <span id="step-position">Step 1 of 4</span>
+    <button id="next-step" class="button primary" type="button">Next</button>
+  </footer>
+</main>
+<script src="/assets/app.js" defer></script>

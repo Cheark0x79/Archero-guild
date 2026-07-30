@@ -53,14 +53,31 @@ def persist_import_report(
         raise RuntimeError("psycopg is required when ARCHERO_DATABASE_URL is configured") from exc
 
     with psycopg.connect(dsn) as connection:
-        with connection.cursor() as cursor:
-            batch_id = _upsert_capture_batch(cursor, report)
-            _upsert_roster(cursor, roster, report.captured_at)
-            screenshots_by_path = _upsert_screenshots(cursor, batch_id, report)
-            _upsert_import_report(cursor, batch_id, report)
-            _replace_member_metrics(cursor, batch_id, report, extracted_metrics, screenshots_by_path)
-            _replace_boss_results(cursor, report, daily_boss_rankings, screenshots_by_path)
+        persist_import_report_in_connection(
+            connection,
+            report,
+            roster=roster,
+            extracted_metrics=extracted_metrics,
+            daily_boss_rankings=daily_boss_rankings,
+        )
         connection.commit()
+
+
+def persist_import_report_in_connection(
+    connection,
+    report: ImportReport,
+    *,
+    roster: Sequence[RosterEntry],
+    extracted_metrics: Sequence[ExtractedMemberMetrics],
+    daily_boss_rankings: dict[str, list[ExtractedBossRanking]],
+) -> None:
+    with connection.cursor() as cursor:
+        batch_id = _upsert_capture_batch(cursor, report)
+        _upsert_roster(cursor, roster, report.captured_at)
+        screenshots_by_path = _upsert_screenshots(cursor, batch_id, report)
+        _upsert_import_report(cursor, batch_id, report)
+        _replace_member_metrics(cursor, batch_id, report, extracted_metrics, screenshots_by_path)
+        _replace_boss_results(cursor, report, daily_boss_rankings, screenshots_by_path)
 
 
 def _upsert_capture_batch(cursor, report: ImportReport) -> int:
@@ -182,6 +199,24 @@ def _replace_member_metrics(
 ) -> None:
     if not extracted_metrics:
         return
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS unmatched_member_metrics (
+            id BIGSERIAL PRIMARY KEY,
+            snapshot_id BIGINT NOT NULL REFERENCES guild_snapshots(id) ON DELETE CASCADE,
+            observed_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            role TEXT,
+            power BIGINT,
+            contribution_7d BIGINT,
+            boss_attacks INTEGER,
+            last_activity_days INTEGER,
+            verification_note TEXT,
+            raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            UNIQUE (snapshot_id, normalized_name)
+        )
+        """
+    )
     _guard_replacement_size(
         cursor,
         """
@@ -207,6 +242,42 @@ def _replace_member_metrics(
     )
     snapshot_id = int(cursor.fetchone()[0])
     for metric in extracted_metrics:
+        if not metric.player_id:
+            observed_name = " ".join((metric.name or metric.raw_name).strip().split())
+            if not observed_name:
+                continue
+            cursor.execute(
+                """
+                INSERT INTO unmatched_member_metrics (
+                    snapshot_id, observed_name, normalized_name, role, power,
+                    contribution_7d, boss_attacks, last_activity_days,
+                    verification_note, raw_payload
+                )
+                VALUES (%s, %s, lower(%s), %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (snapshot_id, normalized_name) DO UPDATE SET
+                    observed_name = EXCLUDED.observed_name,
+                    role = EXCLUDED.role,
+                    power = EXCLUDED.power,
+                    contribution_7d = EXCLUDED.contribution_7d,
+                    boss_attacks = EXCLUDED.boss_attacks,
+                    last_activity_days = EXCLUDED.last_activity_days,
+                    verification_note = EXCLUDED.verification_note,
+                    raw_payload = EXCLUDED.raw_payload
+                """,
+                (
+                    snapshot_id,
+                    observed_name,
+                    observed_name,
+                    metric.role,
+                    metric.power,
+                    metric.donation,
+                    metric.boss_tries,
+                    metric.last_activity_days,
+                    metric.source,
+                    _json(asdict(metric)),
+                ),
+            )
+            continue
         cursor.execute(
             """
             INSERT INTO member_metrics (

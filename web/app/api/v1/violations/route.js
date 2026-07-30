@@ -8,5 +8,10 @@ export async function GET(request) {
   const payload = await loadDashboardData();
   const result = violationsFromData(payload.data, request.nextUrl.searchParams);
   if (result.error) return apiError(400, result.error.code, result.error.message);
-  return apiSuccess({ summary: result.summary, members: result.items }, payload);
+  return apiSuccess({
+    summary: result.summary,
+    members: result.items,
+    history: result.history,
+    historyPagination: result.historyPagination,
+  }, payload);
 }

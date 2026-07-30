@@ -1,0 +1,28 @@
+{
+  "local": {
+    "label": "Local test (offline)",
+    "mode": "local"
+  },
+  "app-test": {
+    "label": "App test",
+    "mode": "remote",
+    "url": "https://test.archero.example.com",
+    "ingestionToken": "generate-a-dedicated-test-ingestion-key"
+  },
+  "preprod": {
+    "label": "Pre-production",
+    "mode": "remote",
+    "url": "https://preprod.archero.example.com",
+    "ingestionToken": "generate-a-dedicated-preprod-ingestion-key",
+    "cfAccessClientId": "cloudflare-service-token-client-id",
+    "cfAccessClientSecret": "cloudflare-service-token-client-secret"
+  },
+  "prod": {
+    "label": "Production",
+    "mode": "remote",
+    "url": "https://archero.example.com",
+    "ingestionToken": "generate-a-different-production-ingestion-key",
+    "cfAccessClientId": "cloudflare-service-token-client-id",
+    "cfAccessClientSecret": "cloudflare-service-token-client-secret"
+  }
+}

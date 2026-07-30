@@ -4,10 +4,12 @@ services:
   app:
     image: archero-observer-app:${ARCHERO_IMAGE_TAG:-local}
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: platform/Dockerfile
       args:
         APP_VERSION: ${ARCHERO_IMAGE_TAG:-local}
+        STRICT_DATABASE: "1"
+        LOCAL_OCR_ENABLED: "0"
     restart: unless-stopped
     init: true
     cpus: "1.50"
@@ -26,21 +28,22 @@ services:
       ARCHERO_ADMIN_PASSWORD: ${ARCHERO_ADMIN_PASSWORD:?Set ARCHERO_ADMIN_PASSWORD}
       ARCHERO_ADMIN_SESSION_TOKEN: ${ARCHERO_ADMIN_SESSION_TOKEN:?Set ARCHERO_ADMIN_SESSION_TOKEN}
       ARCHERO_API_KEYS: ${ARCHERO_API_KEYS:?Set ARCHERO_API_KEYS}
+      ARCHERO_INGESTION_KEYS: ${ARCHERO_INGESTION_KEYS:?Set ARCHERO_INGESTION_KEYS}
       ARCHERO_DATA_CACHE_TTL_MS: ${ARCHERO_DATA_CACHE_TTL_MS:-15000}
       ARCHERO_DATA_ERROR_CACHE_TTL_MS: ${ARCHERO_DATA_ERROR_CACHE_TTL_MS:-2000}
       ARCHERO_API_RATE_LIMIT_PER_MINUTE: ${ARCHERO_API_RATE_LIMIT_PER_MINUTE:-120}
       ARCHERO_DATABASE_URL: postgresql://${POSTGRES_USER:-archero}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-archero_observer}
       ARCHERO_PYTHON: /opt/archero-venv/bin/python
       ARCHERO_REQUIRE_DATABASE: "1"
+      ARCHERO_LOCAL_OCR_ENABLED: "0"
       TZ: Europe/Paris
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${ARCHERO_DASHBOARD_PORT:-5181}:5181"
+      - "${ARCHERO_BIND_ADDRESS:-127.0.0.1}:${ARCHERO_DASHBOARD_PORT:-5181}:5181"
     volumes:
-      - ./data:/app/data
-      - ./screenshots:/app/screenshots
+      - ../data:/app/data
     healthcheck:
       test:
         - CMD
@@ -72,7 +75,7 @@ services:
       TZ: Europe/Paris
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./observer/storage/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ../observer/storage/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s

@@ -12,11 +12,27 @@ const endpoints = [
   endpoint("Guild", "GET", "/api/v1/rules", "Guild rules", "Thresholds used for contributions, activity, progression, and bosses.", true, {}, {
     maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2, memberCapacity: 40,
   }),
-  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Members with a warning or critical violation.", true, {
-    severity: "[optional query] warning | danger", flag: "[optional query] absence | contribution | boss",
+  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Current violations and durable history of automatic rule warnings.", true, {
+    severity: "[optional query] warning | danger",
+    flag: "[optional query] absence | contribution | progression | boss",
+    playerId: "[optional query] member Player ID for warning history",
+    from: "[optional query] earliest history date in YYYY-MM-DD format",
+    to: "[optional query] latest history date in YYYY-MM-DD format",
+    limit: "[optional query] 1–1000 history events · default: 200",
   }, {
     summary: { total: 5, warning: 3, danger: 2 },
-    members: [{ playerId: "119974403", name: "Ac1s", severity: "warning", flags: ["Low contribution"] }],
+    members: [{ playerId: "100000001", name: "ExampleMember", severity: "warning", flags: ["Low contribution"] }],
+    history: [{
+      date: "2026-07-21",
+      playerId: "100000001",
+      name: "ExampleMember",
+      type: "missed_boss",
+      label: "Missed boss",
+      value: 1,
+      threshold: 2,
+      action: { status: "contacted", note: "Discord message sent.", updatedAt: "2026-07-21T12:00:00.000Z" },
+    }],
+    historyPagination: { limit: 200, total: 12, hasMore: false },
   }),
   endpoint("Members", "GET", "/api/v1/members", "List members", "Paginated list and search for current or former members.", true, {
     q: "[optional query] name or Player ID",
@@ -24,35 +40,36 @@ const endpoints = [
     limit: "[optional query] 1–100 · default: 25",
     offset: "[optional query] positive integer · default: 0",
   }, [
-    { playerId: "119934456", name: "Sendrock", role: "member", power: 10550000, contribution7d: 2280 },
+    { playerId: "100000002", name: "ExampleChampion", role: "member", power: 10550000, contribution7d: 2280 },
   ]),
   endpoint("Members", "GET", "/api/v1/members/resolve", "Resolve a member", "Finds a member by Player ID, name, alias, or a minor typo.", true, {
     q: "[required query] name, alias, or Player ID",
     limit: "[optional query] 1–10 suggestions · default: 5",
   }, {
-    query: "Sendrok",
-    match: { playerId: "119934456", name: "Sendrock", confidence: 0.94, matchedBy: "name", webUrl: "/members/119934456" },
+    query: "ExampleChamp",
+    match: { playerId: "100000002", name: "ExampleChampion", confidence: 0.94, matchedBy: "name", webUrl: "/members/100000002" },
     suggestions: [],
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}", "Member profile", "Public profile and current metrics for a member.", true, {
     playerId: "[required path] member Player ID",
   }, {
-    playerId: "119934456", name: "Sendrock", role: "member",
+    playerId: "100000002", name: "ExampleChampion", role: "member",
     metrics: { power: 10550000, contribution7d: 2280, bossAttacks: 2 },
     evaluation: { status: "Active", severity: "positive", flags: [] },
   }),
-  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily history of a member's metrics.", true, {
+  endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily metrics and durable automatic warning history.", true, {
     playerId: "[required path] member Player ID",
     from: "[optional query] earliest date in YYYY-MM-DD format",
     to: "[optional query] latest date in YYYY-MM-DD format",
   }, {
-    playerId: "119934456",
-    items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2 }],
+    playerId: "100000002",
+    items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2, warnings: [] }],
+    warningSummary: { total: 4, byType: { missed_boss: 1 }, lastWarningAt: "2026-07-21" },
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participation, and guild rank for each of the seven bosses.", true, {
     playerId: "[required path] member Player ID",
   }, {
-    member: { playerId: "119934456", name: "Sendrock" },
+    member: { playerId: "100000002", name: "ExampleChampion" },
     globalRecord: { bossName: "Fire Dragon", damage: 923010000000, date: "2026-07-21" },
     recordsByBoss: [{ boss: { key: "fire-dragon", name: "Fire Dragon" }, bestDamage: 923010000000, guildRank: 1, participations: 2 }],
   }),
@@ -61,7 +78,7 @@ const endpoints = [
     order: "[optional query] asc | desc · default: desc (activity: asc)",
     limit: "[optional query] 1–100 · default: 10",
   }, {
-    metric: "power", rows: [{ rank: 1, playerId: "119934456", name: "Sendrock", value: 10550000 }],
+    metric: "power", rows: [{ rank: 1, playerId: "100000002", name: "ExampleChampion", value: 10550000 }],
   }),
   endpoint("Bosses", "GET", "/api/v1/bosses", "Boss catalogue", "Boss rotation, records, and current record holders.", true, {}, [
     { key: "fire-dragon", name: "Fire Dragon", dayLabel: "Tue", bestDamage: 923010000000 },
@@ -73,15 +90,15 @@ const endpoints = [
     limit: "[optional query] 1–100 per day · default: 100",
   }, [{
     date: "2026-07-22", boss: { key: "flame-demon", name: "Flame Demon" },
-    rows: [{ rank: 1, playerId: "119934456", name: "Sendrock", damage: 868570000000, damageText: "868.57B" }],
+    rows: [{ rank: 1, playerId: "100000002", name: "ExampleChampion", damage: 868570000000, damageText: "868.57B" }],
   }]),
   endpoint("Bosses", "GET", "/api/v1/rankings/boss/all-time", "All-time records", "Best historical score for each member.", true, {
     limit: "[optional query] 1–100 · default: 10",
-  }, [{ playerId: "119934456", name: "Sendrock", damage: 923010000000, bossName: "Fire Dragon" }]),
+  }, [{ playerId: "100000002", name: "ExampleChampion", damage: 923010000000, bossName: "Fire Dragon" }]),
   endpoint("Bosses", "GET", "/api/v1/rankings/boss/weekly", "Weekly leaderboard", "Total damage over one week.", true, {
     week: "[optional query] Monday in YYYY-MM-DD format · default: latest week",
     limit: "[optional query] 1–100 · default: 10",
-  }, [{ weekStart: "2026-07-20", playerId: "119934456", name: "Sendrock", damage: 1791580000000 }]),
+  }, [{ weekStart: "2026-07-20", playerId: "100000002", name: "ExampleChampion", damage: 1791580000000 }]),
   endpoint("Bosses", "GET", "/api/v1/rankings/boss/by-boss", "Records by boss", "Ranked personal records for one boss or the full rotation.", true, {
     boss: "[optional query] boss identifier · default: all bosses",
     limit: "[optional query] 1–100 per boss · default: 10",
@@ -272,7 +289,7 @@ function requestParts(item) {
   const parameterEntries = Object.keys(item.parameters);
   const query = parameterEntries.filter((name) => parameterMeta(item.parameters[name]).location === "query").slice(0, 2);
   const suffix = query.length ? `?${query.map((name) => `${name}=value`).join("&")}` : "";
-  const path = item.path.replace("{playerId}", "119934456");
+  const path = item.path.replace("{playerId}", "100000002");
   return { path, suffix };
 }
 

@@ -2,10 +2,11 @@
 set -eu
 
 release_kind="${1:-patch}"
-env_file="${ENV_FILE:-.env.production}"
+env_file="${ENV_FILE:-platform/.env.production}"
+compose_file="platform/compose.yml"
 
 if [ ! -f "$env_file" ]; then
-  echo "Missing $env_file. Copy .env.production.example and configure it first." >&2
+  echo "Missing $env_file. Copy platform/.env.example and configure it first." >&2
   exit 1
 fi
 
@@ -44,9 +45,12 @@ esac
 next_version="$major.$minor.$patch"
 export ARCHERO_IMAGE_TAG="$next_version"
 
+echo "Backing up persistent data before release..."
+sh ./scripts/backup.sh "$env_file"
+
 echo "Building Archero $next_version..."
-docker compose --env-file "$env_file" -f docker-compose.prod.yml build app
-docker compose --env-file "$env_file" -f docker-compose.prod.yml up -d --no-deps app
+docker compose --env-file "$env_file" -f "$compose_file" build app
+docker compose --env-file "$env_file" -f "$compose_file" up -d --no-deps app
 ./scripts/wait-for-app.sh "$env_file" "$next_version"
 printf '%s\n' "$next_version" > .release-version
 echo "Archero $next_version is deployed and healthy."

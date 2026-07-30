@@ -1,20 +1,11 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  captures as localCaptures,
-  changes as localChanges,
-  dailyBossRawSnapshots as localDailyBossRawSnapshots,
-  dailyRawSnapshots as localDailyRawSnapshots,
-  guildRoster as localGuildRoster,
-  memberSnapshots as localMemberSnapshots,
-  previousMemberSnapshots as localPreviousMemberSnapshots,
-  rules as localDefaultRules,
-} from "../../sample-data.js";
+import { defaultRules as bundledDefaultRules } from "../../default-rules.js";
 import {
   activityLabel,
   buildSummary,
-  compareSourceRows,
   dateOnly,
   defaultSortDirection,
   evaluateMember,
@@ -27,29 +18,61 @@ import {
   newMemberDay,
   sortMembers,
 } from "../../metrics.js";
+import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
+import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
 const RULES_STORAGE_KEY = "archero-observer-rules";
-const CHECK_VALIDATION_STORAGE_KEY = "archero-observer-check-validation";
-let captures = localCaptures;
-let changes = localChanges;
-let dailyBossRawSnapshots = localDailyBossRawSnapshots;
-let dailyRawSnapshots = localDailyRawSnapshots;
-let guildRoster = localGuildRoster;
-let memberSnapshots = localMemberSnapshots;
-let previousMemberSnapshots = localPreviousMemberSnapshots;
-let defaultRules = localDefaultRules;
+let captures = {};
+let changes = [];
+let dailyBossRawSnapshots = [];
+let dailyRawSnapshots = [];
+let guildRoster = [];
+let memberSnapshots = [];
+let previousMemberSnapshots = [];
+let defaultRules = bundledDefaultRules;
+let identityLinks = [];
 let members = buildCurrentMembers();
+let dashboardDataCache = null;
+let dashboardDataCachedAt = 0;
+let dashboardDataPromise = null;
+const DASHBOARD_DATA_CACHE_MS = 15_000;
+
+function loadDashboardData({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && dashboardDataCache && now - dashboardDataCachedAt < DASHBOARD_DATA_CACHE_MS) {
+    return Promise.resolve(dashboardDataCache);
+  }
+  if (dashboardDataPromise) return dashboardDataPromise;
+  dashboardDataPromise = fetch("/api/dashboard-data", { cache: "no-store" })
+    .then(async (response) => {
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? `Dashboard data returned HTTP ${response.status}.`);
+      return payload;
+    })
+    .then((payload) => {
+      if (payload?.data) {
+        dashboardDataCache = payload;
+        dashboardDataCachedAt = Date.now();
+      }
+      return payload;
+    })
+    .finally(() => {
+      dashboardDataPromise = null;
+    });
+  return dashboardDataPromise;
+}
 
 function applyDashboardData(data) {
-  captures = objectOrDefault(data.captures, localCaptures);
-  changes = arrayOrDefault(data.changes, localChanges);
-  dailyBossRawSnapshots = arrayOrDefault(data.dailyBossRawSnapshots, localDailyBossRawSnapshots);
-  dailyRawSnapshots = arrayOrDefault(data.dailyRawSnapshots, localDailyRawSnapshots);
-  guildRoster = arrayOrDefault(data.guildRoster, localGuildRoster);
-  memberSnapshots = arrayOrDefault(data.memberSnapshots, localMemberSnapshots);
-  previousMemberSnapshots = arrayOrDefault(data.previousMemberSnapshots, localPreviousMemberSnapshots);
-  defaultRules = { ...localDefaultRules, ...(data.rules && typeof data.rules === "object" ? data.rules : {}) };
+  captures = objectOrDefault(data.captures, {});
+  changes = arrayOrDefault(data.changes, []);
+  dailyBossRawSnapshots = arrayOrDefault(data.dailyBossRawSnapshots, []);
+  dailyRawSnapshots = arrayOrDefault(data.dailyRawSnapshots, []);
+  guildRoster = arrayOrDefault(data.guildRoster, []);
+  memberSnapshots = arrayOrDefault(data.memberSnapshots, []);
+  previousMemberSnapshots = arrayOrDefault(data.previousMemberSnapshots, []);
+  identityLinks = arrayOrDefault(data.identityLinks, []);
+  defaultRules = { ...bundledDefaultRules, ...(data.rules && typeof data.rules === "object" ? data.rules : {}) };
   members = buildCurrentMembers();
 }
 
@@ -62,52 +85,101 @@ function objectOrDefault(value, fallback) {
 }
 
 function buildCurrentMembers() {
-  const rosterMembers = mergeRosterMetrics(guildRoster, memberSnapshots);
   const latestDay = [...dailyRawSnapshots].sort((left, right) => left.date.localeCompare(right.date)).at(-1);
+  const linkedSnapshots = (latestDay?.rows ?? [])
+    .filter((snapshot) => !snapshot.playerId && identityPlayerIdForName(snapshotObservedName(snapshot)))
+    .map((snapshot) => ({
+      ...snapshot,
+      name: snapshotObservedName(snapshot),
+      playerId: identityPlayerIdForName(snapshotObservedName(snapshot)),
+      metricsCaptured: true,
+      metricsVerified: true,
+    }));
+  const knownRosterIds = new Set(guildRoster.map((entry) => entry.playerId).filter(Boolean));
+  const linkedRosterEntries = identityLinks
+    .filter((link) => link.playerId && !knownRosterIds.has(link.playerId))
+    .map((link) => ({
+      playerId: link.playerId,
+      name: link.observedName,
+      status: "active",
+      joinedAt: null,
+      identitySource: "manual",
+    }));
+  const snapshotsById = new Map(memberSnapshots.filter((snapshot) => snapshot.playerId).map((snapshot) => [snapshot.playerId, snapshot]));
+  for (const snapshot of linkedSnapshots) snapshotsById.set(snapshot.playerId, snapshot);
+  const statusById = new Map(
+    identityLinks
+      .filter((link) => link.playerId && link.status)
+      .map((link) => [link.playerId, link.status]),
+  );
+  const rosterWithOverrides = [...guildRoster, ...linkedRosterEntries].map((entry) => ({
+    ...entry,
+    status: statusById.get(entry.playerId) ?? entry.status,
+  }));
+  const rosterMembers = mergeRosterMetrics(rosterWithOverrides, [...snapshotsById.values()]);
   if (!latestDay) return rosterMembers;
 
   const rosterNames = new Set(rosterMembers.map((member) => normalizedMemberName(member.name)));
   const unresolvedMembers = (latestDay.rows ?? [])
-    .filter((snapshot) => !snapshot.playerId && snapshot.name && !rosterNames.has(normalizedMemberName(snapshot.name)))
-    .map((snapshot, index) => ({
-      rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(snapshot.name)}`,
-      playerId: null,
-      name: snapshot.name,
-      previousNames: [],
-      discord: "",
-      discordName: snapshot.name,
-      discordLinked: false,
-      searchAliases: [],
-      role: snapshot.role ?? "member",
-      joinedAt: null,
-      leftAt: null,
-      status: "active",
-      absenceUntil: null,
-      absenceReason: "",
-      warnings: [],
-      officerNote: "",
-      power: snapshot.power ?? null,
-      power7d: null,
-      power14dPercent: null,
-      contributionToday: null,
-      contribution7d: snapshot.contribution7d ?? null,
-      contributionDelta: null,
-      contributionTotal: null,
-      bossDamageToday: snapshot.bossDamageToday ?? null,
-      bossDamageTotal: null,
-      bossRank: null,
-      bossAttacks: snapshot.bossAttacks ?? null,
-      bossAttacksDelta: null,
-      powerDelta: null,
-      previousSnapshot: null,
-      lastSeenAt: latestDay.date,
-      lastActivityDays: snapshot.lastActivityDays ?? null,
-      metricsCaptured: true,
-      metricsVerified: true,
-      verificationNote: snapshot.verificationNote ?? "",
-    }));
+    .filter(
+      (snapshot) =>
+        !snapshot.playerId
+        && snapshotObservedName(snapshot)
+        && !identityPlayerIdForName(snapshotObservedName(snapshot))
+        && !rosterNames.has(normalizedMemberName(snapshotObservedName(snapshot))),
+    )
+    .map((snapshot, index) => {
+      const observedName = snapshotObservedName(snapshot);
+      return {
+        rowId: `unresolved-${latestDay.date}-${index}-${normalizedMemberName(observedName)}`,
+        playerId: null,
+        name: observedName,
+        previousNames: [],
+        discord: "",
+        discordName: observedName,
+        discordLinked: false,
+        searchAliases: [],
+        role: snapshot.role ?? "member",
+        joinedAt: null,
+        leftAt: null,
+        status: "active",
+        absenceUntil: null,
+        absenceReason: "",
+        warnings: [],
+        officerNote: "",
+        power: snapshot.power ?? null,
+        power7d: null,
+        power14dPercent: null,
+        contributionToday: null,
+        contribution7d: snapshot.contribution7d ?? null,
+        contributionDelta: null,
+        contributionTotal: null,
+        bossDamageToday: snapshot.bossDamageToday ?? null,
+        bossDamageTotal: null,
+        bossRank: null,
+        bossAttacks: snapshot.bossAttacks ?? null,
+        bossAttacksDelta: null,
+        powerDelta: null,
+        previousSnapshot: null,
+        lastSeenAt: latestDay.date,
+        lastActivityDays: snapshot.lastActivityDays ?? null,
+        activityText: snapshot.activityText ?? null,
+        metricsCaptured: true,
+        metricsVerified: true,
+        verificationNote: snapshot.verificationNote ?? "",
+      };
+    });
 
   return [...rosterMembers, ...unresolvedMembers];
+}
+
+function identityPlayerIdForName(name) {
+  const normalized = normalizedMemberName(name);
+  return identityLinks.find((link) => link.normalizedName === normalized)?.playerId ?? null;
+}
+
+function snapshotObservedName(snapshot) {
+  return snapshot?.detectedName || snapshot?.name || "";
 }
 
 function normalizedMemberName(value) {
@@ -131,48 +203,64 @@ const routeMeta = {
   dashboard: ["Dashboard", "Operational view of guild checks, boss damage, and alerts."],
   members: ["Members", "Search, status, and individual progression."],
   boss: ["Boss", "Guild boss damage comparison, daily rankings, and records."],
-  check: ["Check", "Review imported values by captured day."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
-  admin: ["Admin", "Operational tools for capture, validation, and local rules."],
+  admin: ["Admin", "Operational tools and local rules."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
   activity: ["Activity", "Roster events, absences, and warnings."],
   settings: ["Rules", "Local thresholds before backend wiring."],
 };
 
-export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null }) {
-  const [sessionRole, setSessionRole] = useState(null);
+export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null, initialSessionRole = null }) {
+  const [sessionRole, setSessionRole] = useState(initialSessionRole);
   const [rules, setRules] = useStoredRules();
   const [dataVersion, setDataVersion] = useState(0);
+  const [dataLoading, setDataLoading] = useState(true);
   const [dataWarning, setDataWarning] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState({ key: null, direction: "asc" });
   const [detailRanges, setDetailRanges] = useState({ progression: "1w", mi: "1w", donation: "1w" });
-  const [annotations, setAnnotations] = useState(() =>
-    Object.fromEntries(members.map((member) => [memberKey(member), { notes: [], warnings: [...(member.warnings ?? [])] }])),
-  );
+  const [warningActions, setWarningActions] = useState({});
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/dashboard-data", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
+    setDataLoading(true);
+    loadDashboardData({ force: true })
       .then((payload) => {
         if (cancelled || !payload?.data) return;
         applyDashboardData(payload.data);
+        setWarningActions(payload.data.warningActions ?? {});
         setDataWarning(payload.warning ?? "");
         if (!window.localStorage.getItem(RULES_STORAGE_KEY)) {
           setRules(normalizeRules({ ...defaultRules, currentDate: currentImportDate() }));
         }
         setDataVersion((version) => version + 1);
+        setDataLoading(false);
       })
-      .catch(() => {});
+      .catch((error) => {
+        if (cancelled) return;
+        applyDashboardData({
+          captures: {},
+          changes: [],
+          dailyBossRawSnapshots: [],
+          dailyRawSnapshots: [],
+          guildRoster: [],
+          memberSnapshots: [],
+          previousMemberSnapshots: [],
+          identityLinks: [],
+        });
+        setDataWarning(error instanceof Error ? error.message : "Dashboard data is unavailable.");
+        setDataVersion((version) => version + 1);
+        setDataLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialRoute]);
 
   useEffect(() => {
+    if (initialSessionRole) return undefined;
     let cancelled = false;
     fetch("/api/auth/session", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -183,19 +271,40 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialSessionRole]);
 
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
-  const selectedMember = selectedMemberCandidate && !isFormerStatus(selectedMemberCandidate.status) ? selectedMemberCandidate : null;
+  const selectedMember = selectedMemberCandidate;
   const [title, subtitle] = routeMeta[activeRoute];
+
+  async function updateWarningAction(event, nextAction) {
+    const response = await fetch("/api/warning-actions", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        playerId: event.playerId,
+        date: event.date,
+        type: event.type,
+        status: nextAction.status,
+        note: nextAction.note ?? "",
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error ?? "Unable to save warning status.");
+    setWarningActions((current) => ({
+      ...current,
+      [automaticWarningKey(event.playerId, event.date, event.type)]: payload.action,
+    }));
+    return payload.action;
+  }
 
   return (
     <div className="app-shell">
       <AppSidebar
         activeRoute={activeRoute}
         sessionRole={sessionRole}
-        checkpointValue={formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}
+        checkpointValue={formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}
       />
       <main className="main" data-version={dataVersion}>
         <header className="topbar">
@@ -203,13 +312,13 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             <h1>{selectedMember?.name ?? title}</h1>
             <p>
               {selectedMember
-                ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays)}`
+                ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays, selectedMember.activityText)}`
                 : subtitle}
             </p>
           </div>
           <div className="topbar-meta" aria-label="Last update">
             <span>Last update</span>
-            <strong>{formatDateTime(captures.lastImportedAt ?? captures.lastCapturedAt)}</strong>
+            <strong>{formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}</strong>
           </div>
         </header>
         {dataWarning ? (
@@ -218,26 +327,31 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             <span>{dataWarning}</span>
           </div>
         ) : null}
+        {dataLoading ? (
+          <section className="panel">
+            <PanelHeading title="Loading current data" subtitle="Fetching the latest validated guild snapshot." />
+          </section>
+        ) : null}
 
-        {activeRoute === "dashboard" && <Dashboard rules={rules} sessionRole={sessionRole} />}
-        {activeRoute === "members" && (
+        {!dataLoading && activeRoute === "dashboard" && <Dashboard rules={rules} />}
+        {!dataLoading && activeRoute === "members" && (
           <MembersView query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} sort={sort} setSort={setSort} rules={rules} />
         )}
-        {activeRoute === "boss" && <BossView />}
-        {activeRoute === "check" && <CheckView />}
-        {activeRoute === "data" && <DataView />}
-        {activeRoute === "admin" && <AdminOverview />}
-        {activeRoute === "member" && selectedMember && (
+        {!dataLoading && activeRoute === "boss" && <BossView />}
+        {!dataLoading && activeRoute === "data" && <DataView />}
+        {!dataLoading && activeRoute === "admin" && <AdminView dataVersion={dataVersion} />}
+        {!dataLoading && activeRoute === "member" && selectedMember && (
           <MemberDetail
             member={selectedMember}
             rules={rules}
             ranges={detailRanges}
             setRanges={setDetailRanges}
-            annotations={annotations}
-            setAnnotations={setAnnotations}
+            sessionRole={sessionRole}
+            warningActions={warningActions}
+            updateWarningAction={updateWarningAction}
           />
         )}
-        {activeRoute === "member" && !selectedMember && (
+        {!dataLoading && activeRoute === "member" && !selectedMember && (
           <section className="panel">
             <PanelHeading title="Member not found" subtitle="This member URL does not match the current roster data." />
             <a className="secondary-button" href="/members">
@@ -245,9 +359,16 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             </a>
           </section>
         )}
-        {activeRoute === "rankings" && <Rankings />}
-        {activeRoute === "activity" && <HistoryView annotations={annotations} />}
-        {activeRoute === "settings" && <RulesView rules={rules} setRules={setRules} />}
+        {!dataLoading && activeRoute === "rankings" && <Rankings />}
+        {!dataLoading && activeRoute === "activity" && (
+          <HistoryView
+            rules={rules}
+            sessionRole={sessionRole}
+            warningActions={warningActions}
+            updateWarningAction={updateWarningAction}
+          />
+        )}
+        {!dataLoading && activeRoute === "settings" && <RulesView rules={rules} setRules={setRules} />}
       </main>
     </div>
   );
@@ -259,10 +380,6 @@ function DataView() {
   const [messages, setMessages] = useState([]);
   const [adbStatus, setAdbStatus] = useState({ checking: true, connected: false, devices: [], error: null });
   const [captureDialog, setCaptureDialog] = useState(null);
-  const [uploadKind, setUploadKind] = useState("guild-members");
-  const [uploadDate, setUploadDate] = useState(todayLabel());
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadResult, setUploadResult] = useState(null);
   const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
   const [importJob, setImportJob] = useState(null);
   const [importHistory, setImportHistory] = useState([]);
@@ -443,62 +560,6 @@ function DataView() {
     }
   }
 
-  async function uploadScreenshot() {
-    if (!uploadFile) {
-      addDataMessage(setMessages, {
-        action: "upload",
-        status: "error",
-        title: "Upload failed",
-        detail: "Choose a PNG screenshot first.",
-      });
-      return;
-    }
-    const label = dataKindLabel(uploadKind);
-    const date = uploadDate.trim() || todayLabel();
-    const confirmed = window.confirm(`Save this PNG as the next ${label} screenshot for ${date}?`);
-    if (!confirmed) return;
-
-    setBusyAction("upload");
-    setUploadResult(null);
-    try {
-      const form = new FormData();
-      form.set("kind", uploadKind);
-      form.set("date", date);
-      form.set("file", uploadFile);
-      const response = await fetch("/api/data/upload", {
-        method: "POST",
-        headers: dataActionHeaders(),
-        body: form,
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok === false) {
-        addDataMessage(setMessages, {
-          action: "upload",
-          status: "error",
-          title: "Upload failed",
-          detail: payload.error ?? `HTTP ${response.status}`,
-        });
-        return;
-      }
-      setUploadResult(payload.upload);
-      addDataMessage(setMessages, {
-        action: "upload",
-        status: payload.duplicate ? "warning" : "success",
-        title: payload.duplicate ? `${label} already exists` : `${label} uploaded`,
-        detail: payload.duplicate ? `${payload.upload.path} already matches this PNG.` : `${payload.upload.path} · index ${payload.upload.index}`,
-      });
-    } catch (error) {
-      addDataMessage(setMessages, {
-        action: "upload",
-        status: "error",
-        title: "Upload failed",
-        detail: error instanceof Error ? error.message : "Unexpected browser error",
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   return (
     <div className="data-page">
       <section className={`panel data-status-panel ${adbStatus.connected ? "connected" : "disconnected"}`}>
@@ -518,7 +579,7 @@ function DataView() {
       </section>
 
       <section className="panel data-command-panel">
-        <PanelHeading title="ADB screenshot" subtitle="Confirm before capture, then review the exact screenshot that was saved." />
+        <PanelHeading title="BlueStacks screenshot" subtitle="Capture only: no OCR, import, or database write runs until you request synchronization." />
         <div className="data-command-grid">
           <DataActionButton
             title="Guild members"
@@ -533,31 +594,6 @@ function DataView() {
             onClick={() => openCapture("guild-boss")}
           />
         </div>
-      </section>
-
-      <section className="panel data-import-panel">
-        <PanelHeading title="Upload screenshot" subtitle="Choose an existing PNG and save it as the next numbered raw screenshot." />
-        <div className="data-import-row">
-          <label className="data-date-field">
-            <span>Type</span>
-            <select value={uploadKind} onChange={(event) => setUploadKind(event.target.value)}>
-              <option value="guild-members">Guild members</option>
-              <option value="guild-boss">Guild boss</option>
-            </select>
-          </label>
-          <label className="data-date-field">
-            <span>Capture date</span>
-            <input value={uploadDate} onChange={(event) => setUploadDate(event.target.value)} placeholder="YYYY-MM-DD" inputMode="numeric" />
-          </label>
-          <label className="data-file-field">
-            <span>PNG file</span>
-            <input type="file" accept="image/png" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} />
-          </label>
-          <button className="primary-button" type="button" disabled={busyAction !== null} onClick={uploadScreenshot}>
-            {busyAction === "upload" ? "Uploading..." : "Upload screenshot"}
-          </button>
-        </div>
-        {uploadResult ? <ScreenshotPreview title="Uploaded screenshot" capture={uploadResult} /> : null}
       </section>
 
       <section className="panel data-import-panel">
@@ -669,21 +705,323 @@ function DataActionButton({ title, detail, disabled, onClick }) {
   );
 }
 
-function AdminOverview() {
-  const cards = [
-    ["Data", "Capture ADB screenshots, upload PNG files, and synchronize the dashboard.", "/admin/data"],
-    ["Check", "Review imported rows and validate suspicious OCR values.", "/admin/check"],
-    ["Rules", "Adjust local thresholds used by guild checks.", "/admin/rules"],
-  ];
+function AdminView({ dataVersion }) {
+  const [query, setQuery] = useState("");
+  const [selectedKey, setSelectedKey] = useState("");
+  const [records, setRecords] = useState({});
+  const [loadState, setLoadState] = useState({ loading: true, error: "" });
+  const adminMembers = useMemo(
+    () => [...members].sort((left, right) => left.name.localeCompare(right.name)),
+    [dataVersion],
+  );
+  const normalizedQuery = normalizedMemberName(query);
+  const filteredMembers = adminMembers.filter((member) =>
+    !normalizedQuery
+    || normalizedMemberName(`${member.name} ${member.playerId ?? ""}`).includes(normalizedQuery),
+  );
+  const selectedMember = adminMembers.find((member) => memberKey(member) === selectedKey)
+    ?? filteredMembers[0]
+    ?? null;
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/member-admin", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) throw new Error(payload.error ?? "Unable to load member administration.");
+        if (active) {
+          setRecords(payload.records ?? {});
+          setLoadState({ loading: false, error: "" });
+        }
+      })
+      .catch((error) => {
+        if (active) setLoadState({ loading: false, error: error instanceof Error ? error.message : "Unable to load member administration." });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function updateRecord(playerId, record) {
+    setRecords((current) => ({ ...current, [playerId]: record }));
+  }
+
+  const absenceCount = Object.values(records).filter((record) => record?.absenceUntil && record.absenceUntil >= todayLabel()).length;
+  const warningCount = Object.values(records).reduce((total, record) => total + (record?.warnings?.length ?? 0), 0);
+  const noteCount = Object.values(records).reduce((total, record) => total + (record?.notes?.length ?? 0), 0);
+  const missingIdCount = adminMembers.filter((member) => !member.playerId).length;
+
   return (
-    <div className="admin-overview-grid">
-      {cards.map(([title, detail, href]) => (
-        <a className="admin-overview-card" href={href} key={title}>
-          <strong>{title}</strong>
-          <span>{detail}</span>
-        </a>
-      ))}
+    <div className="admin-management">
+      <div className="admin-summary-grid">
+        <article className="metric-card">
+          <span>Announced absences</span>
+          <strong>{absenceCount}</strong>
+          <small>Currently active</small>
+        </article>
+        <article className="metric-card">
+          <span>Manual warnings</span>
+          <strong>{warningCount}</strong>
+          <small>Private admin records</small>
+        </article>
+        <article className="metric-card">
+          <span>Officer notes</span>
+          <strong>{noteCount}</strong>
+          <small>Private admin records</small>
+        </article>
+        <article className="metric-card">
+          <span>Missing IDs</span>
+          <strong>{missingIdCount}</strong>
+          <small>Identity links to define</small>
+        </article>
+      </div>
+
+      {loadState.error ? <div className="data-warning" role="alert">{loadState.error}</div> : null}
+
+      <div className="admin-member-layout">
+        <section className="panel admin-member-directory">
+          <PanelHeading title="Members" subtitle="Select a person to edit private administration data." />
+          <label className="admin-member-search">
+            <span>Search by name or player ID</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Name or ID"
+            />
+          </label>
+          <div className="admin-member-list">
+            {filteredMembers.map((member) => {
+              const record = member.playerId ? records[member.playerId] : null;
+              const active = memberKey(member) === memberKey(selectedMember ?? {});
+              return (
+                <button
+                  className={`admin-member-button ${active ? "active" : ""}`}
+                  type="button"
+                  key={memberKey(member)}
+                  onClick={() => setSelectedKey(memberKey(member))}
+                >
+                  <span>
+                    <strong>{member.name}</strong>
+                    <small>{member.playerId ?? "Missing player ID"}</small>
+                  </span>
+                  <span className="admin-member-badges">
+                    {record?.absenceUntil && record.absenceUntil >= todayLabel() ? <small>Absent</small> : null}
+                    {(record?.warnings?.length ?? 0) > 0 ? <small>{record.warnings.length} warning(s)</small> : null}
+                  </span>
+                </button>
+              );
+            })}
+            {filteredMembers.length === 0 ? <p className="muted">No member matches this search.</p> : null}
+          </div>
+        </section>
+
+        <section className="panel admin-member-editor">
+          {loadState.loading ? <p className="muted">Loading private member data...</p> : null}
+          {!loadState.loading && selectedMember ? (
+            <AdminMemberEditor
+              key={memberKey(selectedMember)}
+              member={selectedMember}
+              record={selectedMember.playerId ? records[selectedMember.playerId] : null}
+              onSaved={updateRecord}
+            />
+          ) : null}
+          {!loadState.loading && !selectedMember ? <p className="muted">Select a member to begin.</p> : null}
+        </section>
+      </div>
     </div>
+  );
+}
+
+function AdminMemberEditor({ member, record, onSaved }) {
+  const [playerIdDraft, setPlayerIdDraft] = useState("");
+  const [absenceUntil, setAbsenceUntil] = useState(record?.absenceUntil ?? "");
+  const [absenceReason, setAbsenceReason] = useState(record?.absenceReason ?? "");
+  const [warningsText, setWarningsText] = useState((record?.warnings ?? []).map((warning) => warning.reason).join("\n"));
+  const [notesText, setNotesText] = useState((record?.notes ?? []).map((note) => note.note).join("\n"));
+  const [saveState, setSaveState] = useState({ saving: false, error: "", success: "" });
+
+  async function assignPlayerId(event) {
+    event.preventDefault();
+    const playerId = playerIdDraft.trim();
+    if (!/^\d{6,20}$/.test(playerId)) {
+      setSaveState({ saving: false, error: "Player ID must contain 6 to 20 digits.", success: "" });
+      return;
+    }
+    setSaveState({ saving: true, error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ observedName: member.name, playerId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.link) throw new Error(payload?.error ?? "Identity save failed.");
+      dashboardDataCache = null;
+      window.location.reload();
+    } catch (error) {
+      setSaveState({ saving: false, error: error instanceof Error ? error.message : "Identity save failed.", success: "" });
+    }
+  }
+
+  async function updateStatus(status) {
+    if (!member.playerId || saveState.saving) return;
+    setSaveState({ saving: true, error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ action: "status", playerId: member.playerId, observedName: member.name, status }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.member) throw new Error(payload?.error ?? "Member status save failed.");
+      dashboardDataCache = null;
+      window.location.reload();
+    } catch (error) {
+      setSaveState({ saving: false, error: error instanceof Error ? error.message : "Member status save failed.", success: "" });
+    }
+  }
+
+  async function savePrivateData(event) {
+    event.preventDefault();
+    if (!member.playerId) return;
+    setSaveState({ saving: true, error: "", success: "" });
+    const at = todayLabel();
+    const nextRecord = {
+      absenceUntil: absenceUntil || null,
+      absenceReason,
+      warnings: annotationLines(warningsText).map((reason) => ({ reason, at })),
+      notes: annotationLines(notesText).map((note) => ({ note, at })),
+    };
+    try {
+      const response = await fetch("/api/member-admin", {
+        method: "PUT",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ playerId: member.playerId, record: nextRecord }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.record) throw new Error(payload?.error ?? "Private member data save failed.");
+      onSaved(member.playerId, payload.record);
+      setSaveState({ saving: false, error: "", success: "Member administration saved." });
+    } catch (error) {
+      setSaveState({ saving: false, error: error instanceof Error ? error.message : "Private member data save failed.", success: "" });
+    }
+  }
+
+  function setAbsenceDays(days) {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    setAbsenceUntil(localIsoDate(date));
+  }
+
+  return (
+    <>
+      <header className="admin-editor-heading">
+        <div>
+          <h2>{member.name}</h2>
+          <p>{member.playerId ?? "Identity not defined"} · {roleLabel(member.role)}</p>
+        </div>
+        <a className="secondary-button compact-action" href={`/members/${encodeURIComponent(memberKey(member))}`}>
+          View profile
+        </a>
+      </header>
+
+      {!member.playerId ? (
+        <form className="admin-control-block" onSubmit={assignPlayerId}>
+          <div>
+            <strong>Define player ID</strong>
+            <p>Link this detected name to its permanent Archero identity.</p>
+          </div>
+          <div className="admin-inline-controls">
+            <input
+              inputMode="numeric"
+              pattern="[0-9]{6,20}"
+              value={playerIdDraft}
+              onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
+              placeholder="119000000"
+            />
+            <button className="primary-button" type="submit" disabled={saveState.saving}>Assign ID</button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <div className="admin-control-block">
+            <div>
+              <strong>Guild status</strong>
+              <p>Manual confirmation overrides incomplete capture assumptions.</p>
+            </div>
+            <div className="member-status-actions">
+              {["active", "left", "kicked"].map((status) => (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  key={status}
+                  disabled={saveState.saving || member.status === status}
+                  onClick={() => updateStatus(status)}
+                >
+                  {displayLabel(status)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <form className="admin-private-form" onSubmit={savePrivateData}>
+            <div className="admin-control-block">
+              <div>
+                <strong>Announced absence</strong>
+                <p>Record how long the member expects to be unavailable.</p>
+              </div>
+              <label>
+                <span>Until</span>
+                <input type="date" value={absenceUntil} onChange={(event) => setAbsenceUntil(event.target.value)} />
+              </label>
+              <div className="admin-quick-days">
+                {[7, 14, 30].map((days) => (
+                  <button className="secondary-button compact-action" type="button" key={days} onClick={() => setAbsenceDays(days)}>
+                    {days} days
+                  </button>
+                ))}
+                <button className="secondary-button compact-action" type="button" onClick={() => { setAbsenceUntil(""); setAbsenceReason(""); }}>
+                  Clear
+                </button>
+              </div>
+              <label>
+                <span>Reason or context</span>
+                <input value={absenceReason} onChange={(event) => setAbsenceReason(event.target.value)} placeholder="Holiday, exams, travel..." />
+              </label>
+            </div>
+
+            <div className="admin-control-block">
+              <label>
+                <strong>Manual warnings</strong>
+                <span>One private warning per line.</span>
+                <textarea value={warningsText} onChange={(event) => setWarningsText(event.target.value)} placeholder="Reason for a manual warning" rows={4} />
+              </label>
+            </div>
+
+            <div className="admin-control-block">
+              <label>
+                <strong>Officer notes</strong>
+                <span>One private note per line.</span>
+                <textarea value={notesText} onChange={(event) => setNotesText(event.target.value)} placeholder="Private context for officers" rows={4} />
+              </label>
+            </div>
+
+            <div className="admin-save-row">
+              <div>
+                {saveState.error ? <span className="form-error" role="alert">{saveState.error}</span> : null}
+                {saveState.success ? <span className="form-success" role="status">{saveState.success}</span> : null}
+              </div>
+              <button className="primary-button" type="submit" disabled={saveState.saving}>
+                {saveState.saving ? "Saving..." : "Save member"}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+
+      {saveState.error && !member.playerId ? <span className="form-error" role="alert">{saveState.error}</span> : null}
+    </>
   );
 }
 
@@ -706,7 +1044,7 @@ function CaptureDialog({ dialog, busyAction, adbConnected, onCancel, onConfirm, 
           <div className="data-modal-body">
             <div className="data-confirm-box">
               <StatusPill label={adbConnected ? "Connected" : "Disconnected"} severity={adbConnected ? "positive" : "warning"} />
-              <p>Only one ADB screenshot will be taken. No navigation command will run.</p>
+              <p>Only one BlueStacks screenshot will be taken. No navigation, OCR, import, or database command will run.</p>
             </div>
             <div className="data-modal-actions">
               <button className="secondary-button" type="button" onClick={onCancel}>
@@ -822,9 +1160,8 @@ function dataActionHeaders(extra = {}) {
   return { "x-archero-dashboard-action": "1", ...extra };
 }
 
-function Dashboard({ rules, sessionRole }) {
+function Dashboard({ rules }) {
   const [donationRange, setDonationRange] = useState("1m");
-  const [validatedRows] = useCheckValidation();
   const summary = buildSummary(members, rules);
   const powerStats = buildDailyPowerStats();
   const medianPowerSeries = powerStats.map((day) => day.median);
@@ -833,13 +1170,14 @@ function Dashboard({ rules, sessionRole }) {
   const donationStats = filterDatedChartRows(weeklyDonationStats, donationRange);
   const donationSeries = donationStats.map((day) => day.total);
   const donationDates = donationStats.map((day) => formatWeekLabel(day.date));
-  const checkDays = buildCheckDays();
-  const latestCheckDay = checkDays.at(-1);
+  const latestMemberDay = Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots.at(-1) : null;
   const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
   const bossRows = currentBossDay?.rows?.filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number") ?? [];
   const topBoss = [...bossRows].sort((left, right) => (right.bossDamageToday ?? 0) - (left.bossDamageToday ?? 0))[0] ?? null;
-  const dashboardStatus = buildDashboardStatus(latestCheckDay, currentBossDay, validatedRows);
-  const kickedCandidates = buildKickedCandidates(dashboardStatus.captureDate);
+  const latestCaptureDate = latestMemberDay?.date ?? currentBossDay?.date ?? null;
+  const guildCaptureRows = latestMemberDay?.rows?.length ?? 0;
+  const bossCaptureRows = currentBossDay?.rows?.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)) ?? [];
+  const kickedCandidates = buildKickedCandidates(latestCaptureDate);
   const cards = [
     ["Members", summary.members, `${summary.freeSlots} free slot(s), ${summary.formerMembers} former`],
     ["Known IDs", summary.knownIds, `${summary.unresolvedIds} missing`],
@@ -862,44 +1200,24 @@ function Dashboard({ rules, sessionRole }) {
           <div className="snapshot-grid">
             <div>
               <span>Date</span>
-              <strong>{dashboardStatus.captureDate ?? "No capture"}</strong>
+              <strong>{latestCaptureDate ?? "No capture"}</strong>
             </div>
             <div>
               <span>Guild captures</span>
-              <strong>{dashboardStatus.guildRows}/{summary.currentMembers}</strong>
+              <strong>{guildCaptureRows}/{summary.currentMembers}</strong>
             </div>
             <div>
               <span>Boss captures</span>
-              <strong>{dashboardStatus.bossMatched}/{dashboardStatus.bossRows}</strong>
-            </div>
-            <div>
-              <span>Check reviewed</span>
-              <strong>{dashboardStatus.reviewed}/{dashboardStatus.totalRows}</strong>
+              <strong>{bossRows.length}/{bossCaptureRows.length}</strong>
             </div>
           </div>
         </section>
         <section className="panel command-panel">
           <PanelHeading
-            title={sessionRole === "admin" ? "Needs review" : "Roster status"}
-            subtitle={sessionRole === "admin" ? "Fast links to the rows that can affect data quality." : "Current member status and possible departures."}
+            title="Roster status"
+            subtitle="Current member status and possible departures."
           />
           <div className="review-list">
-            {sessionRole === "admin" ? (
-              <>
-                <a href="/admin/check">
-                  <span>Pending check rows</span>
-                  <strong>{dashboardStatus.pendingRows}</strong>
-                </a>
-                <a href="/admin/check">
-                  <span>Bad rows</span>
-                  <strong>{dashboardStatus.invalidRows}</strong>
-                </a>
-                <a href="/admin/check">
-                  <span>Unmatched boss rows</span>
-                  <strong>{dashboardStatus.bossUnmatched}</strong>
-                </a>
-              </>
-            ) : null}
             <a href="/members">
               <span>Kicked candidates</span>
               <strong>{kickedCandidates.length}</strong>
@@ -908,13 +1226,6 @@ function Dashboard({ rules, sessionRole }) {
         </section>
       </div>
       <div className="action-strip">
-        {sessionRole === "admin" ? (
-          <a className="action-tile" href="/admin/check">
-            <span>Check</span>
-            <strong>{latestCheckDay ? `${latestCheckDay.rows.length} rows` : "No capture"}</strong>
-            <small>{latestCheckDay?.date ?? "Import screenshots"}</small>
-          </a>
-        ) : null}
         <a className="action-tile" href="/boss">
           <span>Boss</span>
           <strong>{topBoss ? formatBossDamageText(topBoss.bossDamageToday, topBoss.damageText) : "Not recorded"}</strong>
@@ -1116,7 +1427,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
                   ["name", "Name"],
                   ["discord", "Discord"],
                   ["role", "Role"],
-                  ["activity", "Activity"],
+                  ["activity", "Last connection"],
                   ["donation", "Donation"],
                   ["bossTries", "Boss tries"],
                   ["power", "Power"],
@@ -1753,294 +2064,14 @@ function BossByBossRecordsPanel({ records, limit = 3 }) {
   );
 }
 
-function CheckView() {
-  const days = useMemo(() => buildCheckDays(), []);
-  const [dayIndex, setDayIndex] = useState(Math.max(0, days.length - 1));
-  const [validatedRows, setValidatedRows] = useCheckValidation();
-  const [checkMode, setCheckMode] = useState("guild");
-  const [sourceSortDirection, setSourceSortDirection] = useState("asc");
-  const [checkQuery, setCheckQuery] = useState("");
-  const selectedDay = days[dayIndex] ?? null;
-  const rows = selectedDay?.rows ?? [];
-  const visibleRows = rows.filter((row) => row.captureType === checkMode && checkRowMatchesQuery(row, checkQuery));
-  const orderedRows = useMemo(
-    () =>
-      [...visibleRows].sort((left, right) => {
-        const leftStatus = checkReviewStatus(validatedRows, selectedDay?.date, left.reviewId);
-        const rightStatus = checkReviewStatus(validatedRows, selectedDay?.date, right.reviewId);
-        const sourceOrder = compareSourceOrder(left, right);
-        return checkReviewRank(leftStatus) - checkReviewRank(rightStatus) || (sourceSortDirection === "asc" ? sourceOrder : -sourceOrder);
-      }),
-    [selectedDay?.date, sourceSortDirection, validatedRows, visibleRows],
-  );
-  const validCount = visibleRows.filter((row) => checkReviewStatus(validatedRows, selectedDay?.date, row.reviewId) === "valid").length;
-  const invalidCount = visibleRows.filter((row) => checkReviewStatus(validatedRows, selectedDay?.date, row.reviewId) === "invalid").length;
-  const reviewedCount = validCount + invalidCount;
-  const guildCount = rows.filter((row) => row.captureType === "guild").length;
-  const bossCount = rows.filter((row) => row.captureType === "boss").length;
-
-  function previousDay() {
-    setDayIndex((current) => Math.max(0, current - 1));
-  }
-
-  function nextDay() {
-    setDayIndex((current) => Math.min(days.length - 1, current + 1));
-  }
-
-  function toggleSourceSort() {
-    setSourceSortDirection((current) => (current === "asc" ? "desc" : "asc"));
-  }
-
-  function setRowGood(reviewId) {
-    if (!selectedDay) return;
-    const key = checkRowKey(selectedDay.date, reviewId);
-    setValidatedRows((current) => {
-      const next = { ...current };
-      if (checkReviewStatus(next, selectedDay.date, reviewId) === "valid") {
-        delete next[key];
-      } else {
-        next[key] = { status: "valid", fields: {} };
-      }
-      return next;
-    });
-  }
-
-  function toggleBadField(reviewId, field) {
-    if (!selectedDay) return;
-    const key = checkRowKey(selectedDay.date, reviewId);
-    setValidatedRows((current) => {
-      const next = { ...current };
-      const fields = { ...checkReviewFields(next, selectedDay.date, reviewId) };
-      if (fields[field]) delete fields[field];
-      else fields[field] = checkFieldLabel(field);
-      if (Object.keys(fields).length === 0) delete next[key];
-      else next[key] = { status: "invalid", fields };
-      return next;
-    });
-  }
-
-  return (
-    <section className="panel table-panel check-panel">
-      <div className="panel-heading check-heading">
-        <div>
-          <h2>{checkMode === "guild" ? "Guild check" : "Boss check"}</h2>
-          <p>
-            {reviewedCount}/{visibleRows.length} reviewed. Good {validCount}, bad {invalidCount}.
-          </p>
-        </div>
-        <div className="check-actions">
-          <div className="day-stepper" aria-label="Captured day selector">
-            <button className="secondary-button" type="button" onClick={previousDay} disabled={dayIndex === 0}>
-              Previous day
-            </button>
-            <strong>{selectedDay?.date ?? "No day"}</strong>
-            <button className="secondary-button" type="button" onClick={nextDay} disabled={dayIndex >= days.length - 1}>
-              Next day
-            </button>
-          </div>
-        </div>
-      </div>
-      <div className="check-mode-tabs" role="tablist" aria-label="Check type">
-        <button className={checkMode === "guild" ? "active" : ""} type="button" role="tab" aria-selected={checkMode === "guild"} onClick={() => setCheckMode("guild")}>
-          <span>Guild</span>
-          <strong>{guildCount}</strong>
-        </button>
-        <button className={checkMode === "boss" ? "active" : ""} type="button" role="tab" aria-selected={checkMode === "boss"} onClick={() => setCheckMode("boss")}>
-          <span>Boss</span>
-          <strong>{bossCount}</strong>
-        </button>
-      </div>
-      <div className="check-toolbar">
-        <label>
-          <span>Search</span>
-          <input value={checkQuery} onChange={(event) => setCheckQuery(event.target.value)} placeholder="Name or ID" type="search" />
-        </label>
-      </div>
-      <div className="table-wrap">
-        <table className={`check-table ${checkMode === "boss" ? "boss-check-table" : "guild-check-table"}`}>
-          <colgroup>
-            <col className="col-check-status" />
-            {checkMode === "guild" ? (
-              <>
-                <col className="col-check-name" />
-                <col className="col-check-role" />
-                <col className="col-check-power" />
-                <col className="col-check-boss" />
-                <col className="col-check-donation" />
-                <col className="col-check-source" />
-              </>
-            ) : (
-              <>
-                <col className="col-check-rank" />
-                <col className="col-check-name" />
-                <col className="col-check-damage" />
-                <col className="col-check-source" />
-                <col className="col-check-notes" />
-              </>
-            )}
-          </colgroup>
-          <thead>
-            {checkMode === "guild" ? (
-              <tr>
-                <th>Check</th>
-                <th>User</th>
-                <th>Role</th>
-                <th className="numeric">Power</th>
-                <th className="numeric">Boss tries</th>
-                <th className="numeric">Donation</th>
-                <th>
-                  <button className={`sort-button active ${sourceSortDirection}`} type="button" onClick={toggleSourceSort}>
-                    Source
-                  </button>
-                </th>
-              </tr>
-            ) : (
-              <tr>
-                <th>Check</th>
-                <th className="numeric">Rank</th>
-                <th>Name</th>
-                <th className="numeric">Damage</th>
-                <th>
-                  <button className={`sort-button active ${sourceSortDirection}`} type="button" onClick={toggleSourceSort}>
-                    Source raw
-                  </button>
-                </th>
-                <th>Status</th>
-              </tr>
-            )}
-          </thead>
-          <tbody>
-            {orderedRows.map((row) => {
-              const reviewStatus = checkReviewStatus(validatedRows, selectedDay?.date, row.reviewId);
-              const isValid = reviewStatus === "valid";
-              const invalidFields = checkReviewFields(validatedRows, selectedDay?.date, row.reviewId);
-              return (
-                <tr className={reviewStatus ? `check-row-${reviewStatus}` : ""} key={row.reviewId}>
-                  <td>
-                    <CheckReviewButtons
-                      label={row.name}
-                      date={selectedDay?.date}
-                      isValid={isValid}
-                      invalidFields={invalidFields}
-                      onMarkValid={() => setRowGood(row.reviewId)}
-                    />
-                  </td>
-                  {checkMode === "guild" ? (
-                    <>
-                      <td>
-                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          <div className="player-cell">
-                            <strong>{row.name}</strong>
-                            <small>{row.playerId ?? "Missing ID"}</small>
-                          </div>
-                        </ReviewableValue>
-                      </td>
-                      <td>
-                        <ReviewableValue field="role" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {roleLabel(row.role)}
-                        </ReviewableValue>
-                      </td>
-                      <td className="numeric">
-                        <ReviewableValue field="power" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {formatOptionalCompact(row.power)}
-                        </ReviewableValue>
-                      </td>
-                      <td className="numeric">
-                        <ReviewableValue field="bossAttacks" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {formatOptionalNumber(row.bossAttacks)}
-                        </ReviewableValue>
-                      </td>
-                      <td className="numeric">
-                        <ReviewableValue field="contribution7d" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {formatOptionalNumber(row.contribution7d)}
-                        </ReviewableValue>
-                      </td>
-                      <td>
-                        <span className="muted">{row.source}</span>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="numeric">
-                        <ReviewableValue field="bossRank" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {formatOptionalNumber(row.bossRank)}
-                        </ReviewableValue>
-                      </td>
-                      <td>
-                        <ReviewableValue field="identity" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {row.name}
-                        </ReviewableValue>
-                      </td>
-                      <td className="numeric">
-                        <ReviewableValue field="bossDamageToday" invalidFields={invalidFields} onToggle={(field) => toggleBadField(row.reviewId, field)}>
-                          {formatOptionalBossDamage(row.bossDamageToday, row.bossDamageText)}
-                        </ReviewableValue>
-                      </td>
-                      <td>
-                        <span className="muted">{row.source}</span>
-                      </td>
-                      <td>
-                        <span className="muted">{displayLabel(row.status)}</span>
-                      </td>
-                    </>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function CheckReviewButtons({ label, date, isValid, invalidFields, onMarkValid }) {
-  const badLabels = Object.keys(invalidFields).map(checkFieldLabel);
-  return (
-    <div className="check-toggle-group">
-      <button
-        className={`check-good-button ${isValid ? "checked" : ""}`}
-        type="button"
-        aria-label={`${isValid ? "Uncheck good" : "Mark good"} ${label} on ${date}`}
-        aria-pressed={isValid}
-        title={isValid ? "Uncheck good" : "Mark good"}
-        onClick={onMarkValid}
-      >
-        {isValid ? "Good ✓" : "Good"}
-      </button>
-      {badLabels.length > 0 ? <small className="bad-fields-summary">Bad: {badLabels.join(", ")}</small> : null}
-    </div>
-  );
-}
-
-function ReviewableValue({ field, invalidFields, onToggle, children }) {
-  const isBad = Boolean(invalidFields[field]);
-  const label = checkFieldLabel(field);
-  return (
-    <button
-      className={`check-value-button ${isBad ? "bad" : ""}`}
-      type="button"
-      aria-label={`${isBad ? "Clear error on" : "Mark as incorrect:"} ${label}`}
-      aria-pressed={isBad}
-      title={isBad ? `Clear ${label} error` : `Mark ${label} as incorrect`}
-      onClick={() => onToggle(field)}
-    >
-      {children}
-      {isBad ? <small className="bad-value-label">Not good</small> : null}
-    </button>
-  );
-}
-
-function checkRowMatchesQuery(row, query) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return [row.name, row.playerId, row.source, row.role].filter(Boolean).join(" ").toLowerCase().includes(normalized);
-}
-
 function MemberRow({ member, rules }) {
+  const router = useRouter();
   const evaluation = evaluateMember(member, rules);
   return (
-    <tr className={`member-row ${rowStateClass(evaluation)} ${isFormerStatus(member.status) ? "row-former" : ""} clickable-row`} onClick={() => navigateToMember(member)}>
+    <tr
+      className={`member-row ${rowStateClass(evaluation)} ${isFormerStatus(member.status) ? "row-former" : ""} clickable-row`}
+      onClick={() => navigateToMember(member, router)}
+    >
       <td>
         <div className="player-cell">
           <strong>{member.playerId ?? "Missing ID"}</strong>
@@ -2056,7 +2087,7 @@ function MemberRow({ member, rules }) {
         <DiscordDot member={member} />
       </td>
       <td>{roleLabel(member.role)}</td>
-      <td>{activityLabel(member.lastActivityDays)}</td>
+      <td>{activityLabel(member.lastActivityDays, member.activityText)}</td>
       <td className="numeric">
         <ValueWithDelta value={formatOptionalNumber(member.contribution7d)} delta={member.contributionDelta} formatter={formatNumber} />
       </td>
@@ -2076,40 +2107,98 @@ function MemberRow({ member, rules }) {
   );
 }
 
-function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnotations }) {
-  const evaluation = evaluateMember(member, rules);
-  const history = dailyHistory(member);
+function MemberDetail({
+  member,
+  rules,
+  ranges,
+  setRanges,
+  sessionRole,
+  warningActions,
+  updateWarningAction,
+}) {
+  const rawEvaluation = evaluateMember(member, rules);
+  const history = evaluateWarningHistory(dailyHistory(member), rules, member);
+  const automaticWarnings = history.flatMap((row) =>
+    row.warnings.map((warning) => ({
+      ...warning,
+      date: row.date,
+      id: `${row.date}:${warning.type}`,
+      playerId: member.playerId,
+      action: warningActions[automaticWarningKey(member.playerId, row.date, warning.type)] ?? defaultWarningAction(),
+    })),
+  ).sort((left, right) => right.date.localeCompare(left.date));
+  const latestWarningDate = history.at(-1)?.date;
+  const latestAutomaticWarnings = automaticWarnings.filter((warning) => warning.date === latestWarningDate);
+  const actionableWarnings = latestAutomaticWarnings.filter((warning) => !warningActionClosed(warning.action?.status));
+  const evaluation = latestAutomaticWarnings.length > 0 && actionableWarnings.length === 0
+    ? {
+        status: latestAutomaticWarnings.some((warning) => warning.action?.status === "excused") ? "Excused" : "Active",
+        severity: "positive",
+        flags: [],
+      }
+    : rawEvaluation;
   const currentHistory = history.find((row) => row.date === currentImportDate());
   const weeklyHistory = filterHistoryByRange(history, "1w");
-  const memberAnnotations = annotations[memberKey(member)] ?? { notes: [], warnings: [] };
-  const needs = evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
+  const needs = latestAutomaticWarnings.length > 0
+    ? actionableWarnings.map((warning) => ({ label: warning.label, severity: warning.severity, detail: warning.detail }))
+    : evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
+  const [playerIdDraft, setPlayerIdDraft] = useState("");
+  const [identitySaveState, setIdentitySaveState] = useState({ saving: false, error: "" });
+  const [statusSaveState, setStatusSaveState] = useState({ saving: false, error: "" });
 
   function setRange(chart, range) {
     setRanges((current) => ({ ...current, [chart]: range }));
   }
 
-  function addAnnotation(type, value) {
-    if (!value.trim()) return;
-    setAnnotations((current) => updateMemberAnnotations(current, member, type, (items) => [{ [annotationValueKey(type)]: value.trim(), at: todayLabel() }, ...items]));
+  async function assignPlayerId(event) {
+    event.preventDefault();
+    const playerId = playerIdDraft.trim();
+    if (!/^\d{6,20}$/.test(playerId)) {
+      setIdentitySaveState({ saving: false, error: "Player ID must contain 6 to 20 digits." });
+      return;
+    }
+    setIdentitySaveState({ saving: true, error: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ observedName: member.name, playerId }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.link) throw new Error(payload?.error || "Identity save failed.");
+      identityLinks = [
+        ...identityLinks.filter((link) => link.normalizedName !== payload.link.normalizedName),
+        payload.link,
+      ];
+      members = buildCurrentMembers();
+      dashboardDataCache = null;
+      window.location.assign(`/members/${encodeURIComponent(playerId)}`);
+    } catch (error) {
+      setIdentitySaveState({ saving: false, error: error instanceof Error ? error.message : "Identity save failed." });
+    }
   }
 
-  function updateAnnotation(type, index, value) {
-    if (!value.trim()) return;
-    setAnnotations((current) =>
-      updateMemberAnnotations(current, member, type, (items) =>
-        items.map((item, itemIndex) => (itemIndex === index ? { ...item, [annotationValueKey(type)]: value.trim(), editing: false } : item)),
-      ),
-    );
-  }
-
-  function setEditing(type, index, editing) {
-    setAnnotations((current) =>
-      updateMemberAnnotations(current, member, type, (items) => items.map((item, itemIndex) => ({ ...item, editing: itemIndex === index ? editing : false }))),
-    );
-  }
-
-  function deleteAnnotation(type, index) {
-    setAnnotations((current) => updateMemberAnnotations(current, member, type, (items) => items.filter((_, itemIndex) => itemIndex !== index)));
+  async function updateMemberStatus(status) {
+    if (!member.playerId || statusSaveState.saving) return;
+    setStatusSaveState({ saving: true, error: "" });
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          action: "status",
+          playerId: member.playerId,
+          observedName: member.name,
+          status,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload?.member) throw new Error(payload?.error || "Member status save failed.");
+      dashboardDataCache = null;
+      window.location.reload();
+    } catch (error) {
+      setStatusSaveState({ saving: false, error: error instanceof Error ? error.message : "Member status save failed." });
+    }
   }
 
   return (
@@ -2141,9 +2230,71 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
               label="Boss damage"
               value={formatOptionalBossDamage(currentHistory?.bossDamage ?? member.bossDamageToday, currentHistory?.bossDamageText ?? member.bossDamageText)}
             />
-            <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays)} />
+            <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays, member.activityText)} />
             <DetailMetric label="Joined guild" value={member.joinedAt ?? "Not recorded"} />
           </div>
+          {!member.playerId && sessionRole === "admin" ? (
+            <form className="identity-assignment" onSubmit={assignPlayerId}>
+              <div>
+                <strong>Unmatched OCR member</strong>
+                <span>Assign the permanent Archero player ID. Existing history with the same observed name will be linked.</span>
+              </div>
+              <label>
+                <span>Player ID</span>
+                <input
+                  inputMode="numeric"
+                  pattern="[0-9]{6,20}"
+                  value={playerIdDraft}
+                  onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
+                  placeholder="119000000"
+                  aria-describedby={identitySaveState.error ? "identity-save-error" : undefined}
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={identitySaveState.saving}>
+                {identitySaveState.saving ? "Saving..." : "Assign ID"}
+              </button>
+              {identitySaveState.error ? (
+                <small className="form-error" id="identity-save-error" role="alert">
+                  {identitySaveState.error}
+                </small>
+              ) : null}
+            </form>
+          ) : null}
+          {member.playerId && sessionRole === "admin" ? (
+            <div className="identity-assignment member-status-assignment">
+              <div>
+                <strong>Guild membership</strong>
+                <span>Confirm departures manually so an incomplete screenshot never removes somebody automatically.</span>
+              </div>
+              <div className="member-status-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "active"}
+                  onClick={() => updateMemberStatus("active")}
+                >
+                  Active
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "left"}
+                  onClick={() => updateMemberStatus("left")}
+                >
+                  Left
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={statusSaveState.saving || member.status === "kicked"}
+                  onClick={() => updateMemberStatus("kicked")}
+                >
+                  Kicked
+                </button>
+              </div>
+              {statusSaveState.error ? <small className="form-error" role="alert">{statusSaveState.error}</small> : null}
+            </div>
+          ) : null}
         </section>
         <section className="panel">
           <PanelHeading title="Needs" subtitle="Automatic checks against the current rules" />
@@ -2173,30 +2324,14 @@ function MemberDetail({ member, rules, ranges, setRanges, annotations, setAnnota
           <PanelHeading title="Daily history" subtitle="Captured days in the current week." />
           <HistoryTable rows={weeklyHistory} />
         </section>
-        <AnnotationPanel
-          title="Warnings"
-          subtitle="Officer-tracked behavior issues"
-          type="warnings"
-          items={memberAnnotations.warnings}
-          emptyText="No warnings recorded for this member."
-          placeholder="Reason for the warning"
-          onAdd={addAnnotation}
-          onEdit={updateAnnotation}
-          onDelete={deleteAnnotation}
-          onSetEditing={setEditing}
-        />
-        <AnnotationPanel
-          title="Officer notes"
-          subtitle="Context that should affect moderation decisions"
-          type="notes"
-          items={memberAnnotations.notes}
-          emptyText="No notes recorded for this member."
-          placeholder="Add a note"
-          onAdd={addAnnotation}
-          onEdit={updateAnnotation}
-          onDelete={deleteAnnotation}
-          onSetEditing={setEditing}
-        />
+        {sessionRole === "admin" ? (
+          <AutomaticWarningHistory
+            events={automaticWarnings}
+            title="Automatic warning history"
+            canManage
+            onUpdate={updateWarningAction}
+          />
+        ) : null}
       </div>
     </>
   );
@@ -2265,28 +2400,20 @@ function Rankings() {
   );
 }
 
-function HistoryView({ annotations }) {
+function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }) {
   const currentMembers = currentMembersList();
-  const latestWeeklyDonation = latestWeeklyDonationLeaders(12);
-  const maxContribution = Math.max(...latestWeeklyDonation.rows.map((member) => member.peak ?? 0), 1);
-  const rows = latestWeeklyDonation.rows;
-  const warnings = currentMembers.flatMap((member) => (annotations[memberKey(member)]?.warnings ?? []).map((warning) => ({ member, warning })));
+  const automaticWarnings = currentMembers
+    .flatMap((member) =>
+      warningHistoryEvents(dailyHistory(member), rules, member).map((warning) => ({
+        ...warning,
+        member,
+        playerId: member.playerId,
+        action: warningActions[automaticWarningKey(member.playerId, warning.date, warning.type)] ?? defaultWarningAction(),
+      })),
+    )
+    .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
   return (
     <div className="dashboard-grid">
-      <section className="panel chart-panel wide">
-        <PanelHeading title="Weekly donation peak" subtitle={latestWeeklyDonation.label} />
-        <div className="bar-list">
-          {rows.map((member) => (
-            <div className="bar-row" key={memberKey(member)}>
-              <strong>{member.name}</strong>
-              <div className="bar-track" aria-hidden="true">
-                <div className="bar-fill" style={{ width: `${Math.max(2, ((member.peak ?? 0) / maxContribution) * 100)}%` }} />
-              </div>
-              <span className="numeric">{formatNumber(member.peak ?? 0)}</span>
-            </div>
-          ))}
-        </div>
-      </section>
       <section className="panel">
         <PanelHeading title="Roster history" subtitle="Human review to confirm by an officer" />
         <EventList events={changes} />
@@ -2295,24 +2422,15 @@ function HistoryView({ annotations }) {
         <PanelHeading title="Announced absences" subtitle="Excused members are not pushed into the watch list" />
         <p className="muted">No announced absences recorded yet.</p>
       </section>
-      <section className="panel">
-        <PanelHeading title="Warnings" subtitle="Officer-tracked behavior notes" />
-        <div className="event-list">
-          {warnings.length === 0 ? (
-            <p className="muted">No warnings recorded yet.</p>
-          ) : (
-            warnings.map(({ member, warning }, index) => (
-              <article className="event-item" key={`${memberKey(member)}-${index}`}>
-                <header>
-                  <strong>{member.name}</strong>
-                  <span className="muted">{warning.at ?? "No date"}</span>
-                </header>
-                <span>{warning.reason}</span>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
+      {sessionRole === "admin" ? (
+        <AutomaticWarningHistory
+          events={automaticWarnings}
+          title="Automatic warning history"
+          showMember
+          canManage
+          onUpdate={updateWarningAction}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2346,84 +2464,6 @@ function RulesView({ rules, setRules }) {
         </section>
       ))}
     </div>
-  );
-}
-
-function AnnotationPanel({ title, subtitle, type, items, emptyText, placeholder, onAdd, onEdit, onDelete, onSetEditing }) {
-  const [value, setValue] = useState("");
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>{title}</h2>
-          <p>{subtitle}</p>
-        </div>
-        <StatusPill label={String(items.length)} severity="neutral" />
-      </div>
-      <form
-        className="inline-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onAdd(type, value);
-          setValue("");
-        }}
-      >
-        <input value={value} onChange={(event) => setValue(event.target.value)} type="text" placeholder={placeholder} />
-        <button className="primary-button" type="submit">
-          {type === "warnings" ? "Add warning" : "Add note"}
-        </button>
-      </form>
-      <div className="event-list detail-list">
-        {items.length === 0 ? (
-          <p className="muted">{emptyText}</p>
-        ) : (
-          items.map((item, index) => (
-            <AnnotationItem key={`${type}-${index}`} type={type} item={item} index={index} onEdit={onEdit} onDelete={onDelete} onSetEditing={onSetEditing} />
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-function AnnotationItem({ type, item, index, onEdit, onDelete, onSetEditing }) {
-  const [value, setValue] = useState(item[annotationValueKey(type)] ?? "");
-  if (item.editing) {
-    return (
-      <article className="event-item annotation-item">
-        <form
-          className="inline-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onEdit(type, index, value);
-          }}
-        >
-          <input value={value} onChange={(event) => setValue(event.target.value)} type="text" />
-          <button className="primary-button" type="submit">
-            Save
-          </button>
-          <button className="secondary-button" type="button" onClick={() => onSetEditing(type, index, false)}>
-            Cancel
-          </button>
-        </form>
-      </article>
-    );
-  }
-  return (
-    <article className="event-item annotation-item">
-      <header>
-        <strong>{item[annotationValueKey(type)]}</strong>
-        <span className="muted">{item.at ?? "Today"}</span>
-      </header>
-      <div className="annotation-actions">
-        <button className="secondary-button compact-action" type="button" onClick={() => onSetEditing(type, index, true)}>
-          Edit
-        </button>
-        <button className="secondary-button compact-action danger-action" type="button" onClick={() => onDelete(type, index)}>
-          Delete
-        </button>
-      </div>
-    </article>
   );
 }
 
@@ -2596,6 +2636,7 @@ function HistoryTable({ rows }) {
             <th>Boss tries</th>
             <th>Boss damage</th>
             <th>Activity</th>
+            <th>Warnings</th>
             <th>Source</th>
           </tr>
         </thead>
@@ -2617,6 +2658,15 @@ function HistoryTable({ rows }) {
               </td>
               <td>{row.activity}</td>
               <td>
+                <div className="warning-tag-list">
+                  {(row.warnings ?? []).length > 0
+                    ? row.warnings.map((warning) => (
+                        <StatusPill label={warning.label} severity={warning.severity} key={warning.type} />
+                      ))
+                    : <span className="muted">—</span>}
+                </div>
+              </td>
+              <td>
                 <span className="muted">{row.source}</span>
               </td>
             </tr>
@@ -2624,6 +2674,103 @@ function HistoryTable({ rows }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function AutomaticWarningHistory({ events, title, showMember = false, canManage = false, onUpdate }) {
+  const visibleEvents = events.slice(0, 100);
+  return (
+    <section className="panel wide">
+      <PanelHeading
+        title={title}
+        subtitle={`${events.length} rule warning(s) recorded; they remain visible after the current status is resolved.`}
+      />
+      <div className="event-list">
+        {events.length === 0 ? (
+          <p className="muted">No automatic warnings recorded yet.</p>
+        ) : (
+          visibleEvents.map((event) => (
+            <AutomaticWarningEvent
+              event={event}
+              showMember={showMember}
+              canManage={canManage}
+              onUpdate={onUpdate}
+              key={`${showMember ? memberKey(event.member) : "member"}-${event.id}`}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function AutomaticWarningEvent({ event, showMember, canManage, onUpdate }) {
+  const action = event.action ?? defaultWarningAction();
+  const [note, setNote] = useState(action.note ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setNote(action.note ?? "");
+  }, [action.note]);
+
+  async function save(nextAction) {
+    if (!canManage || !onUpdate || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onUpdate(event, nextAction);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save warning status.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="event-item warning-history-item">
+      <header>
+        <strong>{showMember ? event.member.name : event.label}</strong>
+        <span className="muted">{event.date}</span>
+      </header>
+      <div className="warning-history-labels">
+        {showMember ? <StatusPill label={event.label} severity={event.severity} /> : null}
+        <StatusPill label={warningActionLabel(action.status)} severity={warningActionSeverity(action.status)} />
+      </div>
+      <span>{event.detail}</span>
+      {canManage ? (
+        <div className="warning-action-editor">
+          <label>
+            Officer follow-up
+            <select
+              value={action.status}
+              disabled={saving}
+              onChange={(changeEvent) => save({ ...action, status: changeEvent.target.value, note })}
+            >
+              <option value="pending">To review</option>
+              <option value="noted">Noted</option>
+              <option value="contacted">Member contacted</option>
+              <option value="excused">Excused / announced</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
+          <label>
+            Note
+            <input
+              value={note}
+              maxLength={500}
+              placeholder="Optional officer note"
+              onChange={(changeEvent) => setNote(changeEvent.target.value)}
+            />
+          </label>
+          <button type="button" className="secondary-button" disabled={saving} onClick={() => save({ ...action, note })}>
+            {saving ? "Saving…" : "Save note"}
+          </button>
+        </div>
+      ) : action.note ? <small className="muted">{action.note}</small> : null}
+      {action.updatedAt ? <small className="muted">Follow-up updated {formatDateTime(action.updatedAt)}</small> : null}
+      {error ? <small className="form-error">{error}</small> : null}
+    </article>
   );
 }
 
@@ -2826,181 +2973,11 @@ function useStoredRules() {
   return [rules, setRules];
 }
 
-function useCheckValidation() {
-  const hydrated = useRef(false);
-  const [validatedRows, setValidatedRows] = useState({});
-  useEffect(() => {
-    let active = true;
-    try {
-      const stored = JSON.parse(localStorage.getItem(CHECK_VALIDATION_STORAGE_KEY) ?? "{}");
-      if (stored && typeof stored === "object" && !Array.isArray(stored)) {
-        setValidatedRows(stored);
-      }
-    } catch {}
-    fetch("/api/data/reviews")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload) => {
-        if (active && payload?.reviews && typeof payload.reviews === "object") {
-          setValidatedRows(payload.reviews);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) hydrated.current = true;
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!hydrated.current) return;
-    localStorage.setItem(CHECK_VALIDATION_STORAGE_KEY, JSON.stringify(validatedRows));
-    fetch("/api/data/reviews", {
-      method: "PUT",
-      headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" },
-      body: JSON.stringify({ reviews: validatedRows }),
-    }).catch(() => {});
-  }, [validatedRows]);
-  return [validatedRows, setValidatedRows];
-}
-
-function updateMemberAnnotations(current, member, type, updater) {
-  const key = memberKey(member);
-  const existing = current[key] ?? { notes: [], warnings: [] };
-  return {
-    ...current,
-    [key]: {
-      ...existing,
-      [type]: updater(existing[type] ?? []),
-    },
-  };
-}
-
-function checkRowKey(date, playerId) {
-  return `${date ?? "unknown"}:${playerId}`;
-}
-
-function checkReviewStatus(validatedRows, date, playerId) {
-  const value = validatedRows[checkRowKey(date, playerId)];
-  if (value === true) return "valid";
-  if (value && typeof value === "object" && (value.status === "valid" || value.status === "invalid")) return value.status;
-  return value === "valid" || value === "invalid" ? value : null;
-}
-
-function checkReviewFields(validatedRows, date, playerId) {
-  const value = validatedRows[checkRowKey(date, playerId)];
-  return value && typeof value === "object" && value.fields && typeof value.fields === "object" && !Array.isArray(value.fields) ? value.fields : {};
-}
-
-const CHECK_FIELD_LABELS = {
-  identity: "User",
-  role: "Role",
-  power: "Power",
-  bossAttacks: "Boss tries",
-  contribution7d: "Donation",
-  bossRank: "Rank",
-  bossDamageToday: "Damage",
-};
-
-function checkFieldLabel(field) {
-  return CHECK_FIELD_LABELS[field] ?? field;
-}
-
-function checkReviewRank(status) {
-  return status ? 1 : 0;
-}
-
-function compareSourceOrder(left, right) {
-  return compareSourceRows(left, right);
-}
-
-function buildCheckDays() {
-  const dailyMemberSnapshots = Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots : [];
-  const dailyBossSnapshots = Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : [];
-  if (dailyMemberSnapshots.length > 0 || dailyBossSnapshots.length > 0) {
-    const dayMap = new Map();
-    for (const day of dailyMemberSnapshots) {
-      dayMap.set(day.date, [...(dayMap.get(day.date) ?? []), ...buildCheckRows(day.rows, day.date)]);
-    }
-    for (const day of dailyBossSnapshots) {
-      dayMap.set(day.date, [...(dayMap.get(day.date) ?? []), ...buildBossCheckRows(day.rows, day.date)]);
-    }
-    return [...dayMap.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([date, rows]) => ({ date, rows }));
-  }
-
-  const previousCaptureDate = captureDate();
-  const previousRows = buildCheckRows(previousMemberSnapshots, previousCaptureDate);
-  const currentRows = buildCheckRows(memberSnapshots, currentImportDate());
-  return [
-    previousRows.length ? { date: previousCaptureDate, rows: previousRows } : null,
-    currentRows.length ? { date: currentImportDate(), rows: currentRows } : null,
-  ].filter(Boolean);
-}
-
-function buildDashboardStatus(latestCheckDay, currentBossDay, validatedRows) {
-  const rows = latestCheckDay?.rows ?? [];
-  const captureDate = latestCheckDay?.date ?? currentBossDay?.date ?? null;
-  const reviewedRows = rows.filter((row) => checkReviewStatus(validatedRows, latestCheckDay?.date, row.reviewId));
-  const invalidRows = rows.filter((row) => checkReviewStatus(validatedRows, latestCheckDay?.date, row.reviewId) === "invalid");
-  const bossRows = currentBossDay?.rows?.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)) ?? [];
-  const bossMatched = bossRows.filter((row) => isCurrentPlayerId(row.playerId)).length;
-  return {
-    captureDate,
-    totalRows: rows.length,
-    guildRows: rows.filter((row) => row.captureType === "guild").length,
-    bossRows: bossRows.length,
-    bossMatched,
-    bossUnmatched: bossRows.filter((row) => !row.playerId).length,
-    reviewed: reviewedRows.length,
-    invalidRows: invalidRows.length,
-    pendingRows: Math.max(0, rows.length - reviewedRows.length),
-  };
-}
-
 function buildKickedCandidates(latestDate) {
   if (!latestDate) return [];
   return members
     .map((member) => memberSnapshotForDate(member, latestDate))
     .filter((member) => member.status === "kicked" && member.verificationNote?.startsWith("Missing from latest import"));
-}
-
-function buildCheckRows(snapshots, date) {
-  const snapshotsById = new Map(snapshots.map((snapshot) => [snapshot.playerId, snapshot]));
-  const currentRolesById = new Map(memberSnapshots.map((snapshot) => [snapshot.playerId, snapshot.role]));
-  const matchedRows = guildRoster
-    .filter((entry) => isCurrentPlayerId(entry.playerId) && snapshotsById.has(entry.playerId))
-    .map((entry) => {
-      const snapshot = snapshotsById.get(entry.playerId);
-      return {
-        captureType: "guild",
-        reviewId: entry.playerId,
-        playerId: entry.playerId,
-        name: entry.name,
-        role: checkRoleFor(entry.playerId, snapshot.role, currentRolesById),
-        power: snapshot.power ?? null,
-        contribution7d: snapshot.contribution7d ?? null,
-        bossAttacks: snapshot.bossAttacks ?? null,
-        bossDamageToday: snapshot.bossDamageToday ?? null,
-        source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
-      };
-    });
-  const unmatchedRows = snapshots
-    .filter((snapshot) => !snapshot.playerId)
-    .map((snapshot, index) => ({
-      captureType: "guild",
-      reviewId: `unmatched:${snapshot.name ?? "member"}:${sourceFromVerification(snapshot.verificationNote) || index}`,
-      playerId: null,
-      name: snapshot.name ?? "Unmatched member",
-      role: snapshot.role ?? "member",
-      power: snapshot.power ?? null,
-      contribution7d: snapshot.contribution7d ?? null,
-      bossAttacks: snapshot.bossAttacks ?? null,
-      bossDamageToday: snapshot.bossDamageToday ?? null,
-      source: sourceFromVerification(snapshot.verificationNote) || `${date} snapshot`,
-    }));
-  return [...matchedRows, ...unmatchedRows];
 }
 
 function buildDailyPowerStats() {
@@ -3138,67 +3115,6 @@ function filterDatedChartRows(rows, range) {
   return rows.filter((row) => Date.parse(`${row.date}T00:00:00`) >= cutoff);
 }
 
-function checkRoleFor(playerId, rawRole, currentRolesById) {
-  const currentRole = currentRolesById.get(playerId);
-  if (["leader", "officer", "elder"].includes(currentRole)) return currentRole;
-  return rawRole ?? "member";
-}
-
-function buildBossCheckRows(rows, date) {
-  return rows.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)).map((row) => ({
-    captureType: "boss",
-    reviewId: row.source,
-    playerId: row.playerId ?? null,
-    rowLabel: row.rowLabel ?? `Boss row ${row.rowIndex + 1}`,
-    area: row.area ?? "list",
-    name: row.name ?? usefulBossRawName(row.rawName) ?? "",
-    rawName: row.rawName ?? null,
-    role: "boss",
-    bossRank: row.bossRank ?? null,
-    power: null,
-    contribution7d: null,
-    bossAttacks: null,
-    bossDamageText: row.damageText ?? null,
-    bossDamageToday: row.bossDamageToday ?? null,
-    source: row.source || `${date} guild-boss row`,
-    status: bossCheckStatus(row),
-  }));
-}
-
-function bossCheckStatus(row) {
-  if (row.playerId) return "Matched";
-  if (row.name || usefulBossRawName(row.rawName)) return "OCR only";
-  if (typeof row.bossDamageToday === "number" || row.damageText) return "Damage only";
-  return "Missing damage";
-}
-
-function usefulBossRawName(value) {
-  if (typeof value !== "string") return null;
-  const cleaned = cleanBossRawName(value);
-  if (cleaned.replace(/[^A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]/g, "").length < 3) return null;
-  if (!/^[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff][A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff ]+[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]$/.test(cleaned)) return null;
-  return cleaned;
-}
-
-function cleanBossRawName(value) {
-  const cleaned = value.trim().replace(/\s+/g, " ");
-  const tokens = cleaned.match(/[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]+/g) ?? [];
-  if (tokens.length === 0) return "";
-  const signalLength = (token) => token.replace(/[^A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]/g, "").length;
-  const usefulTokens = tokens.filter((token) => signalLength(token) >= 2);
-  if (usefulTokens.length === 1) return usefulTokens[0];
-  if (usefulTokens.length > 1) {
-    const ordered = [...usefulTokens].sort((left, right) => signalLength(right) - signalLength(left));
-    if (signalLength(ordered[0]) >= 10 && signalLength(ordered[0]) >= signalLength(ordered[1]) * 2) return ordered[0];
-    if (usefulTokens.every((token) => /^[A-Za-z0-9]+$/.test(token))) return "";
-  }
-  return (usefulTokens.length > 0 ? usefulTokens : tokens).join(" ");
-}
-
-function sourceFromVerification(value) {
-  return value?.replace(/^Screenshot check: /, "").replace(/^Previous screenshot check: /, "").replace(/\.$/, "") ?? "";
-}
-
 function buildBossDashboardData() {
   const dates = Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.map((day) => day.date).sort((left, right) => left.localeCompare(right)) : [];
   const rosterNames = new Map(guildRoster.filter((entry) => isCurrentPlayerId(entry.playerId)).map((entry) => [entry.playerId, entry.name]));
@@ -3270,7 +3186,7 @@ function buildBossDashboardData() {
 }
 
 function currentIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return localIsoDate();
 }
 
 function bossForKey(key) {
@@ -3461,7 +3377,9 @@ function bossSeriesColor(index) {
 }
 
 function memberHistoryDates(memberRows) {
-  return [...new Set(memberRows.flatMap((member) => dailyHistory(member).map((row) => row.date)))].sort((left, right) => left.localeCompare(right));
+  const acceptedDates = acceptedSnapshotDates(dailyRawSnapshots.map((snapshot) => snapshot?.date));
+  if (acceptedDates.length > 0) return acceptedDates;
+  return acceptedSnapshotDates(memberRows.flatMap((member) => dailyHistory(member).map((row) => row.date)));
 }
 
 function memberSnapshotForDate(member, date) {
@@ -3482,6 +3400,7 @@ function memberSnapshotForDate(member, date) {
       bossDamageToday: null,
       bossDamageDelta: null,
       lastActivityDays: null,
+      activityText: null,
       lastSeenAt: null,
       verificationNote: isFormerStatus(status) ? `Missing from latest import on ${date}` : `No capture on ${date}`,
     };
@@ -3500,15 +3419,22 @@ function memberSnapshotForDate(member, date) {
     bossDamageText: row.bossDamageText,
     bossDamageDelta: row.bossDamageDelta,
     lastActivityDays: row.lastActivityDays,
+    activityText: row.activityText ?? null,
     lastSeenAt: row.date,
     verificationNote: row.source,
   };
 }
 
 function dailyHistory(member) {
-  if (!member.metricsCaptured) return [];
   const rawHistory = dailySnapshotHistory(member);
   if (rawHistory.length > 0) return rawHistory;
+  if (!member.metricsCaptured) return [];
+  const snapshotDate = latestDataDate({
+    preferred: member.lastSeenAt,
+    snapshotDates: [...dailyRawSnapshots, ...dailyBossRawSnapshots].map((snapshot) => snapshot?.date),
+    fallbacks: [captures.lastCapturedAt, captures.lastImportedAt],
+  });
+  if (!snapshotDate) return [];
   const rows = [];
   if (member.previousSnapshot) {
     rows.push({
@@ -3522,13 +3448,14 @@ function dailyHistory(member) {
       bossDamage: null,
       bossDamageDelta: null,
       lastActivityDays: member.previousSnapshot.lastActivityDays,
-      activity: activityLabel(member.previousSnapshot.lastActivityDays),
+      activityText: member.previousSnapshot.activityText ?? null,
+      activity: activityLabel(member.previousSnapshot.lastActivityDays, member.previousSnapshot.activityText),
       source: member.previousSnapshot.verificationNote || "Previous snapshot",
     });
   }
   rows.push(
     {
-      date: currentImportDate(),
+      date: snapshotDate,
       power: member.power,
       powerDelta: member.powerDelta,
       donation: member.contribution7d,
@@ -3538,7 +3465,8 @@ function dailyHistory(member) {
       bossDamage: member.bossDamageToday,
       bossDamageDelta: null,
       lastActivityDays: member.lastActivityDays,
-      activity: activityLabel(member.lastActivityDays),
+      activityText: member.activityText ?? null,
+      activity: activityLabel(member.lastActivityDays, member.activityText),
       source: member.verificationNote || "Current snapshot",
     },
   );
@@ -3550,7 +3478,7 @@ function dailySnapshotHistory(member) {
   const rows = [];
   const bossSnapshotsByDate = dailyBossSnapshotsByDate(member.playerId);
   for (const day of dailyRawSnapshots) {
-    const snapshot = day.rows?.find((row) => row.playerId === member.playerId);
+    const snapshot = day.rows?.find((row) => resolvedSnapshotPlayerId(row) === member.playerId);
     if (!snapshot) continue;
     const previous = rows.at(-1);
     const bossSnapshot = bossSnapshotsByDate.get(day.date);
@@ -3567,7 +3495,8 @@ function dailySnapshotHistory(member) {
       bossDamageDelta: metricDelta(bossDamage, previous?.bossDamage),
       bossDamageText: bossSnapshot?.damageText ?? null,
       lastActivityDays: snapshot.lastActivityDays,
-      activity: activityLabel(snapshot.lastActivityDays),
+      activityText: snapshot.activityText ?? null,
+      activity: activityLabel(snapshot.lastActivityDays, snapshot.activityText),
       source: snapshot.verificationNote || "Daily raw snapshot",
     });
   }
@@ -3578,10 +3507,16 @@ function dailyBossSnapshotsByDate(playerId) {
   const snapshots = new Map();
   if (!playerId || !Array.isArray(dailyBossRawSnapshots)) return snapshots;
   for (const day of dailyBossRawSnapshots) {
-    const snapshot = day.rows?.find((row) => row.playerId === playerId && typeof row.bossDamageToday === "number");
+    const snapshot = day.rows?.find(
+      (row) => resolvedSnapshotPlayerId(row) === playerId && typeof row.bossDamageToday === "number",
+    );
     if (snapshot) snapshots.set(day.date, snapshot);
   }
   return snapshots;
+}
+
+function resolvedSnapshotPlayerId(snapshot) {
+  return snapshot?.playerId ?? identityPlayerIdForName(snapshot?.name ?? snapshot?.rawName);
 }
 
 function metricDelta(current, previous) {
@@ -3641,12 +3576,12 @@ function memberKey(member) {
   return member.playerId ?? member.rowId;
 }
 
-function navigateToMember(member) {
-  window.location.href = `/members/${encodeURIComponent(memberKey(member))}`;
+function navigateToMember(member, router) {
+  router.push(`/members/${encodeURIComponent(memberKey(member))}`);
 }
 
 function roleLabel(role) {
-  return { leader: "Leader", officer: "Vice leader", elder: "Elder", member: "Member", boss: "Guild boss" }[role] ?? "Member";
+  return { leader: "Leader", officer: "Vice-leader", elder: "Elder", member: "Guild member", boss: "Guild boss" }[role] ?? "Guild member";
 }
 
 function rowStateClass(evaluation) {
@@ -3724,19 +3659,51 @@ function deltaLine(member) {
 function needDetail(flag, member, rules) {
   if (flag === "Missed boss") return `${member.bossAttacks ?? 0} boss tries recorded, below the ${rules.minBossTries} minimum.`;
   if (flag === "Low contribution") return `${formatNumber(member.contribution7d ?? 0)} donations, below the ${formatNumber(rules.minContribution7d)} rule.`;
-  if (flag === "Game absence") return `Last activity is ${activityLabel(member.lastActivityDays)}.`;
+  if (flag === "Game absence") return `Last activity is ${activityLabel(member.lastActivityDays, member.activityText)}.`;
   if (flag === "Low progression") return `${member.power14dPercent}% power growth over 14 days.`;
   if (flag === "Not in current guild") return "This record is kept for history but excluded from current guild metrics.";
   if (flag === "Excused absence") return member.absenceReason || "Officer-marked absence.";
   return flag;
 }
 
-function annotationValueKey(type) {
-  return type === "warnings" ? "reason" : "note";
+
+function annotationLines(value) {
+  return String(value ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function automaticWarningKey(playerId, date, type) {
+  return `${playerId}:${date}:${type}`;
+}
+
+function defaultWarningAction() {
+  return { status: "pending", note: "", updatedAt: null };
+}
+
+function warningActionLabel(status) {
+  return {
+    pending: "To review",
+    noted: "Noted",
+    contacted: "Member contacted",
+    excused: "Excused",
+    resolved: "Resolved",
+  }[status] ?? "To review";
+}
+
+function warningActionSeverity(status) {
+  if (status === "excused" || status === "resolved") return "positive";
+  if (status === "contacted") return "warning";
+  return "neutral";
+}
+
+function warningActionClosed(status) {
+  return status === "excused" || status === "resolved";
 }
 
 function todayLabel() {
-  return currentImportDate();
+  return currentIsoDate();
 }
 
 function dataActionLabel(action) {
@@ -3897,7 +3864,7 @@ function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeigh
       maxWidth: 190,
     });
     drawText(ctx, roleLabel(member.role), columns.role, baseline, { size: 18, weight: 700, maxWidth: 170 });
-    drawText(ctx, activityLabel(member.lastActivityDays), columns.activity, baseline, { size: 18, weight: 700, maxWidth: 230 });
+    drawText(ctx, activityLabel(member.lastActivityDays, member.activityText), columns.activity, baseline, { size: 18, weight: 700, maxWidth: 230 });
     drawText(ctx, formatOptionalNumber(member.contribution7d), columns.donation, baseline, { size: 18, weight: 750, align: "right" });
     drawText(ctx, formatOptionalNumber(member.bossAttacks), columns.bossTries, baseline, { size: 18, weight: 750, align: "right" });
     drawText(ctx, formatOptionalCompact(member.power), columns.power, baseline, { size: 18, weight: 750, align: "right" });
@@ -3912,27 +3879,28 @@ function drawMembersExportTable(ctx, rows, evaluations, x, y, width, headerHeigh
 }
 
 function currentImportDate() {
-  return dateOnly(captures.lastImportedAt, captures.lastCapturedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+  return latestRawSnapshotDate() ?? dateOnly(captures.lastImportedAt, captures.lastCapturedAt) ?? currentIsoDate();
 }
 
 function captureDate() {
-  return dateOnly(captures.lastCapturedAt, captures.lastImportedAt) ?? latestRawSnapshotDate() ?? currentIsoDate();
+  return latestRawSnapshotDate() ?? dateOnly(captures.lastCapturedAt, captures.lastImportedAt) ?? currentIsoDate();
 }
 
 function latestRawSnapshotDate() {
-  const dates = [...dailyRawSnapshots, ...dailyBossRawSnapshots]
-    .map((snapshot) => dateOnly(snapshot?.date))
-    .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right));
-  return dates.at(-1) ?? null;
+  return latestDataDate({
+    snapshotDates: [...dailyRawSnapshots, ...dailyBossRawSnapshots].map((snapshot) => snapshot?.date),
+  });
 }
 
 function formatDateTime(value) {
+  if (!value) return "Loading…";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unavailable";
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Europe/Paris",
-  }).format(new Date(value));
+  }).format(parsed);
 }
 
 function normalizeRules(value) {

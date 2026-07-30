@@ -8,6 +8,8 @@ import {
   mergeWithLocalFallback,
   normalizeDatabasePayload,
   resetDashboardDataCacheForTest,
+  requiresDatabase,
+  selectWarningActions,
 } from "../app/api/dashboard-data/source.js";
 
 test("database payload never imports demo members or Discord links", () => {
@@ -73,6 +75,23 @@ test("empty database collections stay empty instead of falling back to demo valu
   assert.deepEqual(normalized.dailyBossRawSnapshots, []);
   assert.deepEqual(normalized.rules, {});
   assert.equal(normalized.captures.lastCapturedAt, null);
+});
+
+test("production database mode never exposes bundled data without a database URL", async () => {
+  const payload = await loadDashboardData({
+    environment: { ARCHERO_REQUIRE_DATABASE: "1" },
+  });
+
+  assert.equal(requiresDatabase({ ARCHERO_REQUIRE_DATABASE: "1" }), true);
+  assert.equal(payload.dataMode, "unavailable");
+  assert.deepEqual(payload.data.guildRoster, []);
+});
+
+test("officer warning actions are only included for administrators", () => {
+  const actions = { "119974403:2026-07-29:low_contribution": { status: "contacted" } };
+
+  assert.deepEqual(selectWarningActions(actions, false), {});
+  assert.deepEqual(selectWarningActions(actions, true), actions);
 });
 
 test("an unavailable database produces an explicitly unavailable empty payload", () => {

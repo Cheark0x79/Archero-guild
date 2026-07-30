@@ -1,5 +1,5 @@
-import DashboardApp from "../components/DashboardApp.jsx";
+import DashboardRoute from "../components/DashboardRoute.jsx";
 
 export default function BossPage() {
-  return <DashboardApp initialRoute="boss" />;
+  return <DashboardRoute initialRoute="boss" />;
 }

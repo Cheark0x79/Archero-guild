@@ -1,15 +1,26 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from observer.pipeline.guild_member_ocr import (
     RosterEntry,
+    _clean_observed_name,
     _match_roster_name,
     _parse_visible_activity_days,
+    _read_donation,
+    _parse_role,
     _raw_name_has_signal,
+    _select_observed_name,
+    _should_try_cjk_ocr,
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
+    format_activity_text,
+    format_game_power,
+    format_role_text,
     parse_power,
 )
+from observer.pipeline.guild_members import Rect
 
 
 class GuildMemberOcrTests(unittest.TestCase):
@@ -50,6 +61,29 @@ class GuildMemberOcrTests(unittest.TestCase):
 
         self.assertEqual(_select_integer_candidate(candidates), 550)
 
+    def test_donation_crops_exclude_the_icon_and_trailing_bar(self) -> None:
+        class RecordingImage:
+            def __init__(self) -> None:
+                self.boxes: list[tuple[int, int, int, int]] = []
+
+            def crop(self, box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+                self.boxes.append(box)
+                return box
+
+        image = RecordingImage()
+        row = SimpleNamespace(bounds=Rect(100, 200, 1_000, 100))
+
+        with patch(
+            "observer.pipeline.guild_member_ocr._read_integer_candidates",
+            return_value=[550],
+        ):
+            value = _read_donation(image, row, object())
+
+        self.assertEqual(value, 550)
+        self.assertTrue(image.boxes)
+        self.assertTrue(all(810 <= left <= 820 for left, _top, _right, _bottom in image.boxes))
+        self.assertTrue(all(right <= 960 for _left, _top, right, _bottom in image.boxes))
+
     def test_match_roster_name_removes_ui_prefixes_and_normalizes_zero(self) -> None:
         roster = [
             RosterEntry("1", "June00"),
@@ -59,14 +93,82 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertEqual(_match_roster_name(["Members+ JuneOO"], roster)[0].player_id, "1")
         self.assertEqual(_match_roster_name(["bers? jokewi"], roster)[0].player_id, "2")
 
+    def test_matches_a_cyrillic_member_name(self) -> None:
+        roster = [RosterEntry("119933547", "Алхимик")]
+
+        match = _match_roster_name(["АЛХИМИК |", "AJIXUMUK"], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "119933547")
+        self.assertEqual(match[2], "АЛХИМИК |")
+
+    def test_matches_a_traditional_chinese_member_name(self) -> None:
+        roster = [RosterEntry("119950325", "斯斯雞預料")]
+
+        match = _match_roster_name(["斯斯雞預料"], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "119950325")
+
+    def test_chinese_ocr_runs_for_any_unmatched_row_when_roster_contains_cjk(self) -> None:
+        roster = [RosterEntry("119950325", "斯斯雞預料")]
+
+        self.assertTrue(_should_try_cjk_ocr(["Bh Bh 28 FA ."], roster))
+        self.assertTrue(_should_try_cjk_ocr(["Alco123 |"], roster))
+        self.assertFalse(_should_try_cjk_ocr(["Bh Bh 28 FA ."], [RosterEntry("1", "LatinName")]))
+
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
         self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))
         self.assertFalse(_raw_name_has_signal(" | pers? aA | "))
+
+    def test_observed_name_prefers_repeated_latin_crops_without_noise(self) -> None:
+        self.assertEqual(
+            _select_observed_name(["YYLsea .", "YYLsea .", "YYLsea .", "bers* YYLsea"]),
+            "YYLsea",
+        )
+        self.assertEqual(
+            _select_observed_name(["Alco123 |", "Alco123 |", "Alco123 |", "bers? Alco123 |"]),
+            "Alco123",
+        )
+
+    def test_observed_name_uses_consensus_and_trusted_wide_crop(self) -> None:
+        self.assertEqual(
+            _select_observed_name(["Srandontrandon", "jrandontrandon", "Brandontrandon", "Brandontrandon"]),
+            "Brandontrandon",
+        )
+        self.assertEqual(
+            _select_observed_name(["Blacksynde", "Blacksynde", "Blacksynde", "bers + Blacksynde"]),
+            "Blacksynde",
+        )
+
+    def test_clean_observed_name_removes_ui_and_boundary_punctuation(self) -> None:
+        self.assertEqual(_clean_observed_name("Pignouf ."), "Pignouf")
+        self.assertEqual(_clean_observed_name("Guild Members+ Ceddie12 |"), "Ceddie12")
+        self.assertEqual(_clean_observed_name("bers? Papixl |"), "Papixl")
 
     def test_empty_activity_area_means_member_is_online_today(self) -> None:
         self.assertEqual(_parse_visible_activity_days(""), 0)
         self.assertEqual(_parse_visible_activity_days("   "), 0)
         self.assertEqual(_parse_visible_activity_days("01d 05h"), 1)
+        self.assertEqual(_parse_visible_activity_days("Old 10h"), 1)
+
+    def test_formats_values_like_the_game_display(self) -> None:
+        self.assertEqual(format_game_power(1_260_000), "1.26M")
+        self.assertEqual(format_game_power(923_090), "923.09K")
+        self.assertEqual(format_activity_text("Online", 0), "Online")
+        self.assertEqual(format_activity_text("01d 05h", 1), "1 d 5 h")
+        self.assertEqual(format_activity_text("02d 03h", 2), "2 d 3 h")
+        self.assertEqual(format_activity_text("Old 10h", 1), "1 d 10 h")
+        self.assertEqual(format_role_text("officer"), "Vice-leader")
+        self.assertEqual(format_role_text("member"), "Guild member")
+
+    def test_recognizes_all_guild_roles_and_common_vice_leader_noise(self) -> None:
+        self.assertEqual(_parse_role("Leader"), "leader")
+        self.assertEqual(_parse_role("Vice Leader"), "officer")
+        self.assertEqual(_parse_role("Mice Leader?"), "officer")
+        self.assertEqual(_parse_role("Elder"), "elder")
+        self.assertEqual(_parse_role("Guild Members"), "member")
+        self.assertEqual(_parse_role("_ Guild Memhers +"), "member")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from observer.pipeline.guild_member_ocr import _clean_observed_name, _contains_cjk, _select_observed_name
 from observer.storage.rules import read_rules
 
 
@@ -34,6 +35,7 @@ def export_dashboard_payload(dsn: str) -> dict[str, Any]:
             "rules": _rules(connection, dsn),
             "changes": [],
             "ocrQueue": [],
+            "identityLinks": _identity_links(connection),
         }
     return _jsonable(payload)
 
@@ -144,7 +146,7 @@ def _member_snapshot_sets(connection) -> tuple[list[dict[str, Any]], list[dict[s
                          AND result.capture_date = gs.capture_date
                    )
                ) AS boss_damage_today,
-               m.last_activity_days, m.verification_note
+               m.last_activity_days, m.verification_note, m.raw_payload
         FROM member_metrics m
         JOIN guild_snapshots gs ON gs.id = m.snapshot_id
         JOIN guild_members gm ON gm.user_id = m.user_id
@@ -170,7 +172,7 @@ def _member_snapshot_sets(connection) -> tuple[list[dict[str, Any]], list[dict[s
 
 
 def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
+    rows = list(connection.execute(
         """
         SELECT gs.capture_date, gs.captured_at, gm.current_name, m.user_id,
                m.role, m.power, m.contribution_7d, m.boss_attacks,
@@ -183,13 +185,32 @@ def _daily_member_snapshots(connection) -> list[dict[str, Any]]:
                          AND result.capture_date = gs.capture_date
                    )
                ) AS boss_damage_today,
-               m.last_activity_days, m.verification_note
+               m.last_activity_days, m.verification_note, m.raw_payload
         FROM member_metrics m
         JOIN guild_snapshots gs ON gs.id = m.snapshot_id
         JOIN guild_members gm ON gm.user_id = m.user_id
         ORDER BY gs.capture_date, gm.current_name
         """
-    ).fetchall()
+    ).fetchall())
+    unmatched_table = connection.execute(
+        "SELECT to_regclass('public.unmatched_member_metrics') AS table_name"
+    ).fetchone()
+    if unmatched_table and unmatched_table["table_name"]:
+        rows.extend(
+            connection.execute(
+                """
+                SELECT gs.capture_date, gs.captured_at,
+                       u.observed_name AS current_name, NULL::text AS user_id,
+                       u.role, u.power, u.contribution_7d, u.boss_attacks,
+                       NULL::bigint AS boss_damage_today, u.last_activity_days,
+                       u.verification_note, u.raw_payload
+                FROM unmatched_member_metrics u
+                JOIN guild_snapshots gs ON gs.id = u.snapshot_id
+                ORDER BY gs.capture_date, u.observed_name
+                """
+            ).fetchall()
+        )
+    rows.sort(key=lambda row: (row["capture_date"], row.get("current_name") or ""))
     by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_date[_iso(row["capture_date"])].append(_member_snapshot_row(row))
@@ -202,6 +223,16 @@ def _member_snapshot_row(
     previous_row: dict[str, Any] | None = None,
     history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    raw_payload = row.get("raw_payload")
+    activity_text = raw_payload.get("activity_text") if isinstance(raw_payload, dict) else None
+    source = raw_payload.get("source") if isinstance(raw_payload, dict) else None
+    raw_name = raw_payload.get("raw_name") if isinstance(raw_payload, dict) else None
+    payload_name = raw_payload.get("name") if isinstance(raw_payload, dict) else None
+    detected_name = (
+        _clean_observed_name(payload_name)
+        if isinstance(payload_name, str) and _contains_cjk(payload_name)
+        else _select_observed_name(raw_name.split(" | ")) if isinstance(raw_name, str) else None
+    )
     snapshot = {
         "playerId": row["user_id"],
         "name": row.get("current_name"),
@@ -213,6 +244,11 @@ def _member_snapshot_row(
         "bossAttacks": row.get("boss_attacks"),
         "bossDamageToday": row.get("boss_damage_today"),
         "lastActivityDays": row.get("last_activity_days"),
+        "activityText": activity_text,
+        "source": source or row.get("verification_note"),
+        "rawName": raw_name,
+        "detectedName": detected_name,
+        "matchScore": raw_payload.get("match_score") if isinstance(raw_payload, dict) else None,
         "metricsCaptured": True,
         "metricsVerified": True,
         "verificationNote": row.get("verification_note") or "",
@@ -366,6 +402,29 @@ def _rules(connection, dsn: str) -> dict[str, Any]:
     rows = connection.execute("SELECT key, value FROM rule_settings").fetchall()
     stored = {row["key"]: row["value"] for row in rows}
     return stored or read_rules(dsn)
+
+
+def _identity_links(connection) -> list[dict[str, Any]]:
+    exists = connection.execute(
+        "SELECT to_regclass('public.member_identity_links') AS table_name"
+    ).fetchone()
+    if not exists or not exists["table_name"]:
+        return []
+    rows = connection.execute(
+        """
+        SELECT normalized_name, observed_name, user_id
+        FROM member_identity_links
+        ORDER BY observed_name
+        """
+    ).fetchall()
+    return [
+        {
+            "normalizedName": row["normalized_name"],
+            "observedName": row["observed_name"],
+            "playerId": row["user_id"],
+        }
+        for row in rows
+    ]
 
 
 def _iso(value: Any) -> str | None:

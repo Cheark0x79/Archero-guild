@@ -5,6 +5,7 @@ import {
   applicationUrl,
   AUTH_COOKIE_NAME,
   isAdminPath,
+  isLocalOcrPath,
   isPublicPath,
   roleForSessionToken,
   USER_ROLE,
@@ -36,15 +37,25 @@ test("only login, authentication assets, and health are public", () => {
   assert.equal(isPublicPath("/_next/static/app.js"), true);
   assert.equal(isPublicPath("/dashboard"), false);
   assert.equal(isPublicPath("/api/members"), false);
-  assert.equal(isPublicPath("/admin/check"), false);
+  assert.equal(isPublicPath("/admin/rules"), false);
 });
 
 test("admin pages and data mutation APIs require the admin role", () => {
   assert.equal(isAdminPath("/admin"), true);
-  assert.equal(isAdminPath("/admin/check"), true);
-  assert.equal(isAdminPath("/api/data/upload"), true);
+  assert.equal(isAdminPath("/admin/rules"), true);
+  assert.equal(isAdminPath("/api/data/import"), true);
+  assert.equal(isAdminPath("/api/member-admin"), true);
+  assert.equal(isAdminPath("/api/warning-actions"), true);
   assert.equal(isAdminPath("/dashboard"), false);
   assert.equal(isAdminPath("/api/dashboard-data"), false);
+});
+
+test("local OCR routes are identifiable without blocking remote ingestion", () => {
+  assert.equal(isLocalOcrPath("/admin/data"), true);
+  assert.equal(isLocalOcrPath("/api/data/import"), true);
+  assert.equal(isLocalOcrPath("/admin/rules"), false);
+  assert.equal(isLocalOcrPath("/api/v1/imports"), false);
+  assert.equal(isLocalOcrPath("/api/v1/imports/validate"), false);
 });
 
 test("session tokens resolve to separate user and admin roles", () => {

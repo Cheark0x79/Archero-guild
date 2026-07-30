@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import {
   captures,
   changes,
@@ -9,27 +12,42 @@ import {
   rules,
   ocrQueue,
 } from "../../../sample-data.js";
-import { runObserverModule } from "../data/actions.js";
+import { projectRoot, runObserverModule } from "../data/actions.js";
+import { readMemberAdminRecords } from "../../../lib/member-admin.js";
+import { readWarningActions } from "../../../lib/warning-actions.js";
 
 export async function loadDashboardData(options = {}) {
   const environment = options.environment ?? process.env;
+  const includePrivateDashboardData = Object.hasOwn(options, "includeWarningActions");
   if (!environment.ARCHERO_DATABASE_URL && !environment.DATABASE_URL) {
-    return {
-      ok: true,
-      source: "local",
-      dataMode: "demo",
-      partial: false,
-      missingDomains: [],
-      data: localPayload(),
-    };
+    const payload = requiresDatabase(environment)
+      ? unavailableDatabasePayload("PostgreSQL is required but no database URL is configured.")
+      : {
+          ok: true,
+          source: "local",
+          dataMode: "demo",
+          partial: false,
+          missingDomains: [],
+          data: localPayload(),
+        };
+    return includePrivateDashboardData
+      ? decorateDashboardPayload(payload, options.includeWarningActions)
+      : payload;
   }
 
   const cache = dashboardCache();
   const now = Date.now();
   if (!options.bypassCache && cache.value && cache.expiresAt > now) {
-    return cache.value;
+    return includePrivateDashboardData
+      ? decorateDashboardPayload(cache.value, options.includeWarningActions)
+      : cache.value;
   }
-  if (cache.inFlight) return cache.inFlight;
+  if (cache.inFlight) {
+    const payload = await cache.inFlight;
+    return includePrivateDashboardData
+      ? decorateDashboardPayload(payload, options.includeWarningActions)
+      : payload;
+  }
 
   const runExport = options.runExport ?? (() => runObserverModule("observer.storage.export_json"));
   const request = Promise.resolve()
@@ -52,7 +70,14 @@ export async function loadDashboardData(options = {}) {
       if (cache.inFlight === request) cache.inFlight = null;
     });
   cache.inFlight = request;
-  return request;
+  const payload = await request;
+  return includePrivateDashboardData
+    ? decorateDashboardPayload(payload, options.includeWarningActions)
+    : payload;
+}
+
+export function requiresDatabase(environment = process.env) {
+  return environment.ARCHERO_REQUIRE_DATABASE === "1";
 }
 
 export function invalidateDashboardDataCache() {
@@ -228,6 +253,8 @@ function localPayload() {
     previousMemberSnapshots,
     rules,
     ocrQueue,
+    identityLinks: [],
+    warningActions: {},
   };
 }
 
@@ -270,6 +297,8 @@ function emptyPayload() {
     previousMemberSnapshots: [],
     rules: {},
     ocrQueue: [],
+    identityLinks: [],
+    warningActions: {},
   };
 }
 
@@ -286,7 +315,54 @@ export function normalizeDatabasePayload(data) {
     previousMemberSnapshots: arrayOrEmpty(data.previousMemberSnapshots),
     rules: objectOrDefault(data.rules, {}),
     ocrQueue: arrayOrEmpty(data.ocrQueue),
+    identityLinks: arrayOrEmpty(data.identityLinks),
+    warningActions: {},
   };
+}
+
+async function decorateDashboardPayload(payload, includeWarningActions) {
+  if (!payload?.data || typeof payload.data !== "object") return payload;
+  const memberAdminRecords = await readMemberAdminRecords(projectRoot());
+  const warningActions = selectWarningActions(
+    includeWarningActions ? await readWarningActions(projectRoot()) : {},
+    includeWarningActions,
+  );
+  return {
+    ...payload,
+    data: {
+      ...payload.data,
+      guildRoster: rosterWithAbsences(payload.data.guildRoster, memberAdminRecords),
+      identityLinks: payload.source === "local"
+        ? await localIdentityLinks()
+        : arrayOrEmpty(payload.data.identityLinks),
+      warningActions,
+    },
+  };
+}
+
+export function selectWarningActions(actions, includeWarningActions) {
+  return includeWarningActions && actions && typeof actions === "object" && !Array.isArray(actions)
+    ? actions
+    : {};
+}
+
+function rosterWithAbsences(roster, records) {
+  return arrayOrEmpty(roster).map((member) => {
+    const absenceUntil = member?.playerId ? records[member.playerId]?.absenceUntil : null;
+    return absenceUntil ? { ...member, absenceUntil } : member;
+  });
+}
+
+async function localIdentityLinks() {
+  try {
+    const payload = JSON.parse(
+      await fs.readFile(path.join(projectRoot(), "data", "member-identities.json"), "utf8"),
+    );
+    return Array.isArray(payload) ? payload : [];
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 // Retained for internal compatibility with existing imports. Database payloads

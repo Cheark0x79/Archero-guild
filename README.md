@@ -31,13 +31,27 @@ observer/
   ocr/             OCR preprocessing and validation
   pipeline/        Detection, deduplication, and normalization
   storage/         PostgreSQL schema, persistence, exports, and migrations
-web/               Next.js dashboard and HTTP API
+platform/          Production web/API/PostgreSQL/Cloudflare deployment
+ocr/               Local Tesseract workstation product and review UI
+contracts/         Versioned JSON exchange contract
+web/               Next.js dashboard and HTTP API sources
 config/            Example observer configuration
-systemd/           Service and timer units
+systemd/           Legacy local worker units, not used by the web platform
 scripts/           Development and test environment commands
 tests/             Python unit and PostgreSQL integration tests
 docs/              API, operations, deployment, and review documentation
 ```
+
+## Product separation
+
+The production server runs only `platform/`: Next.js, the HTTP API,
+PostgreSQL, and Cloudflare Tunnel. It contains no ADB bridge, Tesseract package,
+raw screenshot mount, or local OCR page.
+
+The trusted workstation runs `ocr/`: BlueStacks/ADB capture, Tesseract,
+correction, and publication of reviewed JSON through the authenticated
+ingestion API. The two products have independent Compose lifecycles and share
+only the versioned contract under `contracts/`.
 
 ## Quick start
 

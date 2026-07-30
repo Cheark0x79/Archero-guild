@@ -1,5 +1,7 @@
 import { buildSummary, evaluateMember, mergeRosterMetrics } from "../../../../metrics.js";
 import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboard-data/source.js";
+import { evaluateWarningHistory, warningHistoryEvents, warningHistorySummary } from "../../../../warning-history.js";
+import { warningActionKey } from "../../../../lib/warning-actions.js";
 
 const FORMER_STATUSES = new Set(["inactive", "left", "kicked"]);
 const ALLOWED_MEMBER_STATUSES = new Set(["active", "former", "all"]);
@@ -96,14 +98,54 @@ export function violationsFromData(data, searchParams) {
   if (severity && !["warning", "danger"].includes(severity)) {
     return { error: { code: "invalid_severity", message: "severity must be warning or danger." } };
   }
+  const from = dateParameter(searchParams.get("from"));
+  const to = dateParameter(searchParams.get("to"));
+  const historyLimit = integerParameter(searchParams.get("limit"), 200, 1, 1000);
+  if (from === false || to === false) {
+    return { error: { code: "invalid_date", message: "from and to must use YYYY-MM-DD format." } };
+  }
+  if (from && to && from > to) {
+    return { error: { code: "invalid_date_range", message: "from must be earlier than or equal to to." } };
+  }
+  if (historyLimit === null) {
+    return { error: { code: "invalid_limit", message: "limit must be an integer between 1 and 1000." } };
+  }
   const flag = normalize(searchParams.get("flag"));
+  const playerId = searchParams.get("playerId")?.trim();
   const items = membersFromData(data)
+    .map((member) => effectiveViolationMember(data, member))
     .filter((member) => !FORMER_STATUSES.has(member.guildStatus))
     .filter((member) => ["warning", "danger"].includes(member.evaluation.severity))
     .filter((member) => !severity || member.evaluation.severity === severity)
     .filter((member) => !flag || member.evaluation.flags.some((item) => normalize(item).includes(flag)))
     .sort((left, right) => severityRank(right.evaluation.severity) - severityRank(left.evaluation.severity) || left.name.localeCompare(right.name));
-  return { items, summary: violationSummary(items) };
+  const allHistory = (data.guildRoster ?? [])
+    .filter((member) => member.playerId)
+    .filter((member) => !playerId || member.playerId === playerId)
+    .flatMap((member) =>
+      memberWarningEvents(data, member.playerId)
+        .filter((event) => !from || event.date >= from)
+        .filter((event) => !to || event.date <= to)
+        .filter((event) => !severity || event.severity === severity)
+        .filter((event) => !flag || normalize(event.label).includes(flag))
+        .map((event) => ({
+          ...event,
+          playerId: member.playerId,
+          name: member.name,
+          action: warningAction(data, member.playerId, event),
+        })),
+    )
+    .sort((left, right) => right.date.localeCompare(left.date) || left.name.localeCompare(right.name));
+  return {
+    items,
+    summary: violationSummary(items),
+    history: allHistory.slice(0, historyLimit),
+    historyPagination: {
+      limit: historyLimit,
+      total: allHistory.length,
+      hasMore: allHistory.length > historyLimit,
+    },
+  };
 }
 
 export function memberRankingsFromData(data, searchParams) {
@@ -149,17 +191,97 @@ export function memberHistoryFromData(data, playerId, searchParams) {
     return { error: { code: "invalid_date_range", message: "from must be earlier than or equal to to." } };
   }
   const name = (data.guildRoster ?? []).find((member) => member.playerId === playerId)?.name ?? playerId;
-  const items = (data.dailyRawSnapshots ?? [])
-    .filter((day) => (!from || day.date >= from) && (!to || day.date <= to))
+  const rawItems = (data.dailyRawSnapshots ?? [])
     .flatMap((day) => (day.rows ?? []).filter((row) => row.playerId === playerId).map((row) => ({
       date: day.date,
       power: row.power ?? null,
       contribution7d: row.contribution7d ?? null,
       bossAttacks: row.bossAttacks ?? null,
       lastActivityDays: row.lastActivityDays ?? null,
+      activityText: row.activityText ?? null,
     })))
     .sort((left, right) => left.date.localeCompare(right.date));
-  return { playerId, name, items };
+  const rosterMember = (data.guildRoster ?? []).find((member) => member.playerId === playerId) ?? {};
+  const items = evaluateWarningHistory(rawItems, data.rules ?? {}, rosterMember)
+    .filter((row) => (!from || row.date >= from) && (!to || row.date <= to));
+  const warningEvents = items.flatMap((row) =>
+    row.warnings.map((warning) => ({
+      ...warning,
+      date: row.date,
+      id: `${row.date}:${warning.type}`,
+      action: warningAction(data, playerId, { ...warning, date: row.date }),
+    })),
+  );
+  const enrichedItems = items.map((row) => ({
+    ...row,
+    warnings: row.warnings.map((warning) => ({
+      ...warning,
+      action: warningAction(data, playerId, { ...warning, date: row.date }),
+    })),
+  }));
+  return {
+    playerId,
+    name,
+    items: enrichedItems,
+    warningSummary: warningHistorySummary(warningEvents),
+  };
+}
+
+function memberWarningEvents(data, playerId) {
+  const member = (data.guildRoster ?? []).find((row) => row.playerId === playerId) ?? {};
+  const rows = (data.dailyRawSnapshots ?? [])
+    .flatMap((day) =>
+      (day.rows ?? [])
+        .filter((row) => row.playerId === playerId)
+        .map((row) => ({
+          date: day.date,
+          power: row.power ?? null,
+          contribution7d: row.contribution7d ?? null,
+          bossAttacks: row.bossAttacks ?? null,
+          lastActivityDays: row.lastActivityDays ?? null,
+        })),
+    );
+  return warningHistoryEvents(rows, data.rules ?? {}, member);
+}
+
+function warningAction(data, playerId, event) {
+  return data.warningActions?.[warningActionKey(playerId, event.date, event.type)] ?? {
+    status: "pending",
+    note: "",
+    updatedAt: null,
+  };
+}
+
+function effectiveViolationMember(data, member) {
+  if (!member.playerId || !member.evaluation.flags.length) return member;
+  const latestDate = (data.dailyRawSnapshots ?? [])
+    .filter((day) => (day.rows ?? []).some((row) => row.playerId === member.playerId))
+    .map((day) => day.date)
+    .sort()
+    .at(-1);
+  if (!latestDate) return member;
+  const flags = member.evaluation.flags.filter((flag) => {
+    const type = warningTypeForFlag(flag);
+    if (!type) return true;
+    const action = data.warningActions?.[warningActionKey(member.playerId, latestDate, type)];
+    return !["excused", "resolved"].includes(action?.status);
+  });
+  if (flags.length === member.evaluation.flags.length) return member;
+  return {
+    ...member,
+    evaluation: flags.length > 0
+      ? { ...member.evaluation, flags }
+      : { status: "Active", severity: "positive", flags: [] },
+  };
+}
+
+function warningTypeForFlag(flag) {
+  return {
+    "Game absence": "game_absence",
+    "Low contribution": "low_contribution",
+    "Low progression": "low_progression",
+    "Missed boss": "missed_boss",
+  }[flag] ?? null;
 }
 
 export function bossDaysFromData(data, searchParams) {

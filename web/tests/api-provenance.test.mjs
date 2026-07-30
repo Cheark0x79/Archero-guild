@@ -17,7 +17,12 @@ async function routeFiles(directory) {
 
 test("every data-backed public API route propagates source provenance", async () => {
   const routes = await routeFiles(apiRoot);
-  const dataRoutes = routes.filter((file) => !file.endsWith(path.join("health", "route.js")));
+  const nonDataRoutes = new Set([
+    path.join("health", "route.js"),
+    path.join("imports", "route.js"),
+    path.join("imports", "validate", "route.js"),
+  ]);
+  const dataRoutes = routes.filter((file) => !nonDataRoutes.has(path.relative(apiRoot, file)));
   assert.ok(dataRoutes.length > 0);
 
   for (const file of dataRoutes) {

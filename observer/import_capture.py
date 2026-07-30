@@ -22,9 +22,11 @@ from observer.pipeline.guild_boss import (
     GuildBossDetectionError,
     detect_boss_ranking_rows,
     extract_boss_rankings_from_screenshots,
+    repair_boss_ranking_order,
 )
 from observer.pipeline.guild_member_ocr import ExtractedMemberMetrics, RosterEntry, extract_member_metrics_from_screenshots
 from observer.pipeline.guild_members import detect_member_rows
+from observer.pipeline.image_geometry import ImageGeometry, image_geometry_for_path
 
 
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -39,7 +41,9 @@ _CHANGE_CAPTURE_PATTERN = re.compile(
     r'  \}',
     re.MULTILINE,
 )
-_ROSTER_ENTRY_PATTERN = re.compile(r'\{ playerId: "([^"]+)", name: "([^"]+)"[^}]*\}')
+_ROSTER_ENTRY_PATTERN = re.compile(
+    r'\{ playerId: "([^"]+)", name: "([^"]+)"(?P<metadata>[^}]*)\}'
+)
 _SNAPSHOT_PATTERN = re.compile(
     r'screenshotMember\("(?P<player_id>[^"]+)", "(?P<role>[^"]+)", (?P<power>\d+), '
     r'(?P<donation>\d+), (?P<boss>\d+), (?P<activity>\d+), "(?P<source>[^"]+)"'
@@ -62,6 +66,10 @@ class ImportedScreenshot:
     kind: str
     row_count: int | None = None
     sha256: str | None = None
+    source_width: int | None = None
+    source_height: int | None = None
+    analysis_width: int | None = None
+    analysis_height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,28 @@ class ImportReport:
 
 class ImportValidationError(RuntimeError):
     pass
+
+
+def validate_detected_layouts(
+    *,
+    member_screenshots: Sequence[ImportedScreenshot],
+    boss_screenshots: Sequence[ImportedScreenshot],
+) -> None:
+    errors: list[str] = []
+    for label, screenshots in (
+        ("guild", member_screenshots),
+        ("boss", boss_screenshots),
+    ):
+        if len(screenshots) < 2:
+            continue
+        empty = [Path(item.path).name for item in screenshots if not item.row_count]
+        if len(empty) / len(screenshots) > 0.25:
+            errors.append(
+                f"{label} layout detection failed on {len(empty)}/{len(screenshots)} screenshots "
+                f"({', '.join(empty)}); check emulator resolution, orientation, and captured screen"
+            )
+    if errors:
+        raise ImportValidationError("Capture preflight failed: " + "; ".join(errors))
 
 
 def validate_extracted_import(
@@ -147,6 +177,14 @@ def validate_extracted_import(
         ),
         key=lambda ranking: ranking.boss_rank or 0,
     )
+    rank_numbers = sorted({ranking.boss_rank for ranking in unique_boss_rankings if ranking.boss_rank is not None})
+    if len(rank_numbers) >= 2:
+        missing_ranks = sorted(set(range(rank_numbers[0], rank_numbers[-1] + 1)) - set(rank_numbers))
+        if missing_ranks:
+            warnings.append(
+                "boss ranking is missing rank(s) "
+                f"{', '.join(str(rank) for rank in missing_ranks)}; capture overlapping scroll positions"
+            )
     for previous, current in zip(ranked, ranked[1:]):
         if current.boss_damage_today > previous.boss_damage_today:
             errors.append(
@@ -213,23 +251,29 @@ def _import_capture_day_unlocked(
     member_screenshots = []
     for index, path in enumerate(member_paths, start=1):
         progress("detect_members", f"Detecting guild rows in {path.name} ({index}/{len(member_paths)}).", 8 + _portion(index, len(member_paths), 18))
+        rows = detect_member_rows(path)
+        geometry = _optional_image_geometry(path)
         member_screenshots.append(
             ImportedScreenshot(
                 path=path.as_posix(),
                 kind="guild-members",
-                row_count=len(detect_member_rows(path)),
+                row_count=len(rows),
                 sha256=file_sha256(path),
+                **_geometry_fields(geometry),
             )
         )
     boss_screenshots = []
     for index, path in enumerate(boss_paths, start=1):
         progress("detect_boss", f"Detecting boss rows in {path.name} ({index}/{len(boss_paths)}).", 26 + _portion(index, len(boss_paths), 12))
+        rows = detect_boss_ranking_rows(path)
+        geometry = _optional_image_geometry(path)
         boss_screenshots.append(
             ImportedScreenshot(
                 path=path.as_posix(),
                 kind="guild-boss",
-                row_count=len(detect_boss_ranking_rows(path)),
+                row_count=len(rows),
                 sha256=file_sha256(path),
+                **_geometry_fields(geometry),
             )
         )
     detected_member_rows = sum(item.row_count or 0 for item in member_screenshots)
@@ -246,6 +290,12 @@ def _import_capture_day_unlocked(
         roster = read_roster_entries(sample_data_path)
     else:
         roster = []
+    if member_screenshots and boss_screenshots:
+        progress("preflight", "Checking screenshot layouts before OCR.", 39)
+        validate_detected_layouts(
+            member_screenshots=member_screenshots,
+            boss_screenshots=boss_screenshots,
+        )
     if member_paths and sample_data_path.exists():
         progress("extract_current_members", f"Extracting current guild metrics from {len(member_paths)} screenshot(s).", 40)
         extracted_metrics = extract_member_metrics_from_screenshots(member_paths, roster)
@@ -317,6 +367,29 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _optional_image_geometry(path: Path) -> ImageGeometry | None:
+    try:
+        return image_geometry_for_path(path)
+    except OSError:
+        return None
+
+
+def _geometry_fields(geometry: ImageGeometry | None) -> dict[str, int | None]:
+    if geometry is None:
+        return {
+            "source_width": None,
+            "source_height": None,
+            "analysis_width": None,
+            "analysis_height": None,
+        }
+    return {
+        "source_width": geometry.source_width,
+        "source_height": geometry.source_height,
+        "analysis_width": geometry.analysis_width,
+        "analysis_height": geometry.analysis_height,
+    }
 
 
 def backup_before_publish(sample_data_path: Path, imports_root: Path, capture_date: str) -> Path:
@@ -463,10 +536,14 @@ def capture_dates(raw_root: Path, *, until: str | None = None) -> list[str]:
 def read_roster_entries(path: Path) -> list[RosterEntry]:
     content = path.read_text(encoding="utf-8")
     snapshots = _parse_existing_snapshots(_find_exported_array(content, "memberSnapshots")[2]) if _find_exported_array(content, "memberSnapshots") else {}
+    roster_block = _find_exported_array(content, "guildRoster")
+    if roster_block is None:
+        return []
     entries: list[RosterEntry] = []
-    for match in _ROSTER_ENTRY_PATTERN.finditer(content):
+    for match in _ROSTER_ENTRY_PATTERN.finditer(roster_block[2]):
         player_id = match.group(1)
-        if player_id == "null":
+        metadata = match.group("metadata")
+        if player_id == "null" or re.search(r'status:\s*"(?:left|kicked)"', metadata):
             continue
         snapshot = snapshots.get(player_id)
         entries.append(RosterEntry(player_id=player_id, name=match.group(2), power_hint=snapshot["power"] if snapshot else None))
@@ -554,17 +631,21 @@ def _upsert_daily_raw_snapshots(content: str, daily_metrics: dict[str, list[Extr
     content = _ensure_raw_snapshot_member_helper(content)
     day_blocks: dict[str, str] = {}
     for day, metrics in sorted(daily_metrics.items()):
-        lines = [
-            (
+        lines = []
+        for metric in metrics:
+            unmatched_name = (
+                f", {_js_nullable_string(metric.name or metric.raw_name)}"
+                if not metric.player_id
+                else ""
+            )
+            lines.append(
                 f'    rawSnapshotMember("{metric.player_id}", "{metric.role or "member"}", '
                 f'{_nullable_valid_power(metric.power)}, '
                 f'{metric.donation if metric.donation is not None else "null"}, '
                 f'{metric.boss_tries if metric.boss_tries is not None else "null"}, '
                 f'{metric.last_activity_days if metric.last_activity_days is not None else "null"}, '
-                f'"{metric.source}", "{day}"),'
+                f'"{metric.source}", "{day}"{unmatched_name}),'
             )
-            for metric in metrics
-        ]
         rows = "\n".join(lines)
         day_blocks[day] = f'  {{\n    date: "{day}",\n    rows: [\n{rows}\n    ],\n  }},'
 
@@ -586,9 +667,10 @@ def _ensure_raw_snapshot_member_helper(content: str) -> str:
     if "function rawSnapshotMember(" in content:
         return content
 
-    helper = """function rawSnapshotMember(playerId, role, power, donation, bossAttacks, lastActivityDays, source, seenAt = null) {
+    helper = """function rawSnapshotMember(playerId, role, power, donation, bossAttacks, lastActivityDays, source, seenAt = null, name = null) {
   return {
     playerId,
+    name,
     role,
     power,
     contribution7d: donation,
@@ -671,7 +753,8 @@ def _unique_boss_rankings(rankings: list[ExtractedBossRanking]) -> list[Extracte
         current = by_rank.get(ranking.boss_rank)
         if current is None or _boss_ranking_quality(ranking) > _boss_ranking_quality(current):
             by_rank[ranking.boss_rank] = ranking
-    return sorted(by_rank.values(), key=lambda ranking: ranking.boss_rank or 0) + unranked
+    ranked = sorted(by_rank.values(), key=lambda ranking: ranking.boss_rank or 0)
+    return repair_boss_ranking_order(ranked) + unranked
 
 
 def _boss_ranking_quality(ranking: ExtractedBossRanking) -> tuple[int, int, int]:

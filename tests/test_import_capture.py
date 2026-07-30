@@ -7,14 +7,17 @@ from unittest.mock import patch
 from observer.import_capture import (
     ImportedScreenshot,
     ImportValidationError,
+    _upsert_daily_raw_snapshots,
+    _unique_boss_rankings,
     _write_text_atomic,
     import_lock,
     import_capture_day,
     latest_capture_date,
+    read_roster_entries,
     validate_extracted_import,
 )
 from observer.pipeline.guild_boss import ExtractedBossRanking
-from observer.pipeline.guild_member_ocr import ExtractedMemberMetrics
+from observer.pipeline.guild_member_ocr import ExtractedMemberMetrics, RosterEntry
 
 
 SAMPLE_DATA = """export const captures = {
@@ -67,6 +70,52 @@ export const dailyBossRawSnapshots = [
 
 
 class ImportCaptureTests(unittest.TestCase):
+    def test_daily_raw_snapshot_keeps_an_unmatched_detected_name(self) -> None:
+        metric = ExtractedMemberMetrics(
+            player_id="",
+            name="NewPlayer",
+            role="member",
+            power=900_000,
+            donation=500,
+            boss_tries=2,
+            last_activity_days=0,
+            source="members-001.png row 2",
+            match_score=0,
+            raw_name="NewPlayer |",
+        )
+
+        content = _upsert_daily_raw_snapshots(SAMPLE_DATA, {"2026-07-28": [metric]})
+
+        self.assertIn(
+            'rawSnapshotMember("", "member", 900000, 500, 2, 0, '
+            '"members-001.png row 2", "2026-07-28", "NewPlayer")',
+            content,
+        )
+
+    def test_read_roster_entries_excludes_departed_members(self) -> None:
+        sample = """export const guildRoster = [
+  { playerId: "active-1", name: "Active", discordLinked: true },
+  { playerId: "left-1", name: "Former", status: "left", leftAt: "2026-07-25" },
+  { playerId: "kicked-1", name: "Removed", status: "kicked", leftAt: "2026-07-14" },
+  { playerId: null, name: "Unknown", status: "kicked" },
+];
+
+export const memberSnapshots = [
+  screenshotMember("active-1", "member", 123000, 100, 2, 0, "capture.png"),
+  screenshotMember("left-1", "member", 456000, 100, 2, 0, "capture.png"),
+];
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample-data.js"
+            path.write_text(sample, encoding="utf-8")
+
+            roster = read_roster_entries(path)
+
+        self.assertEqual(
+            roster,
+            [RosterEntry(player_id="active-1", name="Active", power_hint=123_000)],
+        )
+
     def test_validation_rejects_detected_rows_with_empty_ocr(self) -> None:
         with self.assertRaisesRegex(ImportValidationError, "boss OCR extracted 0"):
             validate_extracted_import(
@@ -84,6 +133,33 @@ class ImportCaptureTests(unittest.TestCase):
             extracted_metrics=[],
             boss_rankings=[duplicate, duplicate],
         )
+
+    def test_validation_warns_about_internal_boss_rank_gaps(self) -> None:
+        quality = validate_extracted_import(
+            member_screenshots=[],
+            boss_screenshots=[ImportedScreenshot("boss.png", "guild-boss", 2)],
+            extracted_metrics=[],
+            boss_rankings=[
+                ExtractedBossRanking("rank 1", 0, "podium", 1, "1", "A", "A", "10B", 10_000_000_000),
+                ExtractedBossRanking("rank 3", 2, "podium", 3, "3", "C", "C", "8B", 8_000_000_000),
+            ],
+        )
+
+        self.assertEqual(quality["status"], "accepted_with_warnings")
+        self.assertIn("missing rank(s) 2", quality["warnings"][0])
+
+    def test_deduplicated_boss_rankings_repair_ocr_unit_order(self) -> None:
+        rankings = [
+            ExtractedBossRanking("rank 23", 22, "list", 23, "23", "A", "A", "1.45B", 1_450_000_000),
+            ExtractedBossRanking("rank 24 first", 23, "list", 24, "24", "B", "B", "1.13M", 1_130_000),
+            ExtractedBossRanking("rank 24 duplicate", 23, "list", 24, None, None, None, "1.13B", 1_130_000_000),
+            ExtractedBossRanking("rank 25", 24, "list", 25, "25", "C", "C", "848.45M", 848_450_000),
+        ]
+
+        unique = _unique_boss_rankings(rankings)
+
+        self.assertEqual([ranking.boss_rank for ranking in unique], [23, 24, 25])
+        self.assertEqual(unique[1].damage_text, "1.13B")
 
     def test_validation_rejects_low_member_coverage(self) -> None:
         metric = ExtractedMemberMetrics(
@@ -178,6 +254,38 @@ class ImportCaptureTests(unittest.TestCase):
             self.assertEqual(sample_data.read_text(encoding="utf-8"), original)
             self.assertFalse((root / "data" / "imports" / "2026-07-22.json").exists())
             self.assertEqual(len(list((root / "data" / "backups" / "imports" / "2026-07-22").glob("*.js"))), 1)
+
+    def test_validation_failure_never_updates_front_or_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw_dir = root / "screenshots" / "raw" / "2026-07-29" / "guild"
+            raw_dir.mkdir(parents=True)
+            (raw_dir / "members-001.png").write_bytes(b"member")
+            sample_data = root / "web" / "sample-data.js"
+            sample_data.parent.mkdir()
+            sample_data.write_text(SAMPLE_DATA, encoding="utf-8")
+
+            with (
+                patch("observer.import_capture.detect_member_rows", return_value=[object()]),
+                patch("observer.import_capture.extract_member_metrics_from_screenshots", return_value=[]),
+                patch(
+                    "observer.import_capture.validate_extracted_import",
+                    side_effect=ImportValidationError("incomplete capture"),
+                ),
+                patch("observer.import_capture.update_sample_data") as update_front,
+                patch("observer.storage.persistence.persist_import_if_configured") as persist,
+                self.assertRaisesRegex(ImportValidationError, "incomplete capture"),
+            ):
+                import_capture_day(
+                    "2026-07-29",
+                    raw_root=root / "screenshots" / "raw",
+                    imports_root=root / "data" / "imports",
+                    sample_data_path=sample_data,
+                )
+
+            update_front.assert_not_called()
+            persist.assert_not_called()
+            self.assertFalse((root / "data" / "imports" / "2026-07-29.json").exists())
 
     def test_atomic_write_replaces_file_without_temp_leftover(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

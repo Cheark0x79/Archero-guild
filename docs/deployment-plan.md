@@ -1,5 +1,12 @@
 # Homelab deployment plan
 
+> **Historical document.** The monolithic target described below has been
+> replaced by the independent `platform/` and `ocr/` products. For the current
+> deployment, use
+> [`production-homelab.md`](production-homelab.md) and
+> [`ocr-distant.md`](ocr-distant.md). The server must no longer run ADB,
+> Tesseract, capture jobs, or the `systemd/archero-observer` timer.
+
 This document describes a reproducible VM deployment target for Archero
 Observer in a Proxmox homelab. It covers provisioning, host configuration,
 Cloudflare publication, backups, monitoring, security, updates, and rollback.

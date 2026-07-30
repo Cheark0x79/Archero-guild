@@ -1,6 +1,6 @@
-import DashboardApp from "../../components/DashboardApp.jsx";
+import DashboardRoute from "../../components/DashboardRoute.jsx";
 
 export default async function MemberPage({ params }) {
   const { memberKey } = await params;
-  return <DashboardApp initialRoute="member" memberKeyParam={memberKey} />;
+  return <DashboardRoute initialRoute="member" memberKeyParam={memberKey} />;
 }

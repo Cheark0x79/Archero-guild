@@ -1,4 +1,6 @@
 ARG APP_VERSION=development
+ARG STRICT_DATABASE=1
+ARG LOCAL_OCR_ENABLED=0
 
 FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app/web
@@ -7,7 +9,11 @@ RUN npm ci
 
 FROM node:22-bookworm-slim AS builder
 ARG APP_VERSION
-ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
+ARG STRICT_DATABASE
+ARG LOCAL_OCR_ENABLED
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION \
+    NEXT_PUBLIC_STRICT_DATABASE=$STRICT_DATABASE \
+    NEXT_PUBLIC_LOCAL_OCR_ENABLED=$LOCAL_OCR_ENABLED
 WORKDIR /app
 COPY --from=dependencies /app/web/node_modules ./web/node_modules
 COPY docs/openapi.yaml ./docs/openapi.yaml
@@ -28,14 +34,11 @@ LABEL org.opencontainers.image.title="Archero Guild Observer" \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      android-tools-adb \
       ca-certificates \
       python3 \
       python3-venv \
-      tesseract-ocr \
-      tesseract-ocr-eng \
     && python3 -m venv /opt/archero-venv \
-    && /opt/archero-venv/bin/pip install --no-cache-dir pillow "psycopg[binary]" pytesseract \
+    && /opt/archero-venv/bin/pip install --no-cache-dir "psycopg[binary]" \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -46,7 +49,7 @@ COPY --from=builder /app/web/.next/static ./web/.next/static
 COPY --from=builder /app/web/public ./web/public
 COPY --from=builder /app/web/sample-data.js ./web/sample-data.js
 
-RUN mkdir -p /app/data/import-jobs /app/data/exports /app/screenshots/raw /app/screenshots/trash \
+RUN mkdir -p /app/data/import-jobs /app/data/exports \
     && chown -R node:node /app
 
 USER node

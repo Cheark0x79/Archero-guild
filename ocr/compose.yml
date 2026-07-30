@@ -1,0 +1,62 @@
+name: archero-ocr-agent
+
+services:
+  ui:
+    build:
+      context: ..
+      dockerfile: ocr/Dockerfile
+    init: true
+    working_dir: /app
+    entrypoint: ["python", "-m", "observer.ocr.local_app"]
+    environment:
+      ARCHERO_AGENT_VERSION: ${ARCHERO_AGENT_VERSION:-development}
+      ARCHERO_SCREENSHOTS_ROOT: /captures
+      ARCHERO_OUTBOX_ROOT: /outbox
+      ARCHERO_OCR_TARGETS_FILE: /run/secrets/targets.json
+      ARCHERO_OCR_LOCAL_ROSTER: /app/web/sample-data.js
+      ARCHERO_OCR_UI_HOST: 0.0.0.0
+      ARCHERO_OCR_UI_PORT: 5190
+      TZ: Europe/Paris
+    ports:
+      - "127.0.0.1:${ARCHERO_OCR_UI_PORT:-5190}:5190"
+    volumes:
+      - ${ARCHERO_CAPTURE_ROOT:-../screenshots/raw}:/captures
+      - ${ARCHERO_OUTBOX_ROOT:-../data/outbox}:/outbox
+      - ${ARCHERO_OCR_TARGETS_FILE:-./targets.json}:/run/secrets/targets.json
+    cpus: "2.00"
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5190/api/status', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  cli:
+    profiles: ["cli"]
+    build:
+      context: ..
+      dockerfile: ocr/Dockerfile
+    init: true
+    working_dir: /app
+    environment:
+      ARCHERO_TARGET_URL: ${ARCHERO_TARGET_URL:-}
+      ARCHERO_INGESTION_TOKEN: ${ARCHERO_INGESTION_TOKEN:-}
+      ARCHERO_AGENT_VERSION: ${ARCHERO_AGENT_VERSION:-development}
+      ARCHERO_SCREENSHOTS_ROOT: /captures
+      TZ: Europe/Paris
+    volumes:
+      - ${ARCHERO_CAPTURE_ROOT:-../screenshots/raw}:/captures:ro
+      - ${ARCHERO_OUTBOX_ROOT:-../data/outbox}:/outbox
+    cpus: "2.00"
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

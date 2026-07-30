@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS member_names (
     UNIQUE (user_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS member_identity_links (
+    normalized_name   TEXT PRIMARY KEY,
+    observed_name     TEXT NOT NULL,
+    user_id           TEXT NOT NULL REFERENCES guild_members(user_id) ON DELETE CASCADE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
 CREATE TABLE IF NOT EXISTS boss_definitions (
     boss_key          TEXT PRIMARY KEY,
     weekday           SMALLINT NOT NULL UNIQUE CHECK (weekday BETWEEN 0 AND 6),
@@ -105,6 +114,23 @@ CREATE TABLE IF NOT EXISTS import_reports (
     UNIQUE (capture_date, report_path)
 );
 
+CREATE TABLE IF NOT EXISTS remote_import_batches (
+    id                BIGSERIAL PRIMARY KEY,
+    idempotency_key   TEXT NOT NULL UNIQUE,
+    schema_version    INTEGER NOT NULL,
+    capture_date      DATE NOT NULL,
+    agent_version     TEXT NOT NULL,
+    status            TEXT NOT NULL
+        CHECK (status IN ('received', 'published', 'failed')),
+    payload           JSONB NOT NULL,
+    result            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS remote_import_batches_capture_date_idx
+    ON remote_import_batches (capture_date DESC, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS guild_snapshots (
     id                BIGSERIAL PRIMARY KEY,
     batch_id          BIGINT REFERENCES capture_batches(id) ON DELETE SET NULL,
@@ -131,6 +157,21 @@ CREATE TABLE IF NOT EXISTS member_metrics (
     verification_note  TEXT,
     raw_payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (snapshot_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS unmatched_member_metrics (
+    id                 BIGSERIAL PRIMARY KEY,
+    snapshot_id        BIGINT NOT NULL REFERENCES guild_snapshots(id) ON DELETE CASCADE,
+    observed_name      TEXT NOT NULL,
+    normalized_name    TEXT NOT NULL,
+    role               TEXT,
+    power              BIGINT,
+    contribution_7d    BIGINT,
+    boss_attacks       INTEGER,
+    last_activity_days INTEGER,
+    verification_note  TEXT,
+    raw_payload        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    UNIQUE (snapshot_id, normalized_name)
 );
 
 CREATE TABLE IF NOT EXISTS boss_daily_results (
