@@ -39,7 +39,6 @@ const MEMBER_COLUMNS = [
 const BOSS_COLUMNS = [
   { label: "Action", key: "_actions", action: true },
   { label: "Rank", key: "rank", editable: true, input: "number" },
-  { label: "Player ID", key: "playerId", editable: true },
   { label: "Detected name", key: "rawName", editable: true, wide: true },
   { label: "Linked name", key: "name", editable: true },
   { label: "Damage", key: "damageText", editable: true, placeholder: "615.55M" },
@@ -62,6 +61,29 @@ function localDate() {
   return formatter.format(new Date());
 }
 
+function formatFrenchDate(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : "";
+}
+
+function parseFrenchDate(displayDate) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(displayDate || "").trim());
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const candidate = new Date(`${year}-${month}-${day}T12:00:00Z`);
+  if (
+    candidate.getUTCFullYear() !== Number(year)
+    || candidate.getUTCMonth() + 1 !== Number(month)
+    || candidate.getUTCDate() !== Number(day)
+  ) return null;
+  return `${year}-${month}-${day}`;
+}
+
+function setCaptureDate(isoDate) {
+  $("capture-date").value = isoDate;
+  $("capture-date-display").value = formatFrenchDate(isoDate);
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     cache: "no-store",
@@ -76,7 +98,7 @@ async function request(url, options = {}) {
 function setBusy(busy) {
   state.busy = busy;
   [
-    "upload", "scan", "refresh", "clear", "save-target", "preflight", "add-row",
+    "upload", "scan", "refresh", "clear", "preflight", "add-row",
     "reset-session", "reference-previous", "reference-next",
   ].forEach((id) => { $(id).disabled = busy; });
   document.querySelectorAll("[data-edit-field]").forEach((control) => { control.disabled = busy; });
@@ -104,13 +126,18 @@ async function loadStatus() {
     $("target").replaceChildren(...payload.targets.map((target) => {
       const option = document.createElement("option");
       option.value = target.key;
+      option.disabled = target.mode === "remote" && !target.configured;
       const destination = target.mode === "local"
         ? "clear/review only"
         : target.configured ? target.url : "configuration required";
       option.textContent = `${target.label} · ${destination}`;
       return option;
     }));
-    if (payload.targets.some((target) => target.key === previous)) $("target").value = previous;
+    const selected = payload.targets.find((target) => target.key === previous)
+      ?? payload.targets.find((target) => target.key === "preprod" && target.configured)
+      ?? payload.targets.find((target) => target.mode === "remote" && target.configured)
+      ?? payload.targets[0];
+    if (selected) $("target").value = selected.key;
     updateTargetEditor();
     updateTargetControls();
     await loadDay();
@@ -762,13 +789,13 @@ function updateTargetEditor() {
   const target = selectedTarget();
   if (!target) return;
   const local = target.mode === "local";
-  $("target-url").value = target.url || "";
-  $("target-url").disabled = state.busy || local;
-  $("target-token").value = "";
-  $("target-token").disabled = state.busy || local;
-  $("save-target").disabled = state.busy || local;
   $("target-state").textContent = local ? "Local only" : target.configured ? "Ready" : "Needs configuration";
   $("target-state").className = `badge ${target.configured ? "pass" : "neutral"}`;
+  $("target-summary").textContent = local
+    ? "Local test keeps the reviewed JSON on this PC and never sends data."
+    : target.configured
+      ? `Configured endpoint: ${target.url}`
+      : "This destination is not configured. Update ocr/targets.json before publishing.";
 }
 
 function updateTargetControls() {
@@ -790,17 +817,33 @@ function updateTargetControls() {
   const phrase = `PUBLISH ${target.key.toUpperCase()}`;
   const confirmationMatches = $("confirmation").value.trim() === phrase;
   const duplicateMemberIds = duplicateValues(state.batch?.members || [], "playerId");
-  $("confirmation-help").textContent = !target.configured
+  const coverage = Number(state.batch?.quality?.coverage);
+  const blocker = !target.configured
     ? "Configure this destination in ocr/targets.json."
+    : !state.batch
+      ? "Complete OCR extraction and review before checking the destination."
     : batchScope(state.batch) === "mixed"
       ? "Guild and Boss must be extracted and published as two separate batches."
     : duplicateMemberIds.size
       ? `Resolve duplicate Player IDs: ${[...duplicateMemberIds].join(", ")}.`
+    : Number.isFinite(coverage) && coverage < 1
+      ? `Coverage is ${(coverage * 100).toFixed(1)}%. Review or add the missing row before checking the destination.`
     : !hasPublishableBatch
       ? "A linked name is required for every row. Other missing member metrics may stay empty."
-      : !hasValidPreflight
+      : null;
+  if (blocker) {
+    $("preflight-state").textContent = "Blocked";
+    $("preflight-state").className = "badge review";
+    $("preflight-help").textContent = blocker;
+  } else if (!hasValidPreflight) {
+    $("preflight-state").textContent = "Not checked";
+    $("preflight-state").className = "badge neutral";
+    $("preflight-help").textContent = "Check connectivity, authentication and batch validity before sending.";
+  }
+  $("confirmation-help").textContent = blocker
+    ?? (!hasValidPreflight
         ? "Check the destination before confirming publication."
-      : `Type ${phrase}`;
+        : `Type ${phrase}`);
   $("confirmation").placeholder = phrase;
   $("confirmation").disabled = state.busy || !target.configured || !hasPublishableBatch || !hasValidPreflight;
   $("publish").disabled = state.busy || !target.publishable || !hasPublishableBatch || !hasValidPreflight || !confirmationMatches;
@@ -820,29 +863,6 @@ function isLocallyPublishableBatch(batch) {
     return rows.length > 0 && rows.every((row) => missingFields(row, "bosses").length === 0);
   }
   return false;
-}
-
-async function saveTarget() {
-  const target = selectedTarget();
-  if (!target || target.mode === "local") return;
-  setBusy(true);
-  message(`Saving ${target.label} destination…`);
-  try {
-    await request("/api/target", {
-      method: "POST",
-      body: JSON.stringify({
-        target: target.key,
-        url: $("target-url").value.trim(),
-        ingestionToken: $("target-token").value,
-      }),
-    });
-    message(`${target.label} destination saved.`);
-    await loadStatus();
-  } catch (error) {
-    message(error.message, true);
-  } finally {
-    setBusy(false);
-  }
 }
 
 function renderReferenceOptions() {
@@ -920,24 +940,40 @@ function percent(value) {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
 }
 
-$("capture-date").value = localDate();
+setCaptureDate(localDate());
 $("refresh").addEventListener("click", () => {
   state.images = [];
   state.referenceImages = [];
   loadStatus();
 });
-$("capture-date").addEventListener("change", () => {
+function commitCaptureDate() {
+  const captureDate = parseFrenchDate($("capture-date-display").value);
+  if (!captureDate) {
+    message("Enter the data date as DD/MM/YYYY.", true);
+    $("capture-date-display").focus();
+    return false;
+  }
+  if ($("capture-date").value === captureDate) return true;
+  setCaptureDate(captureDate);
   state.images = [];
   state.referenceImages = [];
   loadDay();
+  return true;
+}
+$("capture-date-display").addEventListener("change", commitCaptureDate);
+$("capture-date-display").addEventListener("blur", commitCaptureDate);
+$("capture-date-display").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  if (commitCaptureDate()) $("capture-date-display").blur();
 });
 $("upload-files").addEventListener("change", renderUploadSelection);
 $("upload-kind").addEventListener("change", renderUploadSelection);
 $("target").addEventListener("change", () => {
   resetPreflight();
+  updateTargetEditor();
   updateTargetControls();
 });
-$("target").addEventListener("change", updateTargetEditor);
 $("confirmation").addEventListener("input", updateTargetControls);
 $("reference-image").addEventListener("change", renderReferenceImage);
 $("reference-previous").addEventListener("click", () => moveReferenceImage(-1));
@@ -949,7 +985,6 @@ $("clear").addEventListener("click", clearExtractedData);
 $("publish").addEventListener("click", publishBatch);
 $("preflight").addEventListener("click", checkDestination);
 $("add-row").addEventListener("click", () => addReviewedRow());
-$("save-target").addEventListener("click", saveTarget);
 $("previous-step").addEventListener("click", () => goToStep(state.step - 1));
 $("next-step").addEventListener("click", () => goToStep(state.step + 1));
 document.querySelectorAll("[data-go-step]").forEach((button) => {

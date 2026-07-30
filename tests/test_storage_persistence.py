@@ -1,9 +1,16 @@
 import unittest
 import os
+from dataclasses import replace
 from unittest.mock import patch
 
 from observer.pipeline.guild_boss import ExtractedBossRanking
-from observer.storage.persistence import _dedupe_boss_rankings, persist_import_if_configured
+from observer.pipeline.guild_member_ocr import ExtractedMemberMetrics, RosterEntry
+from observer.storage.persistence import (
+    _dedupe_boss_rankings,
+    _is_complete_member_roster,
+    _reconcile_active_roster,
+    persist_import_if_configured,
+)
 
 
 class StoragePersistenceTests(unittest.TestCase):
@@ -56,6 +63,35 @@ class StoragePersistenceTests(unittest.TestCase):
                 dsn="postgresql://archero@postgres/archero_observer",
             )
 
+    def test_only_a_complete_identified_member_roster_triggers_reconciliation(self) -> None:
+        report = replace(
+            _import_report(),
+            detected_member_rows=1,
+            extracted_member_metrics=1,
+            quality={"coverage": 1},
+        )
+        roster = [RosterEntry(player_id="123", name="Player", power_hint=None)]
+        metrics = [_member_metric(player_id="123")]
+
+        self.assertTrue(_is_complete_member_roster(report, roster, metrics))
+        self.assertFalse(_is_complete_member_roster(report, [], metrics))
+        self.assertFalse(_is_complete_member_roster(report, roster, [_member_metric(player_id="")]))
+        partial_report = replace(report, quality={"coverage": 0.975})
+        self.assertFalse(_is_complete_member_roster(partial_report, roster, metrics))
+
+    def test_reconciliation_marks_only_older_missing_active_members_left(self) -> None:
+        cursor = _RecordingCursor()
+
+        _reconcile_active_roster(cursor, ["123", "456"], "2026-07-29T12:00:00+02:00")
+
+        query, parameters = cursor.calls[0]
+        self.assertIn("status = 'active'", query)
+        self.assertIn("last_seen_at <= %s::timestamptz", query)
+        self.assertEqual(
+            parameters,
+            ("2026-07-29T12:00:00+02:00", "2026-07-29T12:00:00+02:00", ["123", "456"]),
+        )
+
 
 def _boss_ranking(*, rank: int | None, name: str | None, player_id: str | None, damage: int | None, raw_name: str | None) -> ExtractedBossRanking:
     return ExtractedBossRanking(
@@ -86,6 +122,29 @@ def _import_report():
         report_path="data/imports/2026-07-21.json",
         front_updated=True,
     )
+
+
+def _member_metric(*, player_id: str) -> ExtractedMemberMetrics:
+    return ExtractedMemberMetrics(
+        player_id=player_id,
+        name="Player",
+        role="Member",
+        power=1,
+        donation=1,
+        boss_tries=1,
+        last_activity_days=0,
+        source="guild-members-001.png row 0",
+        match_score=1,
+        raw_name="Player",
+    )
+
+
+class _RecordingCursor:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, query, parameters):
+        self.calls.append((query, parameters))
 
 
 if __name__ == "__main__":

@@ -208,6 +208,12 @@ class OcrReviewTests(unittest.TestCase):
             corrections_path = root / "corrections" / "2026-07-29.json"
             batch = sample_batch()
             batch["members"][0]["name"] = "anxiety"
+            batch["sourceImages"] = [{
+                "kind": "guild-members",
+                "sourceName": "members-001.png",
+                "detectedRows": 2,
+            }]
+            batch["quality"]["coverage"] = 0.5
             batch_path.write_text(json.dumps(batch), encoding="utf-8")
 
             updated, corrections = add_batch_row(
@@ -223,6 +229,7 @@ class OcrReviewTests(unittest.TestCase):
         self.assertEqual(added["name"], "Alco123")
         self.assertEqual(added["powerText"], "995.63K")
         self.assertEqual(added["source"], "manual review")
+        self.assertEqual(updated["quality"]["coverage"], 1)
         self.assertEqual(updated["quality"]["status"], "review")
         self.assertEqual(corrections["entries"][0]["action"], "add")
 

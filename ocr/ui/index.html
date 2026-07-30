@@ -164,29 +164,21 @@
         <div class="panel-heading">
           <div>
             <span class="step">STEP 04</span>
-            <h2>Choose and configure destination</h2>
+            <h2>Choose destination</h2>
           </div>
           <span id="target-state" class="badge neutral">Local only</span>
         </div>
         <label>
-          Data date
-          <input id="capture-date" type="date">
+          Data date (DD/MM/YYYY)
+          <input id="capture-date-display" type="text" inputmode="numeric" autocomplete="off" placeholder="DD/MM/YYYY">
+          <input id="capture-date" type="hidden">
           <small>This date labels the corrected batch when it is published.</small>
         </label>
         <label>
           Destination
           <select id="target"></select>
         </label>
-        <label>
-          Backend URL or private IP
-          <input id="target-url" type="url" placeholder="http://192.168.1.50:5181">
-        </label>
-        <label>
-          Ingestion token
-          <input id="target-token" type="password" autocomplete="new-password" placeholder="Leave empty to keep the current token">
-        </label>
-        <p class="muted">HTTP is accepted only for localhost or a private LAN IP. Public destinations require HTTPS.</p>
-        <button id="save-target" class="button secondary" type="button">Save destination</button>
+        <p id="target-summary" class="muted">Select a destination to see its status.</p>
       </article>
 
       <article class="panel publish-card">

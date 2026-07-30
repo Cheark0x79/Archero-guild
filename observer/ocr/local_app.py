@@ -33,6 +33,7 @@ from observer.ocr.review import (
     delete_batch_row,
     load_review_log,
 )
+from observer.pipeline.guild_member_ocr import RosterEntry
 
 
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
@@ -50,6 +51,48 @@ JOB_LOCK = threading.Lock()
 
 class LocalOcrError(RuntimeError):
     pass
+
+
+def merge_reviewed_roster(roster: list[RosterEntry], outbox_root: Path) -> list[RosterEntry]:
+    reviewed: list[RosterEntry] = []
+    reviewed_names: set[str] = set()
+    reviewed_pairs: set[tuple[str, str]] = set()
+    for batch_path in sorted(outbox_root.glob("*.json"), reverse=True):
+        try:
+            batch = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        for row in batch.get("members", []) if isinstance(batch, dict) else []:
+            if not isinstance(row, dict):
+                continue
+            player_id = str(row.get("playerId") or "").strip()
+            name = str(row.get("name") or "").strip()
+            if not player_id or not name:
+                continue
+            normalized_name = name.casefold()
+            pair = (player_id, normalized_name)
+            if pair in reviewed_pairs or normalized_name in reviewed_names:
+                continue
+            reviewed.append(
+                RosterEntry(
+                    player_id=player_id,
+                    name=name,
+                    power_hint=row.get("power") if isinstance(row.get("power"), int) else None,
+                )
+            )
+            reviewed_pairs.add(pair)
+            reviewed_names.add(normalized_name)
+
+    merged = list(reviewed)
+    merged_pairs = set(reviewed_pairs)
+    for entry in roster:
+        normalized_name = entry.name.strip().casefold()
+        pair = (entry.player_id, normalized_name)
+        if pair in merged_pairs or normalized_name in reviewed_names:
+            continue
+        merged.append(entry)
+        merged_pairs.add(pair)
+    return merged
 
 
 def load_targets(path: Path) -> dict[str, dict[str, Any]]:
@@ -522,6 +565,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                         access_client_id=target["cfAccessClientId"],
                         access_client_secret=target["cfAccessClientSecret"],
                     )
+                roster = None
+                roster_source = None
+                if not publish:
+                    roster, roster_source = self._scan_roster((target_key, target))
                 result = run_day(
                     capture_date=capture_date,
                     screenshots_root=self.app.screenshots_root,
@@ -530,19 +577,22 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                     token=target["ingestionToken"],
                     agent_version=self.app.agent_version,
                     publish=publish,
+                    roster=roster,
                     timeout=180,
                     access_client_id=target["cfAccessClientId"],
                     access_client_secret=target["cfAccessClientSecret"],
                 )
+                if roster_source is not None:
+                    result["rosterSource"] = roster_source
             if not publish:
                 self._corrections_path(capture_date).unlink(missing_ok=True)
         finally:
             JOB_LOCK.release()
         self._send_json({"ok": True, "result": result})
 
-    def _scan_roster(self):
+    def _scan_roster(self, preferred: tuple[str, dict[str, Any]] | None = None):
         try:
-            target_key, target = self._preferred_roster_target()
+            target_key, target = preferred or self._preferred_roster_target()
             roster = fetch_roster(
                 target["url"],
                 target["ingestionToken"],
@@ -551,19 +601,23 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 access_client_secret=target["cfAccessClientSecret"],
             )
             if roster:
-                return roster, {
+                merged = merge_reviewed_roster(roster, self.app.outbox_root)
+                return merged, {
                     "type": "database",
                     "target": target_key,
                     "label": target["label"],
+                    "localReviewedIdentities": len(merged) - len(roster),
                 }
         except (LocalOcrError, RemoteOcrError):
             pass
         roster = read_roster_entries(self.app.local_roster_path)
         if not roster:
             raise LocalOcrError(f"OCR roster is empty: {self.app.local_roster_path}")
-        return roster, {
+        merged = merge_reviewed_roster(roster, self.app.outbox_root)
+        return merged, {
             "type": "local-fallback",
             "label": "local fallback roster",
+            "localReviewedIdentities": len(merged) - len(roster),
         }
 
     def _preflight_publish(self, payload: dict[str, Any]) -> None:

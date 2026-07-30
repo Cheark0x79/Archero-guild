@@ -12,11 +12,13 @@ from observer.ocr.local_app import (
     configured_target_public,
     day_payload,
     load_targets,
+    merge_reviewed_roster,
     move_capture_to_trash,
     selected_capture_paths,
     store_uploaded_images,
     update_remote_target,
 )
+from observer.pipeline.guild_member_ocr import RosterEntry
 
 
 def png_data(width: int = 20, height: int = 30) -> bytes:
@@ -26,6 +28,34 @@ def png_data(width: int = 20, height: int = 30) -> bytes:
 
 
 class LocalOcrAppTests(unittest.TestCase):
+    def test_reviewed_member_ids_are_reused_by_later_extractions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            outbox = Path(directory)
+            (outbox / "2026-07-29.json").write_text(
+                json.dumps({
+                    "members": [
+                        {
+                            "playerId": "119965772",
+                            "name": "Papixl",
+                            "power": 834600,
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            remote_roster = [
+                RosterEntry(player_id="old-id", name="Papixl", power_hint=None),
+                RosterEntry(player_id="119982936", name="Pignouf", power_hint=1670000),
+            ]
+
+            merged = merge_reviewed_roster(remote_roster, outbox)
+
+        self.assertEqual(
+            [(entry.player_id, entry.name) for entry in merged],
+            [("119965772", "Papixl"), ("119982936", "Pignouf")],
+        )
+        self.assertEqual(merged[0].power_hint, 834600)
+
     def test_loads_named_remote_targets_without_exposing_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "targets.json"
