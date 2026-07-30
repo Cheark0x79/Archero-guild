@@ -74,6 +74,12 @@ def persist_import_report_in_connection(
     with connection.cursor() as cursor:
         batch_id = _upsert_capture_batch(cursor, report)
         _upsert_roster(cursor, roster, report.captured_at)
+        if _is_complete_member_roster(report, roster, extracted_metrics):
+            _reconcile_active_roster(
+                cursor,
+                [entry.player_id for entry in roster if entry.player_id],
+                report.captured_at,
+            )
         screenshots_by_path = _upsert_screenshots(cursor, batch_id, report)
         _upsert_import_report(cursor, batch_id, report)
         _replace_member_metrics(cursor, batch_id, report, extracted_metrics, screenshots_by_path)
@@ -143,6 +149,38 @@ def _upsert_roster(cursor, roster: Sequence[RosterEntry], seen_at: str) -> None:
             """,
             (entry.player_id, entry.name, seen_at, seen_at),
         )
+
+
+def _is_complete_member_roster(
+    report: ImportReport,
+    roster: Sequence[RosterEntry],
+    extracted_metrics: Sequence[ExtractedMemberMetrics],
+) -> bool:
+    quality = report.quality if isinstance(report.quality, dict) else {}
+    identified_members = [entry for entry in roster if entry.player_id]
+    return (
+        bool(identified_members)
+        and quality.get("coverage") == 1
+        and report.detected_member_rows == len(extracted_metrics)
+        and len(identified_members) == len(extracted_metrics)
+        and all(metric.player_id for metric in extracted_metrics)
+    )
+
+
+def _reconcile_active_roster(cursor, active_user_ids: Sequence[str], seen_at: str) -> None:
+    if not active_user_ids:
+        return
+    cursor.execute(
+        """
+        UPDATE guild_members
+        SET status = 'left',
+            left_on = %s::timestamptz::date
+        WHERE status = 'active'
+          AND last_seen_at <= %s::timestamptz
+          AND NOT (user_id = ANY(%s))
+        """,
+        (seen_at, seen_at, list(active_user_ids)),
+    )
 
 
 def _upsert_screenshots(cursor, batch_id: int, report: ImportReport) -> dict[str, int]:

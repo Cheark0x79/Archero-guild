@@ -155,9 +155,11 @@ def _validated_target(value: str) -> str:
     parsed = urllib.parse.urlparse(target)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PublishError("target must be an absolute HTTP(S) URL")
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        raise PublishError("target must be the server origin only, without /dashboard, query, or fragment")
     if parsed.scheme != "https" and not _is_private_http_host(parsed.hostname):
         raise PublishError("HTTP targets must use localhost or a private LAN IP; public targets require HTTPS")
-    return target
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _is_private_http_host(hostname: str | None) -> bool:

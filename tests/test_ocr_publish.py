@@ -31,6 +31,12 @@ class OcrPublishTests(unittest.TestCase):
         self.assertEqual(_validated_target("http://127.0.0.1:5181"), "http://127.0.0.1:5181")
         self.assertEqual(_validated_target("http://192.168.1.50:5181"), "http://192.168.1.50:5181")
 
+    def test_rejects_dashboard_paths_in_target_origin(self) -> None:
+        with self.assertRaisesRegex(PublishError, "server origin only"):
+            _validated_target("http://127.0.0.1:5181/dashboard")
+        with self.assertRaisesRegex(PublishError, "server origin only"):
+            _validated_target("https://guild.example?environment=preprod")
+
     def test_validates_before_publishing(self) -> None:
         responses = [
             {"data": {"publishable": True}},

@@ -223,11 +223,33 @@ def refresh_reviewed_batch(batch: dict[str, Any]) -> None:
     completeness = complete / len(rows) if rows else 0
     quality = batch.setdefault("quality", {})
     reviewed_expected = quality.get("reviewedExpectedRows")
+    if not isinstance(reviewed_expected, int) or reviewed_expected <= 0:
+        detected_rows = sum(
+            max(0, int(image.get("detectedRows") or 0))
+            for image in batch.get("sourceImages", [])
+            if isinstance(image, dict)
+        )
+        captured_rows = sum(
+            1
+            for row in rows
+            if isinstance(row, dict) and row.get("source") != "manual review"
+        )
+        previous_coverage = float(quality.get("coverage") or 0)
+        inferred_expected = (
+            round(captured_rows / previous_coverage)
+            if captured_rows and 0 < previous_coverage <= 1
+            else 0
+        )
+        reviewed_expected = max(detected_rows, inferred_expected, captured_rows)
+        if reviewed_expected <= 0 and rows:
+            reviewed_expected = len(rows)
+        quality["reviewedExpectedRows"] = reviewed_expected
     coverage = (
         min(1, len(rows) / reviewed_expected)
         if isinstance(reviewed_expected, int) and reviewed_expected > 0
-        else float(quality.get("coverage") or 0)
+        else 0
     )
+    quality["coverage"] = round(coverage, 6)
     quality["completeness"] = round(completeness, 6)
     quality["status"] = "pass" if rows and coverage == 1 and completeness == 1 else "review"
     incomplete = len(rows) - complete
