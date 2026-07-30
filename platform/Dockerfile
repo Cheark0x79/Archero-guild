@@ -16,6 +16,7 @@ ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION \
     NEXT_PUBLIC_LOCAL_OCR_ENABLED=$LOCAL_OCR_ENABLED
 WORKDIR /app
 COPY --from=dependencies /app/web/node_modules ./web/node_modules
+COPY docs/openapi.yaml ./docs/openapi.yaml
 COPY web ./web
 RUN npm --prefix web run build
 

@@ -2,7 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 
-import { observerEnv, observerPythonCommand } from "../app/api/data/actions.js";
+import {
+  observerEnv,
+  observerPythonCommand,
+  validateCaptureDate,
+} from "../app/api/data/actions.js";
+
+test("validateCaptureDate validates the calendar instead of only the shape", () => {
+  assert.equal(validateCaptureDate("2026-07-28"), true);
+  assert.equal(validateCaptureDate("2024-02-29"), true);
+  assert.equal(validateCaptureDate("2026-02-29"), false);
+  assert.equal(validateCaptureDate("2026-02-31"), false);
+  assert.equal(validateCaptureDate("2026-13-01"), false);
+  assert.equal(validateCaptureDate("28-07-2026"), false);
+});
 
 test("observerEnv forces UTF-8 for Python JSON output", () => {
   const env = observerEnv();

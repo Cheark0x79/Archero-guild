@@ -4,11 +4,15 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 5181",
+    "prebuild": "npm run openapi:sync",
     "build": "next build",
     "start": "next start -H 127.0.0.1 -p 5181",
     "test": "node --test tests/*.test.mjs",
     "check:public-bundle": "node scripts/check-public-bundle.mjs",
-    "test:api": "node api-tests/live.mjs"
+    "test:api": "node api-tests/live.mjs",
+    "docs:check": "node scripts/check-docs.mjs && npm run openapi:check",
+    "openapi:sync": "node scripts/sync-openapi.mjs",
+    "openapi:check": "node scripts/sync-openapi.mjs --check"
   },
   "dependencies": {
     "next": "^15.5.21",

@@ -4,6 +4,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { localIsoDate } from "../../../date.js";
+import { validateCaptureDate } from "./date.js";
+
+export { validateCaptureDate } from "./date.js";
 
 export const CAPTURE_KINDS = new Set(["guild-members", "guild-boss"]);
 export const DASHBOARD_ACTION_HEADER = "x-archero-dashboard-action";
@@ -131,10 +134,6 @@ export async function runCommand(command, args = []) {
 
 export function captureDateToday() {
   return localIsoDate();
-}
-
-export function validateCaptureDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 export function relativeProjectPath(absolutePath) {

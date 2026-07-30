@@ -1,134 +1,106 @@
-# Rapport de stabilisation API v1
+# API v1 compatibility test report
 
-Date : 2026-07-26
+Last updated: 2026-07-28
 
-## Périmètre
+## Scope
 
-Routes prioritaires pour le bot Discord :
+The compatibility audit covers every existing API route, with live HTTP checks
+focused on the public Discord integration surface:
 
-- `GET /api/v1/health`
-- `GET /api/v1/members`
-- `GET /api/v1/members/resolve`
-- `GET /api/v1/members/{playerId}`
-- `GET /api/v1/members/{playerId}/history`
-- `GET /api/v1/members/{playerId}/bosses`
-- `GET /api/v1/violations`
-- `GET /api/v1/rankings/members`
-- `GET /api/v1/boss-results`
-- `GET /api/v1/rankings/boss/{ranking}`
+- health and guild summary;
+- member list, filtering, pagination, resolution, detail, and history;
+- member boss profile;
+- violations and member rankings;
+- boss catalog, daily results, and rankings;
+- authentication, fail-closed production behavior, and rate limiting;
+- PostgreSQL provenance and absence of demonstration-data leakage.
 
-## Résultats automatiques
+## Route and parameter compatibility
 
-### Tests unitaires
+The current worktree was compared mechanically with `HEAD`.
 
-50 tests réussis sur 50.
+| Contract item | Before | After | Result |
+| --- | ---: | ---: | --- |
+| `route.js` files | 33 | 33 | No route added, removed, or moved |
+| HTTP methods | 33 route contracts | 33 route contracts | No method removed or changed |
+| OpenAPI path/query parameters | 24 | 24 | Same names, locations, constraints, and defaults |
+| Deleted response fields | 0 | 0 | Existing fields remain available |
 
-Ils couvrent notamment :
+New metadata and boss provenance fields are additive.
 
-- authentification Bearer et `X-API-Key` ;
-- pagination et filtres des membres ;
-- normalisation et résolution approximative des noms ;
-- calcul des violations ;
-- classements ascendants et descendants ;
-- historique des membres ;
-- records et rangs par boss ;
-- validation stricte des dates.
+## Automated results
 
-### Tests HTTP
+| Test layer | Result |
+| --- | ---: |
+| JavaScript unit and contract tests | 78/78 passed |
+| Python test suite | 91 passed; 9 integration tests skipped without a configured database |
+| PostgreSQL 16 contract tests | 3/3 passed |
+| Live HTTP API scenarios | 24/24 passed |
+| Production Docker image | Built successfully |
+| npm production dependency audit | 0 known vulnerabilities |
 
-24 scénarios réussis sur 24 contre le serveur Next.js réel.
+## Live HTTP scenarios
 
-Variantes testées :
+The 24 scenarios ran against the production Docker image with explicit
+demonstration mode and an API key. They cover:
 
-- appels nominaux ;
-- pagination ;
-- recherche par nom ;
-- membres anciens ;
-- Player ID exact ;
-- nom normalisé ;
-- faute légère dans un nom ;
-- query obligatoire absente ;
-- membre inexistant ;
-- filtres de sévérité ;
-- métrique ou ordre invalide ;
-- donations les plus faibles ;
-- filtrage boss par date et joueur ;
-- date syntaxiquement invalide ;
-- date calendaire impossible ;
-- intervalle de dates inversé ;
-- semaine invalide ou ne commençant pas un lundi.
+- health success envelope;
+- member pagination, name search, and former-member filtering;
+- invalid member status;
+- exact Player ID, normalized-name, alias, and typo resolution;
+- missing resolver query;
+- existing and unknown member details;
+- violation filtering and invalid severity;
+- ascending and descending member rankings;
+- invalid ranking metrics;
+- boss results filtered by date and player;
+- invalid and impossible calendar dates;
+- member boss profile and unknown member behavior;
+- inverted history date ranges;
+- invalid and non-Monday weekly ranking dates.
 
-### Authentification HTTP
+## Security behavior
 
-Vérification sur une instance séparée configurée avec `ARCHERO_API_KEYS` :
-
-| Scénario | Résultat |
+| Scenario | Expected and observed result |
 | --- | --- |
-| `/health` sans token | `200` |
-| `/members` sans token | `401` |
-| `/members` avec le bon Bearer token | `200` |
+| `/api/v1/health` without a key | `200` |
+| Protected route with valid Bearer token | `200` |
+| Protected route with valid `X-API-Key` | `200` |
+| Protected route without a configured production key | `503 api_not_configured` |
+| Third request with a temporary two-request limit | `429 rate_limited` with `Retry-After` |
 
-Sur l’instance de développement principale, l’authentification reste volontairement désactivée lorsqu’aucune clé n’est configurée.
+The rate limiter is keyed by a non-reversible fingerprint of the configured API
+key. The raw key is not stored in limiter state.
 
-## Audit indépendant
+## PostgreSQL contract
 
-Un agent a testé l’API en boîte noire avec uniquement la documentation et l’URL locale, sans consulter l’implémentation.
+The isolated integration test applies the real schema, inserts a dedicated
+member and three snapshots, stores a boss result and rules, then verifies:
 
-Problèmes confirmés puis corrigés :
+- no sample member ID appears in a database export;
+- power, contribution, boss-attempt, and 14-day growth values are derived from
+  real history;
+- boss damage and boss identity use stored PostgreSQL records;
+- rules round-trip through `rule_settings`;
+- previous names come from `member_names`;
+- aliases come from `guild_members.metadata`.
 
-- dates calendaires impossibles acceptées ;
-- semaine non datée acceptée ;
-- intervalle `from > to` non rejeté ;
-- absence de résolution approximative d’un membre ;
-- absence de classement ascendant pour les donations ;
-- absence de profil boss individuel ;
-- authentification indiquée à tort sur la route publique `/health`.
+## Intentional semantic changes
 
-## Contrats stabilisés
+These changes preserve field names but improve truthfulness or security:
 
-### Résolution d’un membre
+| Previous behavior | Current behavior | Consumer requirement |
+| --- | --- | --- |
+| Missing aggregate could look like `0` | Unknown aggregate is `null` | Accept nullable numeric fields |
+| PostgreSQL failure could expose sample data | Empty unavailable payload with provenance | Handle `dataMode: unavailable` |
+| Production without API keys was open | Protected routes return `503` | Configure `ARCHERO_API_KEYS` |
+| Impossible internal dates matched the shape | Impossible dates return `400` | Send real calendar dates |
+| Unlimited public requests | Default 120 requests per minute per key | Honor `429` and `Retry-After` |
 
-`GET /api/v1/members/resolve?q=Sendrok`
+## Non-destructive test boundary
 
-La résolution essaie, dans l’ordre :
+Live tests do not trigger physical capture, upload, discard, or import actions.
+Those mutation routes are covered through validators and unit tests so the
+compatibility audit does not alter user screenshots or production data.
 
-- Player ID exact ;
-- nom normalisé ;
-- nom Discord ;
-- ancien nom ;
-- alias ;
-- ressemblance orthographique.
-
-En cas d’ambiguïté, l’API renvoie des suggestions au lieu de choisir silencieusement.
-
-### Classements
-
-`GET /api/v1/rankings/members` accepte maintenant :
-
-- `metric`
-- `order=asc|desc`
-- `limit`
-
-Le classement des donations les plus faibles utilise :
-
-```text
-?metric=contribution7d&order=asc
-```
-
-### Profil boss individuel
-
-`GET /api/v1/members/{playerId}/bosses` retourne :
-
-- record global ;
-- classement de la semaine la plus récente ;
-- meilleur résultat pour chaque boss ;
-- rang du record parmi les membres actuels ;
-- nombre de participations ;
-- dernier résultat enregistré.
-
-## Limites restantes
-
-- Les tests utilisent actuellement la source locale, car PostgreSQL n’est pas connecté dans ce worktree.
-- Les tokens restent configurés manuellement dans `ARCHERO_API_KEYS`; il n’existe pas encore de page d’administration pour les créer ou les révoquer.
-- Il n’y a pas encore de limitation de débit.
-- Les schémas OpenAPI peuvent encore être détaillés davantage pour générer automatiquement un client totalement typé.
+All database writes occur only inside the isolated test Compose project.

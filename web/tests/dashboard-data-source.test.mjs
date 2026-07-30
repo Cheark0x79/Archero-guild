@@ -2,31 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  databaseOnlyPayload,
-  mergeDailySnapshots,
+  dashboardPayloadFromDatabaseExport,
+  invalidateDashboardDataCache,
+  loadDashboardData,
   mergeWithLocalFallback,
+  normalizeDatabasePayload,
+  resetDashboardDataCacheForTest,
   requiresDatabase,
   selectWarningActions,
 } from "../app/api/dashboard-data/source.js";
 
-test("daily snapshots preserve older local history while DB overrides matching dates", () => {
-  const merged = mergeDailySnapshots(
-    [
-      { date: "2026-07-27", rows: [{ playerId: "1", power: 300 }] },
-    ],
-    [
-      { date: "2026-07-25", rows: [{ playerId: "1", power: 100 }] },
-      { date: "2026-07-27", rows: [{ playerId: "1", power: 200 }] },
-    ],
-  );
-
-  assert.deepEqual(merged, [
-    { date: "2026-07-25", rows: [{ playerId: "1", power: 100 }] },
-    { date: "2026-07-27", rows: [{ playerId: "1", power: 300 }] },
-  ]);
-});
-
-test("dashboard DB payload keeps local Discord links when DB has not imported them yet", () => {
+test("database payload never imports demo members or Discord links", () => {
   const merged = mergeWithLocalFallback(
     {
       guildRoster: [
@@ -67,45 +53,134 @@ test("dashboard DB payload keeps local Discord links when DB has not imported th
     {
       playerId: "119974403",
       name: "Ac1s",
-      discordName: undefined,
-      discordLinked: true,
+      discordName: null,
+      discordLinked: false,
       status: "active",
     },
   ]);
 });
 
-test("production database mode never merges bundled demonstration history", () => {
-  const result = databaseOnlyPayload(
-    {
-      dailyRawSnapshots: [{ date: "2026-07-28", rows: [] }],
-      guildRoster: [],
-      rules: { minBossTries: 3 },
-    },
-    {
-      dailyRawSnapshots: [{ date: "2026-07-27", rows: [{ playerId: "demo" }] }],
-      guildRoster: [{ playerId: "demo", name: "Demo" }],
-      rules: { minBossTries: 2, maxInactiveDays: 3 },
-      warningActions: {},
-    },
-  );
+test("empty database collections stay empty instead of falling back to demo values", () => {
+  const normalized = normalizeDatabasePayload({
+    guildRoster: [],
+    memberSnapshots: [],
+    dailyRawSnapshots: [],
+    dailyBossRawSnapshots: [],
+    rules: {},
+  });
 
-  assert.deepEqual(result.dailyRawSnapshots, [{ date: "2026-07-28", rows: [] }]);
-  assert.deepEqual(result.guildRoster, []);
-  assert.deepEqual(result.rules, { minBossTries: 3, maxInactiveDays: 3 });
+  assert.deepEqual(normalized.guildRoster, []);
+  assert.deepEqual(normalized.memberSnapshots, []);
+  assert.deepEqual(normalized.dailyRawSnapshots, []);
+  assert.deepEqual(normalized.dailyBossRawSnapshots, []);
+  assert.deepEqual(normalized.rules, {});
+  assert.equal(normalized.captures.lastCapturedAt, null);
+});
+
+test("production database mode never exposes bundled data without a database URL", async () => {
+  const payload = await loadDashboardData({
+    environment: { ARCHERO_REQUIRE_DATABASE: "1" },
+  });
+
   assert.equal(requiresDatabase({ ARCHERO_REQUIRE_DATABASE: "1" }), true);
+  assert.equal(payload.dataMode, "unavailable");
+  assert.deepEqual(payload.data.guildRoster, []);
 });
 
 test("officer warning actions are only included for administrators", () => {
-  const actions = {
-    "123:2026-07-29:missed_boss": {
-      playerId: "123",
-      date: "2026-07-29",
-      type: "missed_boss",
-      status: "contacted",
-      note: "Private officer note",
-    },
-  };
+  const actions = { "119974403:2026-07-29:low_contribution": { status: "contacted" } };
 
   assert.deepEqual(selectWarningActions(actions, false), {});
   assert.deepEqual(selectWarningActions(actions, true), actions);
+});
+
+test("an unavailable database produces an explicitly unavailable empty payload", () => {
+  const payload = dashboardPayloadFromDatabaseExport({ ok: false, error: "connection refused" });
+
+  assert.equal(payload.ok, false);
+  assert.equal(payload.source, "database");
+  assert.equal(payload.dataMode, "unavailable");
+  assert.equal(payload.partial, true);
+  assert.deepEqual(payload.data.guildRoster, []);
+  assert.deepEqual(payload.data.memberSnapshots, []);
+  assert.deepEqual(payload.data.rules, {});
+});
+
+test("a successful process with an invalid export is still treated as unavailable", () => {
+  const payload = dashboardPayloadFromDatabaseExport({ ok: true, data: { output: "not-json" } });
+
+  assert.equal(payload.dataMode, "unavailable");
+  assert.equal(payload.partial, true);
+  assert.deepEqual(payload.data.guildRoster, []);
+  assert.match(payload.warning, /invalid payload/i);
+});
+
+test("a database payload with incomplete rules is marked partial without demo defaults", () => {
+  const payload = dashboardPayloadFromDatabaseExport({
+    ok: true,
+    data: {
+      captures: {},
+      changes: [],
+      dailyBossRawSnapshots: [],
+      bossDefinitions: [],
+      dailyRawSnapshots: [],
+      guildRoster: [],
+      memberSnapshots: [],
+      previousMemberSnapshots: [],
+      rules: { memberCapacity: 40 },
+      ocrQueue: [],
+    },
+  });
+
+  assert.equal(payload.dataMode, "live");
+  assert.equal(payload.partial, true);
+  assert.deepEqual(payload.missingDomains, ["rules"]);
+  assert.deepEqual(payload.data.rules, { memberCapacity: 40 });
+});
+
+test("database exports are cached and concurrent requests share one process", async () => {
+  resetDashboardDataCacheForTest();
+  let calls = 0;
+  const runExport = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return {
+      ok: true,
+      data: {
+        captures: {},
+        changes: [],
+        dailyBossRawSnapshots: [],
+        bossDefinitions: [],
+        dailyRawSnapshots: [],
+        guildRoster: [],
+        memberSnapshots: [],
+        previousMemberSnapshots: [],
+        rules: {
+          maxInactiveDays: 3,
+          minContribution7d: 500,
+          minPowerGrowth14dPercent: 1,
+          minBossTries: 2,
+          newMemberGraceDays: 7,
+          memberCapacity: 40,
+        },
+        ocrQueue: [],
+      },
+    };
+  };
+  const options = {
+    environment: { ARCHERO_DATABASE_URL: "postgresql://test", ARCHERO_DATA_CACHE_TTL_MS: "60000" },
+    runExport,
+  };
+
+  const [first, second] = await Promise.all([loadDashboardData(options), loadDashboardData(options)]);
+  const third = await loadDashboardData(options);
+
+  assert.equal(calls, 1);
+  assert.equal(first, second);
+  assert.equal(second, third);
+
+  invalidateDashboardDataCache();
+  await loadDashboardData(options);
+  assert.equal(calls, 2);
+  resetDashboardDataCacheForTest();
 });

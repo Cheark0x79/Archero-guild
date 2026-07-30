@@ -1,141 +1,129 @@
-# API Archero Observer
+# Archero Observer API
 
-Cette première version fournit une API HTTP JSON en lecture seule, stable et adaptée à un bot Discord. Son préfixe est `/api/v1`.
+The public API is a stable, read-only JSON interface intended for Discord bots
+and other server-side integrations. All versioned routes use the `/api/v1`
+prefix.
 
-La spécification exploitable par Swagger UI, Postman ou un générateur de client se trouve dans [`openapi.yaml`](./openapi.yaml).
+- Interactive documentation: `/api-docs`
+- Served OpenAPI document: `/openapi.yaml`
+- Canonical contract: [`openapi.yaml`](openapi.yaml)
+- Field dictionary: [`api-fields.md`](api-fields.md)
 
-Lorsque le dashboard fonctionne, une version directement consultable est disponible à l'adresse `/api-docs` et la spécification téléchargeable à `/openapi.yaml`.
+## Exposure policy
 
-## Ce qu'il est pertinent d'exposer
-
-| Donnée | Usage Discord | Exposée en v1 |
+| Data | Exposed in v1 | Notes |
 | --- | --- | --- |
-| État et fraîcheur de la collecte | Informer si les données sont à jour | Oui |
-| Résumé de guilde | Commande `/guild` | Oui |
-| Membres et métriques vérifiées | `/member`, recherche et listes | Oui |
-| Évaluation selon les règles | Alertes et modération assistée | Oui |
-| Classements boss | `/boss`, `/top` | Oui |
-| Liaison Discord | Indiquer si une liaison existe | Booléen seulement |
-| Notes d'officier, raisons d'absence | Données privées | Non |
-| Captures et résultats OCR bruts | Débogage interne | Non |
-| Import, upload, suppression | Administration | Non |
+| Collection health and freshness | Yes | Allows consumers to detect stale or unavailable data |
+| Guild summary | Yes | Suitable for `/guild` commands |
+| Members and verified metrics | Yes | Supports search, detail, and rankings |
+| Rule-based evaluations | Yes | Supports alerts and assisted moderation |
+| Boss catalog, results, and rankings | Yes | Includes stored PostgreSQL boss identity |
+| Discord association | Boolean only | Discord identity is not exposed |
+| Officer notes and absence reasons | No | Private dashboard data |
+| Raw screenshots and OCR payloads | No | Internal diagnostic data |
+| Import, upload, capture, and discard actions | No | Reserved for authenticated dashboard administrators |
 
-L'API ne doit pas devenir une porte d'entrée vers les routes existantes sous `/api/data`. Ces routes déclenchent des actions locales et restent réservées au dashboard.
+The public API must not proxy or expose the mutation routes under `/api/data`.
 
-## Authentification
+## Authentication
 
-Définir une ou plusieurs clés, séparées par des virgules :
+Configure one or more comma-separated keys:
 
 ```env
-ARCHERO_API_KEYS=une-cle-longue-et-aleatoire,cle-de-rotation
+ARCHERO_API_KEYS=replace-with-a-long-random-secret,rotation-key
 ```
 
-Le bot envoie ensuite l'un de ces en-têtes :
+Send either header:
 
 ```http
-Authorization: Bearer une-cle-longue-et-aleatoire
+Authorization: Bearer replace-with-a-long-random-secret
 ```
-
-ou :
 
 ```http
-X-API-Key: une-cle-longue-et-aleatoire
+X-API-Key: replace-with-a-long-random-secret
 ```
 
-Sans `ARCHERO_API_KEYS`, l'authentification est désactivée afin de faciliter le développement local. En production, une clé doit toujours être configurée et transmise uniquement via HTTPS. La route `/api/v1/health` reste publique.
+`GET /api/v1/health` is always public. In local development, authentication is
+disabled when `ARCHERO_API_KEYS` is empty. In production, the API fails closed:
+protected routes return `503 api_not_configured` until at least one key is
+configured.
 
-## Routes disponibles
+Keys must remain server-side and must only be transmitted over HTTPS.
 
-### `GET /api/v1/health`
+## Endpoint reference
 
-Test de disponibilité, sans authentification.
+| Method and path | Parameters | Purpose |
+| --- | --- | --- |
+| `GET /api/v1/health` | None | Public process health |
+| `GET /api/v1/guild` | None | Guild counts, availability, evaluations, and collection timestamps |
+| `GET /api/v1/rules` | None | Public evaluation rules |
+| `GET /api/v1/members` | `q`, `status`, `limit`, `offset` | Search and paginate members |
+| `GET /api/v1/members/resolve` | `q`, `limit` | Resolve an ID, normalized name, previous name, alias, or typo |
+| `GET /api/v1/members/{playerId}` | `playerId` | Public member detail |
+| `GET /api/v1/members/{playerId}/history` | `playerId`, `from`, `to` | Daily metric history |
+| `GET /api/v1/members/{playerId}/bosses` | `playerId` | Global, weekly, and per-boss records |
+| `GET /api/v1/violations` | `severity`, `flag` | Members with warning or danger evaluations |
+| `GET /api/v1/rankings/members` | `metric`, `order`, `limit` | Member ranking |
+| `GET /api/v1/bosses` | None | Boss catalog and records |
+| `GET /api/v1/boss-results` | `date`, `boss`, `playerId`, `limit` | Daily boss results |
+| `GET /api/v1/rankings/boss/all-time` | `limit` | Best historical score per member |
+| `GET /api/v1/rankings/boss/weekly` | `week`, `limit` | Weekly totals; `week` must be a Monday |
+| `GET /api/v1/rankings/boss/by-boss` | `boss`, `limit` | Best score per boss |
 
-### `GET /api/v1/guild`
+### Member list parameters
 
-Résumé compact : effectif, places libres, membres à surveiller, liaisons Discord et dates de collecte/import.
+| Parameter | Type | Default | Constraints |
+| --- | --- | --- | --- |
+| `q` | string | Empty | Case- and accent-insensitive name or Player ID search |
+| `status` | string | `active` | `active`, `former`, or `all` |
+| `limit` | integer | `25` | 1 to 100 |
+| `offset` | integer | `0` | 0 to 100000 |
 
-### `GET /api/v1/rules`
+### Member resolution parameters
 
-Règles publiques utilisées pour évaluer l’activité, la contribution, la progression et les essais boss.
+| Parameter | Type | Default | Constraints |
+| --- | --- | --- | --- |
+| `q` | string | None | Required |
+| `limit` | integer | `5` | 1 to 10 |
 
-### `GET /api/v1/members`
+Previous names are loaded from PostgreSQL `member_names`. Search aliases are
+loaded from `guild_members.metadata.searchAliases`; the legacy `aliases` key is
+also accepted. These lookup values are not exposed in member details.
 
-Liste paginée des membres.
+### Member ranking parameters
 
-Paramètres :
+| Parameter | Values | Default |
+| --- | --- | --- |
+| `metric` | `power`, `contribution7d`, `powerDelta`, `contributionDelta`, `bossAttacks`, `activity` | `power` |
+| `order` | `asc`, `desc` | `desc`, except `activity` uses `asc` |
+| `limit` | Integer from 1 to 100 | `10` |
 
-- `q` : recherche insensible à la casse et aux accents sur le nom ou le Player ID ;
-- `status` : `active` (défaut), `former` ou `all` ;
-- `limit` : 1 à 100, défaut 25 ;
-- `offset` : défaut 0.
+### Date parameters
 
-Exemple :
+Dates use the strict `YYYY-MM-DD` format and must exist in the calendar.
+Impossible dates such as `2026-02-31` return `400`.
 
-```bash
-curl -H "Authorization: Bearer $ARCHERO_BOT_API_KEY" \
-  "https://example.org/api/v1/members?q=alice&limit=10"
-```
+For weekly boss rankings, `week` must identify a Monday. If it is omitted, the
+latest recorded week is returned.
 
-### `GET /api/v1/members/{playerId}`
+## Response format
 
-Détail public d'un membre. La recherche exacte par Player ID évite les collisions de pseudonymes.
-
-### `GET /api/v1/members/resolve`
-
-Résout un membre avec `q` (obligatoire) depuis un Player ID, un nom normalisé, un alias ou une faute légère. `limit` est optionnel, compris entre 1 et 10, avec une valeur par défaut de 5.
-
-### `GET /api/v1/members/{playerId}/history`
-
-Historique quotidien des métriques d’un membre. Chaque journée contient aussi les alertes métier calculées (`game_absence`, `low_contribution`, `low_progression`, `missed_boss`), leur suivi d’officier dans `action`, et la réponse fournit `warningSummary`. Les statuts de suivi sont `pending`, `noted`, `contacted`, `excused` et `resolved`. Les paramètres `from` et `to` utilisent le format `YYYY-MM-DD`.
-
-### `GET /api/v1/members/{playerId}/bosses`
-
-Retourne le record global, le classement hebdomadaire et, pour chaque boss, le meilleur dégât, le rang dans la guilde, le nombre de participations et le dernier résultat.
-
-### `GET /api/v1/violations`
-
-Retourne séparément la watchlist actuelle (`members`) et l’historique des alertes automatiques (`history`). Une alerte marquée `excused` ou `resolved` disparaît de la watchlist actuelle mais reste dans l’historique avec sa date, la note et le statut de suivi. Filtres : `severity=warning|danger`, `flag`, `playerId`, `from`, `to` et `limit` (1 à 1000, 200 par défaut). `historyPagination` indique le total et s’il reste des résultats.
-
-### `GET /api/v1/rankings/members`
-
-Classement général avec `metric=power|contribution7d|powerDelta|contributionDelta|bossAttacks|activity`, `order=asc|desc` et `limit`. L’ordre par défaut est `desc`, sauf pour `activity` qui utilise `asc`.
-
-### `GET /api/v1/bosses`
-
-Catalogue des sept boss avec nombre de joueurs enregistrés, record et détenteur du record.
-
-### `GET /api/v1/boss-results`
-
-Résultats journaliers comprenant rang, joueur, dégâts numériques et texte affiché dans le jeu. Filtres : `date`, `boss`, `playerId` et `limit`.
-
-### `GET /api/v1/rankings/boss/all-time?limit=10`
-
-Meilleur score historique de chaque membre.
-
-### `GET /api/v1/rankings/boss/weekly?week=YYYY-MM-DD&limit=10`
-
-Totaux de la semaine dont la date fournie est le lundi. Sans `week`, retourne la semaine la plus récente disponible.
-
-### `GET /api/v1/rankings/boss/by-boss?boss=fire-dragon&limit=10`
-
-Meilleurs scores par boss. Sans `boss`, retourne les sept groupes.
-
-## Format des réponses
-
-Succès :
+Success:
 
 ```json
 {
   "data": {},
   "meta": {
     "apiVersion": "v1",
-    "generatedAt": "2026-07-26T12:00:00.000Z",
-    "source": "database"
+    "generatedAt": "2026-07-28T12:00:00.000Z",
+    "source": "database",
+    "dataMode": "live",
+    "partial": false
   }
 }
 ```
 
-Erreur :
+Error:
 
 ```json
 {
@@ -145,20 +133,64 @@ Erreur :
   },
   "meta": {
     "apiVersion": "v1",
-    "generatedAt": "2026-07-26T12:00:00.000Z"
+    "generatedAt": "2026-07-28T12:00:00.000Z"
   }
 }
 ```
 
-Codes attendus : `200`, `400`, `401` et `404`. `meta.source` vaut `database` ou `local`. Une éventuelle `meta.warning` signifie que PostgreSQL était indisponible et que les données locales de démonstration ont servi de repli.
+See [`api-fields.md`](api-fields.md) for every shared field, its type,
+nullability, provenance, and compatibility requirements.
 
-## Intégration dans un bot Discord
+## Data integrity and provenance
 
-Le bot doit garder la clé côté serveur, appeler l'API uniquement lors d'une interaction et présenter `meta.warning` aux administrateurs. Un cache de 15 à 60 secondes côté bot suffit pour les classements. Il ne faut jamais copier la clé dans une commande, un embed ou un journal public.
+- `source: database` means PostgreSQL was selected.
+- `dataMode: live` means PostgreSQL produced a valid payload.
+- `dataMode: unavailable` means PostgreSQL was configured but unavailable or
+  invalid. Collections remain empty.
+- `source: local` with `dataMode: demo` is explicit demonstration mode and is
+  only used when no database URL is configured.
+- `partial` and `missingDomains` identify incomplete exports.
+- Unknown numeric metrics are `null`, not fabricated zeros.
 
-Correspondance de commandes conseillée :
+PostgreSQL data is cached for 15 seconds by default. Concurrent requests share
+one export process. Successful imports and rule updates invalidate the cache.
 
-| Commande Discord | Appel API |
+Configuration:
+
+```env
+ARCHERO_DATA_CACHE_TTL_MS=15000
+ARCHERO_DATA_ERROR_CACHE_TTL_MS=2000
+ARCHERO_API_RATE_LIMIT_PER_MINUTE=120
+```
+
+Set the rate limit to `0` only when another trusted layer provides equivalent
+protection.
+
+## HTTP status codes
+
+| Status | Meaning |
+| ---: | --- |
+| `200` | Successful request |
+| `400` | Invalid parameter or date |
+| `401` | Missing or invalid API key |
+| `404` | Requested member or resource does not exist |
+| `429` | Per-key rate limit exceeded; inspect `Retry-After` |
+| `503` | API authentication is not configured in production |
+
+## Discord bot guidance
+
+- Keep the API key in server-side secret storage.
+- Call the API only while processing an interaction.
+- Never include the key in a command, embed, error message, or public log.
+- Cache rankings for 15 to 60 seconds on the bot side.
+- Surface `meta.warning` to administrators.
+- Accept `null` for unknown metrics.
+- Retry `429` only after the `Retry-After` delay.
+- Treat unknown evaluation flags as forward-compatible values.
+
+Suggested mapping:
+
+| Discord command | API request |
 | --- | --- |
 | `/guild` | `GET /api/v1/guild` |
 | `/member player_id:123` | `GET /api/v1/members/123` |
@@ -166,12 +198,19 @@ Correspondance de commandes conseillée :
 | `/boss mode:weekly` | `GET /api/v1/rankings/boss/weekly` |
 | `/boss boss:fire-dragon` | `GET /api/v1/rankings/boss/by-boss?boss=fire-dragon` |
 
-## Prochaines évolutions
+## Verification status
 
-Après validation de ces contrats :
+The API reliability plan is complete:
 
-1. ajouter une vraie liaison `discord_user_id` administrable, sans exposer le nom Discord ;
-2. ajouter limitation de débit et journalisation des accès ;
-3. exposer un historique membre paginé ;
-4. ajouter des webhooks signés pour notifier une fin d'import ou un nouveau classement ;
-5. supprimer le repli vers les données de démonstration en production.
+1. PostgreSQL responses never contain demonstration fallback data.
+2. Provenance, partial data, and unavailable metrics are explicit.
+3. Rules, derived metrics, boss identity, previous names, and aliases come from
+   PostgreSQL.
+4. Snapshot caching, fail-closed production authentication, and rate limiting
+   are enabled.
+5. One canonical OpenAPI document is synchronized and checked in CI.
+6. Public and internal date inputs use calendar validation.
+7. The database contract is tested against a real PostgreSQL 16 instance.
+
+Potential future product work includes an administrable Discord user ID,
+paginated member history, access audit logs, and signed webhook notifications.

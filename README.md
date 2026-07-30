@@ -1,224 +1,194 @@
 # Archero Observer
 
-## Production homelab
+Archero Observer is a visual data collection pipeline and dashboard for an
+Archero guild. It captures game screens through ADB, extracts rankings and
+member metrics with OCR, normalizes the results, stores reviewed data in
+PostgreSQL, and exposes a read-only API for integrations such as Discord bots.
 
-For a Docker deployment behind Cloudflare Tunnel, including persistent
-PostgreSQL, backups, health checks, and Cloudflare Access, see
-[`docs/production-homelab.md`](docs/production-homelab.md).
+The project intentionally uses conventional visual automation through ADB,
+Appium, and OCR. It does not intercept network traffic, modify the game, or
+attempt to bypass detection.
 
-The deferred Proxmox, K3s, and Argo CD target architecture is recorded in
-[`docs/roadmap-k3s-argocd.md`](docs/roadmap-k3s-argocd.md).
+## Documentation
 
-Petit pipeline d'observation visuelle pour collecter des captures, extraire des classements par OCR, normaliser les donnees et les preparer pour PostgreSQL.
+| Document | Purpose |
+| --- | --- |
+| [`docs/README.md`](docs/README.md) | Documentation index |
+| [`docs/api.md`](docs/api.md) | Public API usage, authentication, and endpoints |
+| [`docs/api-fields.md`](docs/api-fields.md) | Field dictionary, nullability, and provenance |
+| [`docs/openapi.yaml`](docs/openapi.yaml) | Canonical OpenAPI 3.1 contract |
+| [`docs/member-evaluation-flags.md`](docs/member-evaluation-flags.md) | Evaluation flags and severities |
+| [`docs/test-environment.md`](docs/test-environment.md) | Isolated PostgreSQL integration environment |
+| [`docs/production-homelab.md`](docs/production-homelab.md) | Current Docker and Cloudflare deployment |
+| [`docs/deployment-plan.md`](docs/deployment-plan.md) | Longer-term VM deployment plan |
+| [`docs/roadmap-k3s-argocd.md`](docs/roadmap-k3s-argocd.md) | Deferred K3s and Argo CD roadmap |
 
-Le projet reste volontairement sur de l'automatisation visuelle classique via ADB/Appium et OCR. Il ne contient pas d'interception reseau, de modification du jeu ou de contournement de detection.
-
-## Structure
+## Repository layout
 
 ```text
 observer/
-  automation/      Worker, ADB et machine a etats
-  ocr/             Pretraitement OCR et validation
-  pipeline/        Deduplication et normalisation
-  storage/         Schema SQL
-platform/          Produit serveur: front, API, PostgreSQL, Cloudflare
-ocr/               Produit PC: interface locale, Tesseract et publication
-contracts/         Contrat JSON partage entre les deux produits
-web/               Sources de l'interface et de l'API Next.js
-config/            Configuration d'exemple
-systemd/           Ancien prototype dry-run, non deploye en production
-tests/             Tests unitaires
+  automation/      Worker, ADB integration, and state machine
+  ocr/             OCR preprocessing and validation
+  pipeline/        Detection, deduplication, and normalization
+  storage/         PostgreSQL schema, persistence, exports, and migrations
+platform/          Production web/API/PostgreSQL/Cloudflare deployment
+ocr/               Local Tesseract workstation product and review UI
+contracts/         Versioned JSON exchange contract
+web/               Next.js dashboard and HTTP API sources
+config/            Example observer configuration
+systemd/           Legacy local worker units, not used by the web platform
+scripts/           Development and test environment commands
+tests/             Python unit and PostgreSQL integration tests
+docs/              API, operations, deployment, and review documentation
 ```
 
-## Demarrage local
+## Product separation
 
-Les tests du coeur ne demandent aucune dependance externe:
+The production server runs only `platform/`: Next.js, the HTTP API,
+PostgreSQL, and Cloudflare Tunnel. It contains no ADB bridge, Tesseract package,
+raw screenshot mount, or local OCR page.
+
+The trusted workstation runs `ocr/`: BlueStacks/ADB capture, Tesseract,
+correction, and publication of reviewed JSON through the authenticated
+ingestion API. The two products have independent Compose lifecycles and share
+only the versioned contract under `contracts/`.
+
+## Quick start
+
+The core Python unit tests have no external service dependency:
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-## Captures locales BlueStacks
+Web tests:
 
-Un agent Windows local utilise l'ADB fourni par BlueStacks sur
-`127.0.0.1:5555`. Le dashboard et l'agent communiquent uniquement par les
-fichiers ignores de `data/capture-bridge`; aucun port ADB n'est expose au
-reseau. Cet agent appartient au composant OCR local et n'est pas necessaire au
-serveur web de production.
+```bash
+npm --prefix web ci
+npm --prefix web test
+```
 
-1. Demarrer BlueStacks et ouvrir Archero sur l'ecran a capturer.
-2. Ouvrir `/admin/data` dans le dashboard.
-3. Verifier que le statut ADB indique `Connected`.
-4. Choisir `Guild members` ou `Guild boss`, puis confirmer la capture.
-5. Examiner le PNG affiche et choisir `Keep screenshot` ou `Discard screenshot`.
+Start the dashboard:
 
-Cette action prend une image seulement. Elle ne lance ni Tesseract, ni import,
-ni ecriture PostgreSQL. Le bouton `Synchronize` reste une action distincte et
-doit etre utilise uniquement apres verification des captures.
+```bash
+npm --prefix web run dev
+```
 
-## Environnement Nix
+The local dashboard is available at:
 
-Le projet fournit une `flake.nix` pour isoler les dependances de developpement et d'execution:
+```text
+http://127.0.0.1:5181
+```
+
+Interactive API documentation is available at:
+
+```text
+http://127.0.0.1:5181/api-docs
+```
+
+## Nix development environment
+
+`flake.nix` provides an isolated development and runtime toolchain:
 
 ```bash
 nix develop
 ```
 
-Si le dossier n'est pas un depot Git initialise, utiliser temporairement:
+For a directory that is not yet a Git repository:
 
 ```bash
 nix develop path:.
 ```
 
-Sinon, initialiser le depot et ajouter les fichiers visibles par Nix:
-
-```bash
-git init
-git add .
-```
-
-Le shell contient:
+The shell includes:
 
 ```text
 Python 3.12
-pytesseract + Pillow
+pytesseract and Pillow
 Tesseract OCR
 ADB / android-tools
 PostgreSQL client
 Node.js 22
 ```
 
-Commandes utiles:
+Useful commands:
 
 ```bash
 nix flake check
 nix build
 nix run . -- --config config/observer.example.json
 nix run .#dashboard
-npm --prefix web run dev
-```
-
-Dans le shell:
-
-```bash
 python -B -m unittest discover -s tests
-python -B -m observer.run --config config/observer.example.json
+node --test web/tests/*.test.mjs
 archero-capture guild-members
 archero-capture guild-boss
 archero-day 2026-07-16
 archero-import 2026-07-16
-node --test web/tests/*.test.mjs
-npm --prefix web test
 archero-dashboard
 ```
 
-Le dashboard local est ensuite disponible sur:
+Appium is not included directly because it is not available in the tested
+`nixpkgs` snapshot. OpenCV is also excluded from the default shell because that
+snapshot does not provide a usable Python `cv2` module. The OCR adapter uses
+Pillow and pytesseract for deterministic preprocessing. Add a pinned and tested
+OpenCV derivation if advanced image processing becomes necessary.
+
+For a complete non-Nix environment, install the platform-specific equivalents:
 
 ```text
-http://127.0.0.1:5181
-```
-
-## API pour integrations
-
-Une API JSON en lecture seule, versionnee sous `/api/v1`, expose le resume de
-guilde, les membres et les classements boss pour un bot Discord ou une autre
-integration. La documentation d'utilisation est dans
-[`docs/api.md`](docs/api.md) et le contrat OpenAPI dans
-[`docs/openapi.yaml`](docs/openapi.yaml).
-
-Une fois le dashboard lance, la documentation web est disponible sur:
-
-```text
-http://127.0.0.1:5181/api-docs
-```
-
-Pour proteger les routes en dehors de `/api/v1/health`, definir
-`ARCHERO_API_KEYS` dans l'environnement du dashboard.
-
-Le port peut etre change avec:
-
-```bash
-ARCHERO_DASHBOARD_PORT=5190 archero-dashboard
-```
-
-Appium n'est pas inclus comme paquet direct car l'attribut n'est pas disponible dans le `nixpkgs` local teste. FastAPI/Uvicorn ne sont pas inclus dans le shell par defaut tant que l'API n'est pas implementee, afin d'eviter une dependance transitive actuellement instable dans ce `nixpkgs`.
-
-OpenCV n'est pas inclus dans le shell par defaut: les attributs Python visibles dans ce canal ne fournissent pas un module `cv2` importable dans l'environnement realise. L'adaptateur OCR utilise donc Pillow + pytesseract pour le pretraitement numerique de base. Si OpenCV devient requis pour des traitements plus avances, il faudra ajouter une derivation OpenCV Python verrouillee et validee plutot qu'une installation globale.
-
-Pour un environnement non Nix complet, installer les outils systeme et bibliotheques Python adaptees a la machine cible:
-
-```text
-Android Emulator + adb
-Appium + UiAutomator2 si utilise
+Android Emulator and adb
+Appium and UiAutomator2 when required
 Tesseract OCR
-Pillow + pytesseract
+Pillow and pytesseract
 PostgreSQL
+Node.js 22
 ```
-
-Les dependances Python de production ne sont pas declarees automatiquement ici afin de garder la decision explicite.
 
 ## Configuration
 
-Copier `config/observer.example.json` vers un fichier prive, par exemple:
+Copy `config/observer.example.json` to a private location, for example:
 
 ```text
 /etc/archero-observer/config.json
 ```
 
-Les secrets restent hors depot, par exemple:
+Keep secrets outside the repository:
 
 ```text
 /etc/archero-observer/secrets.env
 ```
 
-avec des droits restrictifs:
+Restrict access to the secrets file:
 
 ```bash
 chmod 600 /etc/archero-observer/secrets.env
 ```
 
-## Execution
-
-Exemple avec une configuration locale:
+Run the observer:
 
 ```bash
 python3 -m observer.run --config config/observer.example.json
 ```
 
-Par defaut, la commande fonctionne en mode `dry_run`. Elle valide la configuration et simule les transitions sans piloter d'emulateur.
+The example configuration uses `dry_run` by default. It validates the
+configuration and simulates state transitions without controlling an emulator.
 
-## Capture manuelle par date
+## Capturing and importing screenshots
 
-Quand le telephone est deja ouvert sur le bon ecran, la capture brute peut etre prise sans navigation automatique:
+When the device is already on the correct screen:
 
 ```bash
 archero-capture guild-members
 archero-capture guild-boss
 ```
 
-Quand les screenshots sont deja ranges dans le dossier du jour, lancer l'import du jour:
-
-```bash
-archero-day 2026-07-17
-```
-
-Sans date, `archero-day` utilise automatiquement la date du jour en Europe/Paris. Cette commande historique est réservée au développement local : elle lit les fichiers existants, lance l'OCR/import, puis met à jour `web/sample-data.js`.
-
-```text
-lecture screenshots/raw/YYYY-MM-DD -> OCR/import du jour -> mise a jour web/sample-data.js
-```
-
-Les données de préproduction et de production ne passent jamais par ce fichier
-ni par Git. Elles sont validées dans l’extracteur local puis publiées vers
-`/api/v1/imports/validate` et `/api/v1/imports`.
-
-Les commandes `archero-capture ...` appellent uniquement:
+These commands only invoke:
 
 ```text
 adb exec-out screencap -p
 ```
 
-Les fichiers sont ranges automatiquement par date Europe/Paris:
+Screenshots are organized by the Europe/Paris date:
 
 ```text
 screenshots/raw/YYYY-MM-DD/guild/members-001.png
@@ -226,153 +196,80 @@ screenshots/raw/YYYY-MM-DD/guild/members-002.png
 screenshots/raw/YYYY-MM-DD/boss/boss-001.png
 ```
 
-Pour verifier le prochain nom sans appeler ADB:
+Preview the next output name without calling ADB:
 
 ```bash
 archero-capture guild-members --dry-run
 ```
 
-Si plusieurs appareils ADB sont connectes:
+Select one device when several ADB devices are connected:
 
 ```bash
 archero-capture guild-members --serial DEVICE_SERIAL
 ```
 
-Pour importer une journee capturee et rafraichir les metadonnees du dashboard:
+Process screenshots already stored for one day:
+
+```bash
+archero-day 2026-07-17
+```
+
+Without a date, `archero-day` uses the current Europe/Paris date. It reads
+existing screenshots, runs OCR and import, and updates local demonstration data.
+It does not capture new screenshots.
+
+Import one captured day:
 
 ```bash
 archero-import 2026-07-16
 ```
 
-Cette premiere version cree un rapport dans `data/imports/YYYY-MM-DD.json`, detecte les lignes visibles des screenshots de guilde, inventorie les captures boss, et met a jour la date/source de capture dans `web/sample-data.js`. Elle ne remplace pas encore les valeurs OCR des membres tant que l'OCR complet n'est pas branche.
+The import writes an audit report to `data/imports/YYYY-MM-DD.json`. When a
+database URL is configured, it also persists the reviewed roster, snapshots,
+screenshots, and boss results to PostgreSQL.
 
-## Normalisation des screenshots
+## Screenshot normalization
 
-Les captures brutes doivent rester separees des images pretraitees:
-
-```text
-screenshots/raw/          sortie ADB originale
-screenshots/normalized/   PNG normalises avant OCR
-screenshots/failed/       captures ou crops a revoir
-```
-
-La normalisation produit des PNG deterministes:
-
-- taille cible fixe;
-- crop optionnel par region;
-- conversion RGB ou niveaux de gris;
-- autocontraste optionnel;
-- seuillage optionnel pour les champs OCR numeriques;
-- hash SHA-256 de l'artefact genere.
-
-L'objectif est qu'une meme capture, traitee avec le meme profil, donne toujours le meme fichier et le meme hash. Les alertes OCR et les imports doivent donc s'appuyer sur les images normalisees, pas directement sur les screenshots bruts.
-
-### OCR Lab local et contrat image vers JSON
-
-La page admin `/admin/ocr-lab` teste le moteur OCR sans lancer d'import et sans
-ecrire dans PostgreSQL. Elle accepte une capture PNG `guild-members` ou
-`guild-boss`, affiche l'image ramenee a la largeur canonique de 1080 pixels, les
-zones detectees, les donnees extraites et le JSON brut.
-
-Cette page et son endpoint ne sont disponibles que sur la machine OCR lorsque
-`ARCHERO_OCR_LAB_ENABLED=1`. Ils restent des outils locaux et ne doivent pas
-etre actives dans l'image web de production.
-
-L'endpoint local `POST /api/data/ocr` utilise un multipart avec:
-
-- `kind`: `guild-members` ou `guild-boss`;
-- `file`: capture PNG;
-- `includePodium`: `true` uniquement pour la premiere capture boss qui montre
-  le podium;
-- header `x-archero-dashboard-action: 1`.
-
-La reponse contient `schemaVersion`, la geometrie source, la transformation de
-normalisation, les rectangles detectes, les lignes OCR, les temps de traitement
-et un controle qualite. Un resultat ne doit etre considere publiable que si
-`quality.status` vaut `pass`, avec une couverture et une completude de 100 %.
-
-Le module Python autonome peut aussi etre execute sans le dashboard:
-
-```bash
-python -B -m observer.ocr.service guild-members capture.png \
-  --normalized normalized.png --annotated annotated.png
-```
-
-Pour construire un lot versionne a partir de plusieurs captures:
-
-```bash
-python -B -m observer.ocr.batch \
-  --date 2026-07-29 \
-  --roster roster.json \
-  --member screenshots/members-001.png \
-  --boss screenshots/boss-001.png \
-  --output data/outbox/2026-07-29.json
-```
-
-Le schema du lot est dans `contracts/import-batch.schema.json`. Avant tout
-envoi, l'agent impose une qualite de 100 %, calcule les SHA-256 des images et
-une cle d'idempotence. Il peut ensuite valider, puis publier le JSON:
-
-```bash
-python -B -m observer.ocr.publish data/outbox/2026-07-29.json \
-  --target https://archero.example.com \
-  --token "$ARCHERO_INGESTION_TOKEN" \
-  --validate-only
-
-python -B -m observer.ocr.publish data/outbox/2026-07-29.json \
-  --target https://archero.example.com \
-  --token "$ARCHERO_INGESTION_TOKEN"
-```
-
-Le serveur expose `POST /api/v1/imports/validate` et
-`POST /api/v1/imports`. Il exige une cle presente dans
-`ARCHERO_INGESTION_KEYS`, revalide le contrat et le controle qualite, puis
-importe le lot dans PostgreSQL dans une transaction. Une nouvelle tentative
-avec la meme cle d'idempotence renvoie le premier resultat sans dupliquer les
-donnees.
-
-La separation de production est donc:
+Keep raw and processed images separate:
 
 ```text
-PC OCR (BlueStacks + ADB + Tesseract)
-             |
-             | JSON versionne, HTTPS sortant
-             v
-serveur production (Next.js + API + PostgreSQL)
+screenshots/raw/          original ADB output
+screenshots/normalized/   deterministic PNG input for OCR
+screenshots/failed/       captures or crops requiring review
 ```
 
-La machine OCR ne reçoit jamais d'accès PostgreSQL et le serveur de production
-ne contient plus Tesseract ni ADB. Les deux produits ont maintenant des cycles
-de vie autonomes dans le même dépôt :
+Normalization can apply:
 
-- `platform/` construit et déploie Next.js, l'API et PostgreSQL ;
-- `ocr/` construit l'interface locale et Tesseract sur le PC ;
-- `contracts/` contient leur seul contrat d'échange.
+- a fixed target size;
+- an optional region crop;
+- RGB or grayscale conversion;
+- optional autocontrast;
+- optional thresholding for numeric OCR fields;
+- a SHA-256 hash of the generated artifact.
 
-Le mode operatoire complet pour relier le PC OCR a une pre-production ou a la
-production, sans faire transiter les donnees par Git, est documente dans
-[`docs/ocr-distant.md`](docs/ocr-distant.md).
+The same input and profile should always produce the same output and hash. OCR
+alerts and imports should therefore reference normalized images rather than raw
+screenshots.
 
-## Base de donnees
+## Database and data modes
 
-Le schema initial est dans `observer/storage/schema.sql`. `docker-compose.yml` fournit uniquement PostgreSQL pour le developpement local. Le mot de passe inclus est un exemple de developpement et ne doit pas etre reutilise en production.
+The PostgreSQL source of truth is
+[`observer/storage/schema.sql`](observer/storage/schema.sql).
+`docker-compose.yml` starts only the local development database. Its password is
+for development and must never be reused in production.
 
-Quand `ARCHERO_DATABASE_URL` ou `DATABASE_URL` est defini, `archero-import` continue d'ecrire le rapport JSON dans `data/imports`, puis persiste aussi l'import dans PostgreSQL. Sans variable DB, le workflow reste local et fonctionne comme avant.
+When `ARCHERO_DATABASE_URL` or `DATABASE_URL` is set:
 
-Le dashboard lit `/api/dashboard-data`. En développement sans base configurée,
-la route serveur peut utiliser `web/sample-data.js`; ce fichier n’est jamais
-importé dans le bundle client. Dans l'image `platform/`, PostgreSQL est
-obligatoire : une panne renvoie une erreur et aucune donnée de démonstration
-n'est affichée.
+- imports persist structured data to PostgreSQL;
+- dashboard and public API reads come from PostgreSQL;
+- an empty or unavailable database is never completed with demonstration data;
+- unavailable data is returned with `dataMode: "unavailable"` and empty
+  structures.
 
-### Configuration locale
+When no database URL is configured, the application explicitly uses local
+demonstration mode and returns `dataMode: "demo"`.
 
-Deux exemples sont fournis:
-
-- `.env.example` pour les commandes Python lancees depuis la racine du projet;
-- `web/.env.local.example` pour les routes serveur Next.js du dashboard.
-
-Pour un test local avec PostgreSQL:
+Copy the environment examples:
 
 ```bash
 cp .env.example .env
@@ -381,40 +278,79 @@ docker compose up -d postgres
 set -a; source .env; set +a
 ```
 
-Par defaut le PostgreSQL Docker est expose sur `127.0.0.1:55440` pour eviter les conflits avec un PostgreSQL local deja installe. Le port peut etre change avec `ARCHERO_POSTGRES_PORT`.
+The development database listens on `127.0.0.1:55440` by default. Override it
+with `ARCHERO_POSTGRES_PORT`. `ARCHERO_DATABASE_URL` takes precedence over
+`DATABASE_URL`.
 
-`ARCHERO_DATABASE_URL` est prioritaire. `DATABASE_URL` est accepte en fallback. Les valeurs de `.env.example` correspondent a `docker-compose.yml`: base `archero_observer`, user `archero`, mot de passe `archero_dev_password`.
+## Isolated database tests
 
-### Migration JSON vers DB
+The integration environment is separate from development and production:
 
-Les rapports existants dans `data/imports/*.json` peuvent etre rejoues vers PostgreSQL:
+```powershell
+.\scripts\test-env.ps1 test
+.\scripts\test-env.ps1 stop
+```
+
+Linux or WSL:
+
+```bash
+bash scripts/test-env.sh test
+bash scripts/test-env.sh stop
+```
+
+See [`docs/test-environment.md`](docs/test-environment.md) for lifecycle,
+resource, log, and reset commands.
+
+## Migrating JSON reports to PostgreSQL
+
+Replay all existing import reports:
 
 ```bash
 nix develop -c python -B -m observer.storage.migrate_json --apply-schema
 ```
 
-Pour verifier sans ecrire en DB:
+Validate without writing:
 
 ```bash
 nix develop -c python -B -m observer.storage.migrate_json --dry-run
 ```
 
-Pour migrer une seule date:
+Migrate one date:
 
 ```bash
 nix develop -c python -B -m observer.storage.migrate_json --date 2026-07-19
 ```
 
-La commande relit les rapports JSON, retrouve les screenshots references, relance l'extraction OCR disponible, puis persiste les membres, screenshots, snapshots et scores boss dans PostgreSQL. Elle est relancable: un meme rapport reutilise son batch existant au lieu d'en creer un nouveau.
-
-Par defaut la migration ne relance pas l'OCR, pour rester rapide et importer la structure de base. Pour migrer aussi les metriques extraites et les rankings boss depuis les screenshots, ajoute `--with-ocr`:
+Include OCR extraction:
 
 ```bash
 nix develop -c python -B -m observer.storage.migrate_json --with-ocr
 ```
 
-Le `--with-ocr` peut prendre du temps sur plusieurs captures. La sortie JSON contient un champ `warnings` quand des screenshots ou dependances OCR manquent.
+Migration is idempotent: replaying the same report reuses its existing batch.
+The JSON output includes `warnings` when referenced screenshots or OCR
+dependencies are unavailable.
 
-## Deploiement homelab
+## Public API
 
-Le plan cible pour une VM dediee Proxmox, l'exposition via Cloudflare, les backups, le monitoring, la securite et les mises a jour est documente dans [`docs/deployment-plan.md`](docs/deployment-plan.md).
+The read-only API is versioned under `/api/v1`. It exposes guild health,
+members, rules, evaluations, histories, and boss rankings. Configure one or
+more comma-separated keys:
+
+```env
+ARCHERO_API_KEYS=replace-with-a-long-random-secret
+```
+
+All routes except `/api/v1/health` require either a Bearer token or
+`X-API-Key`. Production fails closed with `503` when no API key is configured.
+See [`docs/api.md`](docs/api.md) and
+[`docs/api-fields.md`](docs/api-fields.md) for the complete contract.
+
+## Deployment
+
+For the supported Docker Compose deployment behind Cloudflare Tunnel, see
+[`docs/production-homelab.md`](docs/production-homelab.md).
+
+The VM operations plan is in [`docs/deployment-plan.md`](docs/deployment-plan.md).
+The deferred Proxmox, K3s, and Argo CD architecture is in
+[`docs/roadmap-k3s-argocd.md`](docs/roadmap-k3s-argocd.md).
