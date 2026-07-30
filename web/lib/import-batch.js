@@ -65,13 +65,20 @@ export function validateImportBatch(batch, { requirePublishable = false } = {}) 
     if (!Array.isArray(quality.warnings)) errors.push("quality.warnings must be an array");
   }
 
+  const sourceKinds = new Set(
+    Array.isArray(batch.sourceImages) ? batch.sourceImages.map((image) => image?.kind) : [],
+  );
+  const scope = sourceKinds.size === 1 ? [...sourceKinds][0] : null;
+  const hasScopeRows = scope === "guild-members"
+    ? batch.members.length > 0
+    : scope === "guild-boss" ? batch.bossRankings.length > 0 : false;
   const publishable =
     errors.length === 0
-    && quality?.status === "pass"
     && quality?.coverage === 1
-    && quality?.completeness === 1;
+    && hasScopeRows
+    && (scope !== "guild-boss" || quality?.completeness === 1);
   if (requirePublishable && !publishable) {
-    errors.push("quality gate requires pass with 100% coverage and completeness");
+    errors.push("quality gate requires one complete capture scope with 100% coverage; missing member metrics are allowed");
   }
   return { valid: errors.length === 0, publishable, errors };
 }
@@ -95,17 +102,8 @@ function validateMember(member, index, errors) {
   if (!nullableNonNegativeInteger(member.contribution7d)) errors.push(`${prefix}.contribution7d is invalid`);
   if (!nullableIntegerBetween(member.bossAttacks, 0, 10)) errors.push(`${prefix}.bossAttacks is invalid`);
   if (!nullableNonNegativeInteger(member.lastActivityDays)) errors.push(`${prefix}.lastActivityDays is invalid`);
-  if (
-    member
-    && (
-      !isBoundedString(member.role, 1, 32)
-      || !Number.isSafeInteger(member.power)
-      || !Number.isSafeInteger(member.contribution7d)
-      || !Number.isSafeInteger(member.bossAttacks)
-      || !Number.isSafeInteger(member.lastActivityDays)
-    )
-  ) {
-    errors.push(`${prefix} is incomplete and cannot be published`);
+  if (member.role != null && !isBoundedString(member.role, 1, 32)) {
+    errors.push(`${prefix}.role is invalid`);
   }
 }
 

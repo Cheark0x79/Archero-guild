@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
-import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
 
 import { localIsoDate } from "../../../date.js";
 
@@ -13,9 +11,6 @@ const CAPTURE_LAYOUT = {
   "guild-members": ["guild", "members"],
   "guild-boss": ["boss", "boss"],
 };
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
-export const MAX_UPLOAD_PIXELS = 12_000_000;
 
 export function hasDashboardActionHeader(request) {
   return request.headers.get(DASHBOARD_ACTION_HEADER) === "1";
@@ -97,6 +92,8 @@ export function observerEnv(extra = {}) {
     ...extra,
     PATH: [tesseractDirectory, process.env.PATH].filter(Boolean).join(path.delimiter),
     PYTHONPATH: [cwd, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",
     TESSDATA_PREFIX: windowsTessdata && existsSync(windowsTessdata) ? windowsTessdata : process.env.TESSDATA_PREFIX,
   };
 }
@@ -138,86 +135,6 @@ export function captureDateToday() {
 
 export function validateCaptureDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-export async function nextUploadPath(kind, date = captureDateToday()) {
-  if (!CAPTURE_KINDS.has(kind)) throw new Error(`unknown capture kind: ${kind}`);
-  if (!validateCaptureDate(date)) throw new Error("date must use YYYY-MM-DD format");
-
-  const [subdir, prefix] = CAPTURE_LAYOUT[kind];
-  const dayDir = path.join(projectRoot(), "screenshots", "raw", date, subdir);
-  await fs.mkdir(dayDir, { recursive: true });
-  const entries = await fs.readdir(dayDir).catch(() => []);
-  const indexes = entries
-    .map((name) => name.match(new RegExp(`^${prefix}-(\\d{3})\\.png$`)))
-    .filter(Boolean)
-    .map((match) => Number(match[1]));
-  const nextIndex = Math.max(0, ...indexes) + 1;
-  return {
-    absolutePath: path.join(dayDir, `${prefix}-${String(nextIndex).padStart(3, "0")}.png`),
-    index: nextIndex,
-    date,
-  };
-}
-
-export async function readUploadedPng(file) {
-  if (typeof file.size === "number" && file.size > MAX_UPLOAD_BYTES) {
-    throw new Error("PNG screenshot is too large");
-  }
-  const buffer = Buffer.from(await file.arrayBuffer());
-  if (buffer.length < PNG_SIGNATURE.length || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-    throw new Error("only PNG screenshots are supported");
-  }
-  if (buffer.length > MAX_UPLOAD_BYTES) {
-    throw new Error("PNG screenshot is too large");
-  }
-  let metadata;
-  try {
-    const image = sharp(buffer, { failOn: "warning", limitInputPixels: MAX_UPLOAD_PIXELS });
-    metadata = await image.metadata();
-    await image.clone().raw().toBuffer();
-  } catch {
-    throw new Error("PNG screenshot is invalid or exceeds the pixel limit");
-  }
-  if (metadata.format !== "png" || !metadata.width || !metadata.height) {
-    throw new Error("only valid PNG screenshots are supported");
-  }
-  return {
-    buffer,
-    sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
-    size: buffer.length,
-    width: metadata.width,
-    height: metadata.height,
-  };
-}
-
-export async function writePngBuffer(buffer, destination) {
-  await fs.writeFile(destination, buffer, { flag: "wx" });
-}
-
-export async function findExistingScreenshotByHash(kind, date, sha256) {
-  if (!CAPTURE_KINDS.has(kind)) throw new Error(`unknown capture kind: ${kind}`);
-  if (!validateCaptureDate(date)) throw new Error("date must use YYYY-MM-DD format");
-  if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error("sha256 must be a lowercase hex digest");
-
-  const [subdir, prefix] = CAPTURE_LAYOUT[kind];
-  const dayDir = path.join(projectRoot(), "screenshots", "raw", date, subdir);
-  const entries = await fs.readdir(dayDir).catch(() => []);
-  for (const name of entries.sort()) {
-    if (!new RegExp(`^${prefix}-(\\d{3})\\.png$`).test(name)) continue;
-    const absolutePath = path.join(dayDir, name);
-    const existing = await fs.readFile(absolutePath).catch(() => null);
-    if (!existing) continue;
-    const existingSha256 = crypto.createHash("sha256").update(existing).digest("hex");
-    if (existingSha256 !== sha256) continue;
-    return {
-      absolutePath,
-      index: Number(name.match(/-(\d{3})\.png$/)?.[1] ?? 0),
-      date,
-      sha256,
-    };
-  }
-  return null;
 }
 
 export function relativeProjectPath(absolutePath) {

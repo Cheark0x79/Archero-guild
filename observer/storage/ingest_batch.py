@@ -204,8 +204,19 @@ def _validate_batch(batch: dict[str, Any]) -> None:
     if batch["schemaVersion"] != 1:
         raise BatchIngestionError("unsupported schemaVersion")
     quality = batch["quality"]
-    if quality.get("status") != "pass" or quality.get("coverage") != 1 or quality.get("completeness") != 1:
-        raise BatchIngestionError("quality gate requires pass with 100% coverage and completeness")
+    source_kinds = {
+        image.get("kind")
+        for image in batch.get("sourceImages", [])
+        if isinstance(image, dict)
+    }
+    if len(source_kinds) != 1 or quality.get("coverage") != 1:
+        raise BatchIngestionError("quality gate requires one capture scope with 100% coverage")
+    if source_kinds == {"guild-members"} and not batch.get("members"):
+        raise BatchIngestionError("quality gate requires at least one member row")
+    if source_kinds == {"guild-boss"} and (
+        not batch.get("bossRankings") or quality.get("completeness") != 1
+    ):
+        raise BatchIngestionError("quality gate requires complete boss rows")
 
 
 def _json(value: object) -> str:

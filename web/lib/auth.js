@@ -22,8 +22,19 @@ export function isPublicPath(pathname) {
 export function isAdminPath(pathname) {
   return pathname === "/admin"
     || pathname.startsWith("/admin/")
+    || pathname === "/api/member-admin"
+    || pathname === "/api/warning-actions"
     || pathname === "/api/data"
     || pathname.startsWith("/api/data/");
+}
+
+export function isLocalOcrPath(pathname) {
+  return pathname === "/admin/data"
+    || pathname.startsWith("/api/data/capture/")
+    || pathname === "/api/data/discard"
+    || pathname === "/api/data/import"
+    || pathname === "/api/data/import/status"
+    || pathname === "/api/data/screenshot";
 }
 
 export function applicationUrl(pathname, requestUrl, environment = process.env) {

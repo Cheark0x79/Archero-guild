@@ -77,6 +77,22 @@ test("evaluateMember detects inactive and low contribution", () => {
   ]);
 });
 
+test("evaluateMember excuses an announced absence only until its end date", () => {
+  const absentMember = {
+    ...member,
+    contribution7d: 0,
+    lastActivityDays: 8,
+    absenceUntil: "2026-08-05",
+  };
+  const excused = evaluateMember(absentMember, { ...rules, currentDate: "2026-08-05" });
+  const expired = evaluateMember(absentMember, { ...rules, currentDate: "2026-08-06" });
+
+  assert.equal(excused.status, "Excused");
+  assert.deepEqual(excused.flags, ["Excused absence"]);
+  assert.equal(expired.status, "Absent");
+  assert.deepEqual(expired.flags, ["Game absence", "Low contribution"]);
+});
+
 test("evaluateMember does not mark missing metrics as inactive", () => {
   const result = evaluateMember(
     {

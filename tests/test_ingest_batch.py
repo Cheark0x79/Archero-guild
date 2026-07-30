@@ -74,10 +74,26 @@ class IngestBatchTests(unittest.TestCase):
 
     def test_rejects_batch_below_quality_gate(self):
         batch = valid_batch()
+        batch["sourceImages"] = [batch["sourceImages"][0]]
+        batch["bossRankings"] = []
         batch["quality"]["coverage"] = 0.9
 
         with self.assertRaisesRegex(BatchIngestionError, "quality gate"):
             _validate_batch(batch)
+
+    def test_accepts_incomplete_member_metrics_with_full_capture_coverage(self):
+        batch = valid_batch()
+        batch["sourceImages"] = [batch["sourceImages"][0]]
+        batch["bossRankings"] = []
+        batch["members"][0]["contribution7d"] = None
+        batch["quality"] = {
+            "status": "review",
+            "coverage": 1,
+            "completeness": 0,
+            "warnings": ["missing donation"],
+        }
+
+        _validate_batch(batch)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from observer.ocr.batch import build_import_batch
-from observer.ocr.publish import PublishError, _validated_target, publish_batch
+from observer.ocr.publish import (
+    PublishError,
+    _validated_target,
+    cloudflare_access_headers,
+    publish_batch,
+)
 from observer.ocr.service import _load_roster, scan_image
 from observer.pipeline.guild_member_ocr import RosterEntry
 
@@ -18,7 +23,14 @@ class RemoteOcrError(RuntimeError):
     pass
 
 
-def fetch_roster(target: str, token: str, *, timeout: float = 30) -> list[RosterEntry]:
+def fetch_roster(
+    target: str,
+    token: str,
+    *,
+    timeout: float = 30,
+    access_client_id: str | None = None,
+    access_client_secret: str | None = None,
+) -> list[RosterEntry]:
     base_url = _validated_target(target)
     request = urllib.request.Request(
         f"{base_url}/api/v1/imports/roster",
@@ -27,6 +39,7 @@ def fetch_roster(target: str, token: str, *, timeout: float = 30) -> list[Roster
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
             "User-Agent": "archero-ocr-agent/1",
+            **cloudflare_access_headers(access_client_id, access_client_secret),
         },
     )
     try:
@@ -52,10 +65,12 @@ def build_day_batch(
     screenshots_root: Path,
     roster: list[RosterEntry],
     agent_version: str,
+    member_paths: list[Path] | None = None,
+    boss_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     day_root = screenshots_root / capture_date
-    member_paths = sorted((day_root / "guild").glob("*.png"))
-    boss_paths = sorted((day_root / "boss").glob("*.png"))
+    member_paths = sorted(member_paths) if member_paths is not None else sorted((day_root / "guild").glob("*.png"))
+    boss_paths = sorted(boss_paths) if boss_paths is not None else sorted((day_root / "boss").glob("*.png"))
     if not member_paths and not boss_paths:
         raise RemoteOcrError(f"no PNG screenshots found below {day_root}")
 
@@ -87,7 +102,13 @@ def run_day(
     agent_version: str,
     publish: bool,
     roster_path: Path | None = None,
+    roster: list[RosterEntry] | None = None,
+    validate_remote: bool = True,
+    member_paths: list[Path] | None = None,
+    boss_paths: list[Path] | None = None,
     timeout: float = 30,
+    access_client_id: str | None = None,
+    access_client_secret: str | None = None,
 ) -> dict[str, Any]:
     if publish:
         batch = _read_reviewed_batch(output, capture_date)
@@ -96,7 +117,10 @@ def run_day(
             target=target,
             token=token,
             validate_only=False,
-            timeout=timeout,
+            timeout=min(timeout, 30),
+            import_timeout=timeout,
+            access_client_id=access_client_id,
+            access_client_secret=access_client_secret,
         )
         return {
             "captureDate": capture_date,
@@ -105,23 +129,43 @@ def run_day(
             **result,
         }
 
-    roster = _load_roster(roster_path) if roster_path is not None else fetch_roster(target, token, timeout=timeout)
-    if not roster:
+    selected_roster = roster
+    if selected_roster is None:
+        selected_roster = _load_roster(roster_path) if roster_path is not None else fetch_roster(
+            target,
+            token,
+            timeout=timeout,
+            access_client_id=access_client_id,
+            access_client_secret=access_client_secret,
+        )
+    if not selected_roster:
         raise RemoteOcrError("the OCR roster is empty")
     batch = build_day_batch(
         capture_date=capture_date,
         screenshots_root=screenshots_root,
-        roster=roster,
+        roster=selected_roster,
         agent_version=agent_version,
+        member_paths=member_paths,
+        boss_paths=boss_paths,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not validate_remote:
+        return {
+            "captureDate": capture_date,
+            "output": str(output),
+            "quality": batch["quality"],
+            "validated": False,
+            "validationMode": "local",
+        }
     result = publish_batch(
         batch,
         target=target,
         token=token,
         validate_only=True,
         timeout=timeout,
+        access_client_id=access_client_id,
+        access_client_secret=access_client_secret,
     )
     return {
         "captureDate": capture_date,
@@ -188,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Publish the already reviewed outbox JSON. Without this option, scan and validate only.",
     )
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--cf-access-client-id", default=os.environ.get("CF_ACCESS_CLIENT_ID"))
+    parser.add_argument("--cf-access-client-secret", default=os.environ.get("CF_ACCESS_CLIENT_SECRET"))
     args = parser.parse_args(argv)
     if not args.target:
         parser.error("--target or ARCHERO_TARGET_URL is required")
@@ -205,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
             publish=args.publish,
             roster_path=args.roster,
             timeout=args.timeout,
+            access_client_id=args.cf_access_client_id,
+            access_client_secret=args.cf_access_client_secret,
         )
     except (OSError, RemoteOcrError, PublishError, ValueError) as exc:
         parser.exit(1, f"error: {exc}\n")

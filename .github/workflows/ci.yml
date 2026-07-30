@@ -11,13 +11,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: archero_observer
+          POSTGRES_DB: archero_observer_test
           POSTGRES_USER: archero
           POSTGRES_PASSWORD: archero_dev_password
         ports:
           - 55440:5432
         options: >-
-          --health-cmd "pg_isready -U archero -d archero_observer"
+          --health-cmd "pg_isready -U archero -d archero_observer_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -28,6 +28,8 @@ jobs:
           python-version: "3.12"
       - run: pip install pillow pytesseract "psycopg[binary]"
       - run: python -m unittest discover -s tests
+        env:
+          ARCHERO_TEST_DATABASE_URL: postgresql://archero:archero_dev_password@127.0.0.1:55440/archero_observer_test
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -41,3 +43,7 @@ jobs:
         run: npm audit --omit=dev
       - working-directory: web
         run: npm run build
+      - working-directory: web
+        run: npm run check:public-bundle
+      - run: docker compose --env-file platform/.env.example -f platform/compose.yml config
+      - run: docker compose --env-file ocr/.env.example -f ocr/compose.yml config

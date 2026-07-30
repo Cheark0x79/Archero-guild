@@ -46,8 +46,15 @@ def build_import_batch(
         else:
             bosses.extend(_boss_contract(row) for row in result["rows"])
 
-    members = _dedupe(members, lambda row: row.get("playerId") or f"name:{row['name'].casefold()}")
-    bosses = _dedupe(bosses, lambda row: f"rank:{row['rank']}")
+    members = _dedupe(members, _member_identity_key)
+    bosses = _dedupe(
+        bosses,
+        lambda row: (
+            f"rank:{row['rank']}"
+            if row.get("rank") is not None
+            else f"unranked:{row.get('source')}:{row.get('rowIndex')}"
+        ),
+    )
     coverage = useful / expected if expected else 0
     completeness = complete / expected if expected else 0
     batch = {
@@ -116,6 +123,15 @@ def _dedupe(rows: list[dict[str, Any]], key) -> list[dict[str, Any]]:
         if existing is None or _row_quality(row) > _row_quality(existing):
             selected[row_key] = row
     return list(selected.values())
+
+
+def _member_identity_key(row: dict[str, Any]) -> str:
+    if row.get("playerId"):
+        return f"id:{row['playerId']}"
+    observed_name = row.get("name") or row.get("rawName")
+    if isinstance(observed_name, str) and observed_name.strip():
+        return f"name:{observed_name.strip().casefold()}"
+    return f"unresolved:{row.get('source') or 'unknown'}"
 
 
 def _row_quality(row: dict[str, Any]) -> tuple[int, int, float]:

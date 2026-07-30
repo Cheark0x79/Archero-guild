@@ -1,11 +1,6 @@
-export const rules = {
-  maxInactiveDays: 3,
-  minContribution7d: 500,
-  minPowerGrowth14dPercent: 1,
-  minBossTries: 2,
-  newMemberGraceDays: 7,
-  memberCapacity: 40,
-};
+import { defaultRules } from "./default-rules.js";
+
+export const rules = { ...defaultRules };
 
 export const captures = {
   lastCapturedAt: "2026-07-14T21:56:31+02:00",

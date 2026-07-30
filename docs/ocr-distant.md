@@ -1,191 +1,140 @@
-# OCR distant : PC BlueStacks vers pré-production ou production
+# Station OCR locale vers préproduction et production
 
-## But
+## Architecture
 
-Tesseract, ADB et les captures restent sur le PC. Le serveur ne fait tourner que
-le site Next.js, l'API d'ingestion et PostgreSQL. Une journée validée est envoyée
-en JSON par HTTPS : aucun commit Git et aucun accès distant à PostgreSQL ne sont
-nécessaires.
+La plateforme distante et la station OCR sont deux produits indépendants :
 
 ```text
-BlueStacks / ADB
-       |
-       v
-captures PNG sur le PC
-       |
-       v
-conteneur OCR (Tesseract)
-       |
-       | 1. récupération du roster
-       | 2. validation du lot JSON
-       | 3. publication explicite
-       v
-API pré-prod ou prod ──> PostgreSQL ──> dashboard
+PC Windows / WSL                         VM Proxmox
+BlueStacks + captures                    Next.js + API
+Interface locale :5190  --- HTTPS --->   PostgreSQL
+Tesseract + outbox JSON                  Cloudflare Tunnel
 ```
 
-Les images brutes restent sur le PC. Le serveur reçoit les valeurs OCR, le texte
-brut, les noms reliés, la version de l'agent et le SHA-256 de chaque image.
+Les images ne quittent pas le PC. Seul un lot JSON relu, versionné et validé est
+publié. La plateforme ne possède ni Tesseract, ni ADB, ni montage de captures.
 
-## 1. Configurer le serveur
+## 1. Configurer la plateforme
 
-Dans le fichier `.env.production` de la pré-production ou de la production,
-définir une clé dédiée :
+Créer `platform/.env.production` depuis `platform/.env.example` et définir une
+clé dédiée :
 
 ```dotenv
 ARCHERO_INGESTION_KEYS=une-cle-longue-aleatoire-dediee-a-ocr
 ```
 
-Cette clé est différente du mot de passe admin, des clés API publiques et du mot
-de passe PostgreSQL. Le service `app` reçoit cette variable depuis
-`docker-compose.prod.yml`.
-
-Redéployer ensuite l'application :
+Déployer la plateforme :
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build app
+docker compose --env-file platform/.env.production -f platform/compose.yml up -d --build
 ```
 
-Le serveur expose trois routes protégées par cette clé :
+Les routes machine-à-machine sont :
 
-- `GET /api/v1/imports/roster` : roster actif utilisé pour relier les noms ;
-- `POST /api/v1/imports/validate` : contrôle sans écriture ;
-- `POST /api/v1/imports` : publication transactionnelle dans PostgreSQL.
+- `GET /api/v1/imports/roster` ;
+- `POST /api/v1/imports/validate` ;
+- `POST /api/v1/imports`.
 
-## 2. Configurer le PC OCR
+Si Cloudflare Access protège le domaine, créer une politique `Service Auth` et
+un Service Token. L’interface OCR enverra ses deux en-têtes Cloudflare en plus
+de la clé d’ingestion propre à l’application.
 
-Copier `.env.ocr.example` vers `.env.ocr` :
+## 2. Configurer la station OCR
 
-```dotenv
-ARCHERO_TARGET_URL=https://preprod.archero.example.com
-ARCHERO_INGESTION_TOKEN=la-meme-cle-que-sur-la-preprod
-ARCHERO_AGENT_VERSION=2026.07.29
-ARCHERO_CAPTURE_ROOT=./screenshots/raw
-ARCHERO_OUTBOX_ROOT=./data/outbox
-```
-
-Le fichier `.env.ocr` est ignoré par Git. Créer un fichier différent pour
-chaque environnement, par exemple `.env.ocr.preprod` et `.env.ocr.prod`, avec
-des clés différentes.
-
-Construire l'agent :
+Depuis Windows :
 
 ```powershell
-docker compose --env-file .env.ocr -f compose.ocr.yml build
+Copy-Item ocr/.env.example ocr/.env
+Copy-Item ocr/targets.example.json ocr/targets.json
 ```
 
-Le conteneur est éphémère : il libère CPU et RAM dès que la commande se termine.
+Dans `ocr/targets.json`, configurer séparément `preprod` et `prod` :
 
-État et arrêt explicite du projet OCR :
+La cible `local` fonctionne immédiatement sans réseau : elle extrait les
+captures, écrit le JSON dans `data/outbox` et permet sa revue, mais son bouton
+Publish reste désactivé. Les cibles `preprod` et `prod` utilisent chacune leur
+propre URL et leur propre clé d'ingestion.
 
-```powershell
-docker compose --env-file .env.ocr -f compose.ocr.yml ps
-docker compose --env-file .env.ocr -f compose.ocr.yml down
-```
-
-`down` supprime uniquement le conteneur et le réseau OCR. Il ne supprime ni
-l’image Docker, ni les captures, ni les JSON de `data/outbox`.
-
-## 3. Ranger les captures
-
-Pour une journée, conserver cette structure :
-
-```text
-screenshots/raw/2026-07-28/
-├── guild/
-│   ├── members-001.png
-│   └── ...
-└── boss/
-    ├── boss-001.png
-    └── ...
-```
-
-La première image boss doit contenir le podium. Les autres images peuvent encore
-montrer le podium : l'agent ne l'importe qu'une fois.
-
-## 4. Valider sans publier
-
-La commande sûre par défaut exécute l'OCR, écrit le lot dans `data/outbox`, puis
-demande au serveur de le valider sans modifier PostgreSQL :
-
-```powershell
-docker compose --env-file .env.ocr -f compose.ocr.yml run --rm agent `
-  --date 2026-07-28
-```
-
-Contrôler ensuite `data/outbox/2026-07-28.json` :
-
-- `quality.status` doit être `pass` ;
-- `coverage` et `completeness` doivent valoir `1` ;
-- vérifier en priorité les `rawName`, `name`, `playerId`, donations et dégâts ;
-- vérifier les lignes marquées en rouge dans OCR Lab/Check avant publication.
-
-Une couverture à 100 % signifie que chaque champ existe, pas que chaque nom est
-nécessairement correct. La validation humaine reste donc nécessaire.
-
-## 5. Publier explicitement
-
-Après validation humaine, publier le JSON exact qui vient d’être contrôlé avec
-`--publish` :
-
-```powershell
-docker compose --env-file .env.ocr -f compose.ocr.yml run --rm agent `
-  --date 2026-07-28 --publish
-```
-
-Avec `--publish`, l’agent ne relance pas Tesseract : il lit
-`data/outbox/2026-07-28.json`. Le serveur revalide ce lot puis remplace la
-journée dans une transaction. En cas d'erreur, l'ancienne journée reste visible.
-La clé d'idempotence empêche un double clic ou une nouvelle tentative d'ajouter
-des doublons.
-
-Pour vérifier le résultat, ouvrir `/admin/check`, sélectionner la journée et
-recharger la page.
-
-## 6. Importer plusieurs journées historiques
-
-Valider d'abord toutes les journées :
-
-```powershell
-$dates = @("2026-07-25", "2026-07-26", "2026-07-27", "2026-07-28")
-foreach ($date in $dates) {
-  docker compose --env-file .env.ocr -f compose.ocr.yml run --rm agent --date $date
-  if ($LASTEXITCODE -ne 0) { throw "Validation OCR échouée pour $date" }
+```json
+{
+  "preprod": {
+    "label": "Pre-production",
+    "url": "https://preprod.archero.example.com",
+    "ingestionToken": "cle-ingestion-preprod",
+    "cfAccessClientId": "service-token-id",
+    "cfAccessClientSecret": "service-token-secret"
+  }
 }
 ```
 
-Après contrôle des fichiers dans `data/outbox`, remplacer la dernière commande
-par `--date $date --publish`. Il est recommandé de publier du jour le plus
-ancien au plus récent.
+Les vrais fichiers sont ignorés par Git.
 
-## 7. Pré-production puis production
+## 3. Démarrer et arrêter
 
-Le chemin conseillé est :
+Depuis PowerShell :
 
-1. envoyer vers la pré-production ;
-2. contrôler `/admin/check` et les pages membres/boss ;
-3. envoyer le même jour vers la production avec le fichier d'environnement
-   production ;
-4. vérifier le statut de l'import et le dashboard.
+```powershell
+.\ocr\control.ps1 start
+.\ocr\control.ps1 status
+.\ocr\control.ps1 logs
+.\ocr\control.ps1 stop
+```
 
-Les lots ne transitent pas par Git. Git contient uniquement le code et le contrat
-JSON ; PostgreSQL contient les données publiées.
+Ou directement depuis WSL :
 
-## Sécurité et sauvegardes
+```bash
+docker compose --env-file ocr/.env -f ocr/compose.yml up -d --build --wait ui
+docker compose --env-file ocr/.env -f ocr/compose.yml down
+```
 
-- utiliser uniquement HTTPS hors de `localhost` ;
-- ne jamais exposer PostgreSQL sur Internet ;
-- ne jamais committer `.env.ocr`, `.env.production` ou les vraies clés ;
-- sauvegarder PostgreSQL avant une série d'imports historiques ;
-- conserver sur le PC les captures brutes et `data/outbox` pour pouvoir auditer
-  ou rejouer une journée ;
-- utiliser des clés d'ingestion différentes en pré-production et production.
+Ouvrir ensuite `http://127.0.0.1:5190`.
 
-Les commandes exactes de sauvegarde et de restauration PostgreSQL sont
-documentées dans [`production-homelab.md`](production-homelab.md#backups).
+L’arrêt préserve :
 
-## Limite actuelle
+- `screenshots/raw` ;
+- `data/outbox` ;
+- les images Docker.
 
-`--publish` publie immédiatement après la validation automatique. La validation
-humaine se fait donc entre la première commande sans option et la seconde avec
-`--publish`. Une évolution future pourra stocker le lot en staging sur le
-serveur et ajouter un bouton `Publier l'import` directement dans `/admin/check`.
+Il libère les CPU, la RAM et les processus du conteneur OCR.
+
+## 4. Traiter une journée
+
+Dans l’interface :
+
+1. choisir la date de capture ;
+2. choisir `Guild members` ou `Guild boss` ;
+3. uploader les PNG exportés depuis BlueStacks ;
+4. sélectionner la préproduction ;
+5. lancer `Run OCR and validate` ;
+6. vérifier les noms détectés et reliés, rôles, puissances, donations, activités,
+   tentatives de boss, rangs et dégâts ;
+7. vérifier une couverture et une complétude à 100 % ;
+8. saisir la confirmation affichée ;
+9. publier.
+
+Le scan écrit `data/outbox/YYYY-MM-DD.json`. La publication réutilise exactement
+ce fichier et ne relance jamais Tesseract.
+
+## 5. Promotion préproduction vers production
+
+Pour chaque date, de la plus ancienne à la plus récente :
+
+1. publier en préproduction ;
+2. contrôler Members, Boss, Activity, Admin et l’API ;
+3. sauvegarder PostgreSQL en production ;
+4. sélectionner `Production` dans l’interface OCR ;
+5. publier le même outbox ;
+6. vérifier les mêmes écrans en production.
+
+La clé d’idempotence empêche une répétition identique d’ajouter des doublons.
+L’import serveur est transactionnel : un lot refusé ne remplace pas la journée
+déjà présente.
+
+## Sécurité
+
+- l’interface locale écoute uniquement sur `127.0.0.1` ;
+- les requêtes cross-origin du navigateur sont refusées ;
+- seuls les PNG décodables de moins de 15 MB et 12 mégapixels sont acceptés ;
+- PostgreSQL ne doit jamais être exposé à Internet ;
+- les clés préprod et prod doivent être différentes ;
+- les captures et l’outbox doivent être sauvegardés avec la base de production.

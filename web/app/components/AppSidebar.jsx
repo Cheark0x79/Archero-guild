@@ -13,11 +13,9 @@ export const publicNavItems = [
 ];
 
 const adminNavItems = [
-  ["admin", "Overview", "/admin"],
-  ["data", "Data", "/admin/data"],
-  ["check", "Check", "/admin/check"],
-  ...(process.env.NEXT_PUBLIC_OCR_LAB_ENABLED === "1"
-    ? [["ocr-lab", "OCR Lab", "/admin/ocr-lab"]]
+  ["admin", "Admin", "/admin"],
+  ...(process.env.NEXT_PUBLIC_LOCAL_OCR_ENABLED === "1"
+    ? [["data", "Data", "/admin/data"]]
     : []),
   ["settings", "Rules", "/admin/rules"],
 ];

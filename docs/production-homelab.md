@@ -18,8 +18,8 @@ Clone the repository and create the production environment:
 ```bash
 git clone <repository-url> archero-observer
 cd archero-observer
-cp .env.production.example .env.production
-chmod 600 .env.production
+cp platform/.env.example platform/.env.production
+chmod 600 platform/.env.production
 mkdir -p data screenshots/raw screenshots/trash backups
 ```
 
@@ -39,7 +39,7 @@ Put them in `POSTGRES_PASSWORD`, `ARCHERO_USER_PASSWORD`,
 for both dashboard accounts and
 both session tokens. Usernames default to `viewer` and `admin` and can be
 changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
-Do not reuse a password or commit `.env.production`.
+Do not reuse a password or commit `platform/.env.production`.
 
 Set `ARCHERO_PUBLIC_ORIGIN` to the exact browser-facing origin, without a
 trailing path, for example:
@@ -89,11 +89,11 @@ application's own admin authentication.
 ## 4. Start and verify
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml config
-docker compose --env-file .env.production -f docker-compose.prod.yml build
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d
-docker compose --env-file .env.production -f docker-compose.prod.yml ps
-docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=100 app cloudflared
+docker compose --env-file platform/.env.production -f platform/compose.yml config
+docker compose --env-file platform/.env.production -f platform/compose.yml build
+docker compose --env-file platform/.env.production -f platform/compose.yml up -d
+docker compose --env-file platform/.env.production -f platform/compose.yml ps
+docker compose --env-file platform/.env.production -f platform/compose.yml logs --tail=100 app cloudflared
 ```
 
 Local health check on the homelab server:
@@ -109,42 +109,58 @@ Expected response:
 ```
 
 Then open the Cloudflare hostname, verify that Access asks for your identity,
-and test `/login`, `/dashboard`, `/admin/check`, and `/admin/data`.
+and test `/login`, `/dashboard`, `/members`, `/activity`, and `/admin`.
 
 ## Persistence
 
 The following data survives container replacement:
 
 - PostgreSQL: named volume `postgres-data`
-- Reviews, rules, imports, and exports: host directory `./data`
-- Raw and discarded screenshots: host directory `./screenshots`
+- Rules, officer follow-up, private member administration, imports, and exports:
+  host directory `./data`
 
 The PostgreSQL schema in `observer/storage/schema.sql` is initialized only when
-the database volume is first created.
+the database volume is first created. Raw screenshots stay on the trusted OCR
+workstation and are not mounted into the public platform.
+
+### Initial data and later updates
+
+An application release never imports or replaces guild data. For the first
+deployment, either restore one approved PostgreSQL dump or leave the database
+empty and publish the first validated capture from the OCR workstation.
+
+After that initial choice, all guild captures are updated through the versioned
+ingestion API. Do not modify `web/sample-data.js`, commit captured data, or
+create an application release just to refresh the dashboard.
 
 ## Backups
 
-Create a database backup:
+Create and verify a database and file-data backup:
 
 ```bash
-mkdir -p backups
-docker compose --env-file .env.production -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U archero -d archero_observer -Fc > "backups/postgres-$(date +%F).dump"
-tar -czf "backups/files-$(date +%F).tar.gz" data screenshots
+make backup
 ```
 
-Copy the `backups` directory to another machine or storage system. A backup
-that exists only on the homelab server is not sufficient.
+The command checks the PostgreSQL catalog, the file archive, and SHA-256
+checksums. Copy `backups/pre-release` to another machine or storage system.
+A backup that exists only on the homelab server is not sufficient. Periodically
+restore one dump into a disposable `*_test` database.
 
 ## Updates and rollback
 
-Before an update, create a backup and record the current Git commit:
+For the one-time replacement of the legacy monolithic checkout by the
+platform-only deployment, follow
+[`migration-platform-split.md`](migration-platform-split.md). It includes the
+pre-migration database dump, removal of the old server-side OCR runtime,
+Compose volume identity check, fresh-VM restore, and rollback procedure.
+
+Before an update, record the current Git commit:
 
 ```bash
 git rev-parse HEAD
 git pull --ff-only
-docker compose --env-file .env.production -f docker-compose.prod.yml build
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+docker compose --env-file platform/.env.production -f platform/compose.yml build
+docker compose --env-file platform/.env.production -f platform/compose.yml up -d
 ```
 
 For rollback, check out the recorded commit and rebuild. Do not remove the
@@ -153,8 +169,8 @@ PostgreSQL volume during routine deployments.
 ### One-command application releases
 
 The tracked base version is stored in `VERSION`. On the server, `make release`
-increments a local patch version, builds a versioned image, replaces only the
-application container, and waits for the healthcheck:
+creates a verified backup, increments a local patch version, builds a versioned
+image, replaces only the application container, and waits for the healthcheck:
 
 ```bash
 git pull --ff-only
@@ -177,16 +193,17 @@ make resume-tunnel
 
 Every application page and API requires a valid account. The standard account
 can access Dashboard, Members, Boss, Records, Activity, and their read APIs.
-The administrator can additionally access `/admin/*` and `/api/data/*`.
+The administrator can additionally access `/admin/*`. Local OCR pages and
+capture mutation routes return `404` in the platform image.
 Only `/login`, authentication endpoints, and `/api/health` are reachable
 without a valid session.
 
-After adding the new user variables to an existing `.env.production`, run
+After adding the new user variables to an existing `platform/.env.production`, run
 `make release`. Existing sessions are invalidated because the cookie name
 changed; sign in again with either account.
 
 Existing deployments must also add `ARCHERO_PUBLIC_ORIGIN` to
-`.env.production` before running `make release`.
+`platform/.env.production` before running `make release`.
 
 ## Updating production data without OCR on the VM
 
@@ -199,12 +216,16 @@ Keep capture and OCR outside the public VM. The intended split is:
 4. The production application validates the schema and writes one atomic
    import to PostgreSQL.
 
-The repository does not yet expose that structured synchronization endpoint.
-Until it is implemented, do not expose PostgreSQL or copy partially generated
-files into production. Continue importing on the trusted workstation and
-deploy only reviewed application data. The next implementation should add a
-versioned JSON schema, an idempotency key based on capture date, a dry-run
-validation response, and an admin-only `POST /api/data/sync` endpoint.
+The station OCR now uses the versioned import contract and the following
+ingestion-key-protected endpoints:
+
+- `GET /api/v1/imports/roster`;
+- `POST /api/v1/imports/validate` for the write-free quality gate;
+- `POST /api/v1/imports` for transactional and idempotent publication.
+
+The workstation flow is documented in
+[`ocr-distant.md`](ocr-distant.md). Never expose PostgreSQL or copy partial OCR
+files into production.
 
 ### Cloudflare request limits
 
@@ -218,11 +239,9 @@ limit at Cloudflare:
 - Count by source IP
 - Block after 5 requests in 5 minutes for at least 15 minutes
 
-Create this under **Security > WAF > Rate limiting rules**. Also configure a
-request-body limit for `/api/data/upload`. The application requires a declared
-`Content-Length`, rejects multipart requests above the PNG limit plus 128 KiB
-of form overhead, fully decodes PNG input, and rejects images above 12 million
-pixels.
+Create this under **Security > WAF > Rate limiting rules**. Apply a separate
+rate limit to `/api/v1/imports*`. Screenshot upload limits are enforced by the
+loopback-only local OCR application, not by the public platform.
 
 The Compose file caps application, PostgreSQL, and tunnel CPU, memory, and
 process counts. Revisit these values only after observing real production

@@ -60,13 +60,13 @@ test("rejects a claimed pass when detected screenshots have no extracted rows", 
   assert.match(result.errors.join(" "), /members is empty/);
 });
 
-test("rejects a claimed pass when a member row is incomplete", () => {
+test("accepts missing member metrics while keeping the row reviewable", () => {
   const batch = validBatch();
   batch.members[0].contribution7d = null;
+  batch.quality = { status: "review", coverage: 1, completeness: 0, warnings: ["missing donation"] };
 
   const result = validateImportBatch(batch, { requirePublishable: true });
 
-  assert.equal(result.valid, false);
-  assert.equal(result.publishable, false);
-  assert.match(result.errors.join(" "), /incomplete/);
+  assert.equal(result.valid, true);
+  assert.equal(result.publishable, true);
 });

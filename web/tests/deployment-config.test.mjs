@@ -7,11 +7,15 @@ const projectRoot = path.resolve(process.cwd(), "..");
 
 test("release automation versions the image and preserves database deployment", () => {
   const makefile = fs.readFileSync(path.join(projectRoot, "Makefile"), "utf8");
-  const compose = fs.readFileSync(path.join(projectRoot, "docker-compose.prod.yml"), "utf8");
-  const dockerfile = fs.readFileSync(path.join(projectRoot, "Dockerfile"), "utf8");
+  const compose = fs.readFileSync(path.join(projectRoot, "platform", "compose.yml"), "utf8");
+  const dockerfile = fs.readFileSync(path.join(projectRoot, "platform", "Dockerfile"), "utf8");
+  const ocrCompose = fs.readFileSync(path.join(projectRoot, "ocr", "compose.yml"), "utf8");
+  const ocrDockerfile = fs.readFileSync(path.join(projectRoot, "ocr", "Dockerfile"), "utf8");
   const middleware = fs.readFileSync(path.join(projectRoot, "web", "middleware.js"), "utf8");
   const fallbackPage = fs.readFileSync(path.join(projectRoot, "web", "app", "[...fallback]", "page.jsx"), "utf8");
   const releaseScript = fs.readFileSync(path.join(projectRoot, "scripts", "release.sh"), "utf8");
+  const backupScript = fs.readFileSync(path.join(projectRoot, "scripts", "backup.sh"), "utf8");
+  const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "web", "package.json"), "utf8"));
   const version = fs.readFileSync(path.join(projectRoot, "VERSION"), "utf8").trim();
 
   assert.match(version, /^\d+\.\d+\.\d+$/);
@@ -24,11 +28,28 @@ test("release automation versions the image and preserves database deployment", 
   assert.match(compose, /mem_limit: 2g/);
   assert.match(compose, /pids_limit: 256/);
   assert.match(compose, /cap_drop:\s*\n\s*- ALL/);
+  assert.doesNotMatch(compose, /tesseract|ADB|screenshots:\/app\/screenshots/i);
   assert.match(dockerfile, /org\.opencontainers\.image\.version=\$APP_VERSION/);
+  assert.doesNotMatch(dockerfile, /tesseract-ocr/);
+  assert.match(ocrCompose, /127\.0\.0\.1:\$\{ARCHERO_OCR_UI_PORT:-5190\}:5190/);
+  assert.match(ocrDockerfile, /tesseract-ocr/);
   assert.ok(
     releaseScript.indexOf("./scripts/wait-for-app.sh") < releaseScript.indexOf("> .release-version"),
     "the deployed version must only be recorded after the health check succeeds",
   );
+  assert.ok(
+    releaseScript.indexOf("sh ./scripts/backup.sh") < releaseScript.indexOf("build app"),
+    "persistent data must be backed up before the release image is built",
+  );
+  assert.match(backupScript, /pg_dump/);
+  assert.match(backupScript, /pg_restore --list/);
+  assert.match(backupScript, /tar -tzf/);
+  assert.match(backupScript, /sha256sum -c/);
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(projectRoot, "web", "app", "components", "DashboardApp.jsx"), "utf8"),
+    /sample-data\.js/,
+  );
+  assert.equal(packageJson.scripts["check:public-bundle"], "node scripts/check-public-bundle.mjs");
   assert.doesNotMatch(middleware, /localDevelopment/);
   assert.doesNotMatch(middleware, /searchParams\.set\("next"/);
   assert.match(fallbackPage, /redirect\("\/dashboard"\)/);

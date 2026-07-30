@@ -1,4 +1,6 @@
 ARG APP_VERSION=development
+ARG STRICT_DATABASE=1
+ARG LOCAL_OCR_ENABLED=0
 
 FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app/web
@@ -7,7 +9,11 @@ RUN npm ci
 
 FROM node:22-bookworm-slim AS builder
 ARG APP_VERSION
-ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
+ARG STRICT_DATABASE
+ARG LOCAL_OCR_ENABLED
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION \
+    NEXT_PUBLIC_STRICT_DATABASE=$STRICT_DATABASE \
+    NEXT_PUBLIC_LOCAL_OCR_ENABLED=$LOCAL_OCR_ENABLED
 WORKDIR /app
 COPY --from=dependencies /app/web/node_modules ./web/node_modules
 COPY web ./web
@@ -42,7 +48,7 @@ COPY --from=builder /app/web/.next/static ./web/.next/static
 COPY --from=builder /app/web/public ./web/public
 COPY --from=builder /app/web/sample-data.js ./web/sample-data.js
 
-RUN mkdir -p /app/data/import-jobs /app/data/exports /app/screenshots/raw /app/screenshots/trash \
+RUN mkdir -p /app/data/import-jobs /app/data/exports \
     && chown -R node:node /app
 
 USER node

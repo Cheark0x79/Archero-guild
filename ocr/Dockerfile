@@ -19,5 +19,7 @@ WORKDIR /app
 COPY observer ./observer
 COPY config ./config
 COPY contracts ./contracts
+COPY ocr/ui ./ocr/ui
+COPY web/sample-data.js ./web/sample-data.js
 
 ENTRYPOINT ["python", "-m", "observer.ocr.remote"]

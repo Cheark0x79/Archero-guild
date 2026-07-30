@@ -14,15 +14,22 @@ import {
 } from "../../../sample-data.js";
 import { projectRoot, runObserverModule } from "../data/actions.js";
 import { readWarningActions } from "../../../lib/warning-actions.js";
+import { readMemberAdminRecords } from "../../../lib/member-admin.js";
 
-export async function loadDashboardData() {
-  const fallback = await localPayload();
+export async function loadDashboardData({ includeWarningActions = false } = {}) {
+  const fallback = await localPayload({ includeWarningActions });
   if (!process.env.ARCHERO_DATABASE_URL && !process.env.DATABASE_URL) {
+    if (requiresDatabase()) {
+      throw new Error("PostgreSQL is required but no database URL is configured.");
+    }
     return { ok: true, source: "local", data: fallback };
   }
 
   const result = await runObserverModule("observer.storage.export_json");
   if (!result.ok || !result.data || typeof result.data !== "object") {
+    if (requiresDatabase()) {
+      throw new Error("PostgreSQL export is unavailable.");
+    }
     if (result.error) {
       console.warn("Dashboard database export unavailable; using local dashboard data.");
     }
@@ -34,7 +41,33 @@ export async function loadDashboardData() {
     };
   }
 
-  return { ok: true, source: "database", data: mergeWithLocalFallback(result.data, fallback) };
+  return {
+    ok: true,
+    source: "database",
+    data: requiresDatabase()
+      ? databaseOnlyPayload(result.data, fallback)
+      : mergeWithLocalFallback(result.data, fallback),
+  };
+}
+
+export function requiresDatabase(environment = process.env) {
+  return environment.ARCHERO_REQUIRE_DATABASE === "1";
+}
+
+export function databaseOnlyPayload(data, fallback) {
+  return {
+    captures: data.captures ?? {},
+    changes: Array.isArray(data.changes) ? data.changes : [],
+    dailyBossRawSnapshots: Array.isArray(data.dailyBossRawSnapshots) ? data.dailyBossRawSnapshots : [],
+    dailyRawSnapshots: Array.isArray(data.dailyRawSnapshots) ? data.dailyRawSnapshots : [],
+    guildRoster: rosterWithAbsences(data.guildRoster, fallback.guildRoster),
+    memberSnapshots: Array.isArray(data.memberSnapshots) ? data.memberSnapshots : [],
+    previousMemberSnapshots: Array.isArray(data.previousMemberSnapshots) ? data.previousMemberSnapshots : [],
+    rules: { ...fallback.rules, ...(data.rules ?? {}) },
+    ocrQueue: [],
+    identityLinks: Array.isArray(data.identityLinks) ? data.identityLinks : [],
+    warningActions: fallback.warningActions,
+  };
 }
 
 export function bossRankingsFromData(data) {
@@ -133,20 +166,33 @@ function weekStart(date) {
   return current.toISOString().slice(0, 10);
 }
 
-async function localPayload() {
+async function localPayload({ includeWarningActions }) {
+  const memberAdminRecords = await readMemberAdminRecords(projectRoot());
   return {
     captures,
     changes,
     dailyBossRawSnapshots,
     dailyRawSnapshots,
-    guildRoster,
+    guildRoster: guildRoster.map((member) => ({
+      ...member,
+      absenceUntil: member.playerId ? memberAdminRecords[member.playerId]?.absenceUntil ?? null : null,
+    })),
     memberSnapshots,
     previousMemberSnapshots,
     rules,
     ocrQueue,
     identityLinks: await localIdentityLinks(),
-    warningActions: await readWarningActions(projectRoot()),
+    warningActions: selectWarningActions(
+      includeWarningActions ? await readWarningActions(projectRoot()) : {},
+      includeWarningActions,
+    ),
   };
+}
+
+export function selectWarningActions(actions, includeWarningActions) {
+  return includeWarningActions && actions && typeof actions === "object" && !Array.isArray(actions)
+    ? actions
+    : {};
 }
 
 export function mergeWithLocalFallback(data, fallback) {
@@ -186,6 +232,7 @@ function rosterOrFallback(value, fallback) {
       ...member,
       discordName: member.discordName ?? local.discordName,
       discordLinked: Boolean(member.discordLinked || local.discordLinked),
+      ...(local.absenceUntil ? { absenceUntil: local.absenceUntil } : {}),
     };
     const searchAliases = member.searchAliases ?? local.searchAliases;
     if (searchAliases) merged.searchAliases = searchAliases;
@@ -195,6 +242,20 @@ function rosterOrFallback(value, fallback) {
 
 function arrayOrFallback(value, fallback) {
   return Array.isArray(value) && value.length > 0 ? value : fallback;
+}
+
+function rosterWithAbsences(value, fallback) {
+  const absencesById = new Map(
+    (fallback ?? [])
+      .filter((member) => member.playerId && member.absenceUntil)
+      .map((member) => [member.playerId, member.absenceUntil]),
+  );
+  return (Array.isArray(value) ? value : []).map((member) => ({
+    ...member,
+    ...(member.playerId && absencesById.has(member.playerId)
+      ? { absenceUntil: absencesById.get(member.playerId) }
+      : {}),
+  }));
 }
 
 function mergeIdentityLinks(value, fallback) {

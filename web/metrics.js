@@ -160,7 +160,8 @@ export function evaluateMember(member, rules) {
   }
 
   const flags = [];
-  const isExcused = Boolean(member.absenceUntil);
+  const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
+  const isExcused = Boolean(member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate);
 
   if (!isExcused && member.lastActivityDays != null && member.lastActivityDays >= rules.maxInactiveDays) {
     flags.push("Game absence");

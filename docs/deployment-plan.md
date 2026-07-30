@@ -1,5 +1,12 @@
 # Plan de deploiement homelab
 
+> **Document historique.** La cible monolithique décrite ci-dessous est
+> remplacée par les deux produits autonomes `platform/` et `ocr/`. Pour le
+> déploiement actuel, utiliser
+> [`production-homelab.md`](production-homelab.md) et
+> [`ocr-distant.md`](ocr-distant.md). Le serveur ne doit plus exécuter ADB,
+> Tesseract, les captures ou le timer `systemd/archero-observer`.
+
 Ce document decrit la cible de deploiement pour Archero Observer sur une VM dediee dans le homelab Proxmox, ainsi que le workflow d'exploitation: provisioning, configuration, publication via Cloudflare, backups, monitoring, securite et mises a jour.
 
 ## Objectifs

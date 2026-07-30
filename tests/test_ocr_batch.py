@@ -52,6 +52,38 @@ class OcrBatchTests(unittest.TestCase):
         self.assertEqual(first["quality"]["status"], "pass")
         self.assertEqual(first["members"][0]["name"], "Alice")
 
+    def test_keeps_a_member_row_when_ocr_detects_no_name(self) -> None:
+        result = {
+            "input": {"width": 1080, "height": 1920},
+            "detection": {"rowCount": 1},
+            "rows": [{
+                "playerId": None,
+                "name": None,
+                "source": "members-001.png row 3",
+                "rawName": "",
+                "power": 900000,
+                "matchScore": 0,
+            }],
+            "quality": {
+                "expectedRows": 1,
+                "usefulRows": 1,
+                "completeRows": 0,
+                "warnings": ["Name requires review."],
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "members-001.png"
+            image.write_bytes(b"png fixture")
+            batch = build_import_batch(
+                [("guild-members", image, result)],
+                capture_date="2026-07-29",
+                agent_version="test",
+            )
+
+        self.assertEqual(len(batch["members"]), 1)
+        self.assertIsNone(batch["members"][0]["name"])
+        self.assertEqual(batch["quality"]["status"], "review")
+
 
 if __name__ == "__main__":
     unittest.main()

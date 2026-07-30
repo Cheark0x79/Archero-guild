@@ -21,9 +21,12 @@ observer/
   ocr/             Pretraitement OCR et validation
   pipeline/        Deduplication et normalisation
   storage/         Schema SQL
-web/               Interface dashboard Next.js
+platform/          Produit serveur: front, API, PostgreSQL, Cloudflare
+ocr/               Produit PC: interface locale, Tesseract et publication
+contracts/         Contrat JSON partage entre les deux produits
+web/               Sources de l'interface et de l'API Next.js
 config/            Configuration d'exemple
-systemd/           Unit et timer
+systemd/           Ancien prototype dry-run, non deploye en production
 tests/             Tests unitaires
 ```
 
@@ -199,11 +202,15 @@ Quand les screenshots sont deja ranges dans le dossier du jour, lancer l'import 
 archero-day 2026-07-17
 ```
 
-Sans date, `archero-day` utilise automatiquement la date du jour en Europe/Paris. La commande ne prend aucun screenshot: elle lit les fichiers existants, lance l'OCR/import, puis met a jour `web/sample-data.js`.
+Sans date, `archero-day` utilise automatiquement la date du jour en Europe/Paris. Cette commande historique est réservée au développement local : elle lit les fichiers existants, lance l'OCR/import, puis met à jour `web/sample-data.js`.
 
 ```text
 lecture screenshots/raw/YYYY-MM-DD -> OCR/import du jour -> mise a jour web/sample-data.js
 ```
+
+Les données de préproduction et de production ne passent jamais par ce fichier
+ni par Git. Elles sont validées dans l’extracteur local puis publiées vers
+`/api/v1/imports/validate` et `/api/v1/imports`.
 
 Les commandes `archero-capture ...` appellent uniquement:
 
@@ -334,11 +341,13 @@ PC OCR (BlueStacks + ADB + Tesseract)
 serveur production (Next.js + API + PostgreSQL)
 ```
 
-La machine OCR ne recoit jamais d'acces PostgreSQL et le serveur de production
-ne contient plus Tesseract ni ADB. `Dockerfile` construit la plateforme;
-`Dockerfile.ocr` constitue la frontiere extractible vers le futur depot OCR.
-La separation en deux depots pourra se faire apres stabilisation de ce contrat,
-en conservant l'historique Git des dossiers OCR.
+La machine OCR ne reçoit jamais d'accès PostgreSQL et le serveur de production
+ne contient plus Tesseract ni ADB. Les deux produits ont maintenant des cycles
+de vie autonomes dans le même dépôt :
+
+- `platform/` construit et déploie Next.js, l'API et PostgreSQL ;
+- `ocr/` construit l'interface locale et Tesseract sur le PC ;
+- `contracts/` contient leur seul contrat d'échange.
 
 Le mode operatoire complet pour relier le PC OCR a une pre-production ou a la
 production, sans faire transiter les donnees par Git, est documente dans
@@ -350,7 +359,11 @@ Le schema initial est dans `observer/storage/schema.sql`. `docker-compose.yml` f
 
 Quand `ARCHERO_DATABASE_URL` ou `DATABASE_URL` est defini, `archero-import` continue d'ecrire le rapport JSON dans `data/imports`, puis persiste aussi l'import dans PostgreSQL. Sans variable DB, le workflow reste local et fonctionne comme avant.
 
-Le dashboard lit `/api/dashboard-data`. Cet endpoint exporte les donnees PostgreSQL si la DB est configuree et lisible, sinon il renvoie automatiquement les donnees locales de `web/sample-data.js`.
+Le dashboard lit `/api/dashboard-data`. En développement sans base configurée,
+la route serveur peut utiliser `web/sample-data.js`; ce fichier n’est jamais
+importé dans le bundle client. Dans l'image `platform/`, PostgreSQL est
+obligatoire : une panne renvoie une erreur et aucune donnée de démonstration
+n'est affichée.
 
 ### Configuration locale
 
