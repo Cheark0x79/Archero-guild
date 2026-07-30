@@ -12,27 +12,14 @@ const endpoints = [
   endpoint("Guild", "GET", "/api/v1/rules", "Guild rules", "Thresholds used for contributions, activity, progression, and bosses.", true, {}, {
     maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2, memberCapacity: 40,
   }),
-  endpoint("Guild", "GET", "/api/v1/violations", "Watchlist", "Current violations and durable history of automatic rule warnings.", true, {
+  endpoint("Guild", "GET", "/api/v1/warnings", "Warnings", "Current members who reached one or more guild warning thresholds.", true, {
+    type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
     severity: "[optional query] warning | danger",
     flag: "[optional query] absence | contribution | progression | boss",
-    playerId: "[optional query] member Player ID for warning history",
-    from: "[optional query] earliest history date in YYYY-MM-DD format",
-    to: "[optional query] latest history date in YYYY-MM-DD format",
-    limit: "[optional query] 1–1000 history events · default: 200",
+    playerId: "[optional query] member Player ID",
   }, {
     summary: { total: 5, warning: 3, danger: 2 },
     members: [{ playerId: "100000001", name: "ExampleMember", severity: "warning", flags: ["Low contribution"] }],
-    history: [{
-      date: "2026-07-21",
-      playerId: "100000001",
-      name: "ExampleMember",
-      type: "missed_boss",
-      label: "Missed boss",
-      value: 1,
-      threshold: 2,
-      action: { status: "contacted", note: "Discord message sent.", updatedAt: "2026-07-21T12:00:00.000Z" },
-    }],
-    historyPagination: { limit: 200, total: 12, hasMore: false },
   }),
   endpoint("Members", "GET", "/api/v1/members", "List members", "Paginated list and search for current or former members.", true, {
     q: "[optional query] name or Player ID",
@@ -66,6 +53,21 @@ const endpoints = [
     items: [{ date: "2026-07-22", power: 10550000, contribution7d: 2280, bossAttacks: 2, warnings: [] }],
     warningSummary: { total: 4, byType: { missed_boss: 1 }, lastWarningAt: "2026-07-21" },
   }),
+  endpoint("Members", "GET", "/api/v1/members/{playerId}/warnings", "Member warnings", "All warning events and totals for one member.", true, {
+    playerId: "[required path] member Player ID",
+    type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
+    severity: "[optional query] warning | danger",
+    scope: "[optional query] current | history · default: history",
+    from: "[optional query] earliest date in YYYY-MM-DD format",
+    to: "[optional query] latest date in YYYY-MM-DD format",
+    limit: "[optional query] 1–1000 events · default: 200",
+  }, {
+    playerId: "100000001",
+    name: "ExampleMember",
+    warningSummary: { total: 4, warning: 3, danger: 1, byType: { missed_boss: 2 }, lastWarningAt: "2026-07-29" },
+    items: [{ date: "2026-07-29", type: "missed_boss", value: 0, threshold: 2 }],
+    pagination: { limit: 200, total: 4, hasMore: false },
+  }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}/bosses", "Member boss records", "Records, participation, and guild rank for each of the seven bosses.", true, {
     playerId: "[required path] member Player ID",
   }, {
@@ -79,6 +81,24 @@ const endpoints = [
     limit: "[optional query] 1–100 · default: 10",
   }, {
     metric: "power", rows: [{ rank: 1, playerId: "100000002", name: "ExampleChampion", value: 10550000 }],
+  }),
+  endpoint("Rankings", "GET", "/api/v1/rankings/warnings", "Warning ranking", "Members ordered by their accumulated warning count.", true, {
+    type: "[optional query] game_absence | low_contribution | low_progression | missed_boss",
+    severity: "[optional query] warning | danger",
+    scope: "[optional query] current | history · default: history",
+    from: "[optional query] earliest date in YYYY-MM-DD format",
+    to: "[optional query] latest date in YYYY-MM-DD format",
+    order: "[optional query] asc | desc · default: desc",
+    limit: "[optional query] 1–100 members · default: 10",
+  }, {
+    scope: "history",
+    order: "desc",
+    totalMembers: 5,
+    rows: [{
+      rank: 1, playerId: "100000001", name: "ExampleMember", total: 7,
+      byType: { game_absence: 1, missed_boss: 2, low_contribution: 4 },
+      warning: 6, danger: 1, lastWarningAt: "2026-07-29",
+    }],
   }),
   endpoint("Bosses", "GET", "/api/v1/bosses", "Boss catalogue", "Boss rotation, records, and current record holders.", true, {}, [
     { key: "fire-dragon", name: "Fire Dragon", dayLabel: "Tue", bestDamage: 923010000000 },

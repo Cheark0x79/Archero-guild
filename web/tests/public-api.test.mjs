@@ -11,11 +11,14 @@ import {
   memberHistoryFromData,
   memberBossesFromData,
   memberRankingsFromData,
+  memberWarningsFromData,
   membersFromData,
   queryMembers,
   resolveMemberFromData,
   rulesFromData,
   violationsFromData,
+  warningRankingsFromData,
+  warningsFromData,
 } from "../app/api/v1/_lib/domain.js";
 
 function requestWith(headers = {}) {
@@ -46,7 +49,14 @@ const data = {
       rows: [{ playerId: "123", name: "Alice", bossDamageToday: 5000, bossRank: 1 }],
     },
   ],
-  rules: { memberCapacity: 40, maxInactiveDays: 3, minContribution7d: 500, minBossTries: 2 },
+  rules: {
+    memberCapacity: 40,
+    maxInactiveDays: 3,
+    minContribution7d: 500,
+    minPowerGrowth14dPercent: 1,
+    minBossTries: 2,
+    newMemberGraceDays: 7,
+  },
 };
 
 test("API authentication accepts bearer and x-api-key credentials", () => {
@@ -103,6 +113,15 @@ test("rules and violations expose actionable guild compliance", () => {
   const result = violationsFromData(violatingData, new URLSearchParams());
   assert.equal(result.summary.total, 1);
   assert.deepEqual(result.items[0].evaluation.flags, ["Game absence", "Low contribution", "Missed boss"]);
+});
+
+test("warning endpoints fail explicitly when evaluation rules are missing", () => {
+  const incomplete = { ...data, rules: {} };
+
+  assert.equal(violationsFromData(incomplete, new URLSearchParams()).error.code, "rules_not_configured");
+  assert.equal(violationsFromData(incomplete, new URLSearchParams()).error.status, 503);
+  assert.equal(warningsFromData(incomplete, new URLSearchParams()).error.code, "rules_not_configured");
+  assert.equal(warningRankingsFromData(incomplete, new URLSearchParams()).error.code, "rules_not_configured");
 });
 
 test("an excused warning stays in history but leaves the actionable watchlist", () => {
@@ -238,6 +257,72 @@ test("member history and boss results can be filtered", () => {
   assert.equal(bossCatalogFromData(data).length, 7);
   assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-02-31" })).error.code, "invalid_date");
   assert.equal(memberHistoryFromData(historicalData, "123", new URLSearchParams({ from: "2026-07-22", to: "2026-07-21" })).error.code, "invalid_date_range");
+});
+
+test("warning list, ranking, and member detail expose current and historical data", () => {
+  const warningData = {
+    ...data,
+    guildRoster: [
+      ...data.guildRoster,
+      { playerId: "789", name: "Charlie", status: "active" },
+    ],
+    dailyRawSnapshots: [
+      {
+        date: "2026-07-21",
+        rows: [
+          { playerId: "123", power: 900000, contribution7d: 100, bossAttacks: 0, lastActivityDays: 5 },
+          { playerId: "789", power: 500000, contribution7d: 100, bossAttacks: 1, lastActivityDays: 0 },
+        ],
+      },
+      {
+        date: "2026-07-22",
+        rows: [
+          { playerId: "123", power: 900000, contribution7d: 100, bossAttacks: 0, lastActivityDays: 5 },
+          { playerId: "789", power: 500000, contribution7d: 700, bossAttacks: 2, lastActivityDays: 0 },
+        ],
+      },
+    ],
+  };
+
+  const currentBoss = warningsFromData(warningData, new URLSearchParams({
+    type: "missed_boss",
+    scope: "current",
+  }));
+  assert.equal(currentBoss.summary.total, 1);
+  assert.equal(currentBoss.items[0].playerId, "123");
+  assert.equal(currentBoss.items[0].value, 0);
+
+  const history = warningsFromData(warningData, new URLSearchParams({
+    scope: "history",
+    from: "2026-07-21",
+  }));
+  assert.equal(history.summary.total, 8);
+  assert.equal(history.pagination.hasMore, false);
+
+  const ranking = warningRankingsFromData(warningData, new URLSearchParams());
+  assert.equal(ranking.scope, "history");
+  assert.equal(ranking.rows[0].playerId, "123");
+  assert.equal(ranking.rows[0].total, 6);
+  assert.equal(ranking.rows[1].playerId, "789");
+  assert.equal(ranking.rows[1].total, 2);
+
+  const violations = violationsFromData(warningData, new URLSearchParams({
+    type: "missed_boss",
+    playerId: "123",
+  }));
+  assert.equal(violations.items.every((member) => member.playerId === "123"), true);
+  assert.equal(violations.history.length, 2);
+  assert.equal(violations.history.every((event) => event.type === "missed_boss" && event.playerId === "123"), true);
+  assert.equal(violations.warningSummary.total, 2);
+
+  const memberWarnings = memberWarningsFromData(warningData, "123", new URLSearchParams());
+  assert.equal(memberWarnings.playerId, "123");
+  assert.equal(memberWarnings.warningSummary.total, 6);
+  assert.equal(memberWarnings.items.every((event) => event.playerId === "123"), true);
+
+  assert.equal(warningsFromData(warningData, new URLSearchParams({ type: "unknown" })).error.code, "invalid_warning_type");
+  assert.equal(violationsFromData(warningData, new URLSearchParams({ type: "unknown" })).error.code, "invalid_warning_type");
+  assert.equal(warningRankingsFromData(warningData, new URLSearchParams({ scope: "future" })).error.code, "invalid_scope");
 });
 
 test("boss results prefer the boss identity stored by PostgreSQL over weekday inference", () => {

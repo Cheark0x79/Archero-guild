@@ -6,6 +6,8 @@ import { warningActionKey } from "../../../../lib/warning-actions.js";
 const FORMER_STATUSES = new Set(["inactive", "left", "kicked"]);
 const ALLOWED_MEMBER_STATUSES = new Set(["active", "former", "all"]);
 const RANKING_METRICS = new Set(["power", "contribution7d", "powerDelta", "contributionDelta", "bossAttacks", "activity"]);
+const WARNING_TYPES = new Set(["game_absence", "low_contribution", "low_progression", "missed_boss"]);
+const WARNING_RULE_KEYS = ["maxInactiveDays", "minContribution7d", "minPowerGrowth14dPercent", "minBossTries"];
 
 export function membersFromData(data) {
   return mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? []).map((member) => publicMember(member, data.rules ?? {}));
@@ -94,7 +96,13 @@ export function rulesFromData(data) {
 }
 
 export function violationsFromData(data, searchParams) {
+  const rulesError = warningRulesError(data);
+  if (rulesError) return { error: rulesError };
+  const type = searchParams.get("type");
   const severity = searchParams.get("severity");
+  if (type && !WARNING_TYPES.has(type)) {
+    return { error: { code: "invalid_warning_type", message: `type must be one of: ${[...WARNING_TYPES].join(", ")}.` } };
+  }
   if (severity && !["warning", "danger"].includes(severity)) {
     return { error: { code: "invalid_severity", message: "severity must be warning or danger." } };
   }
@@ -116,6 +124,8 @@ export function violationsFromData(data, searchParams) {
     .map((member) => effectiveViolationMember(data, member))
     .filter((member) => !FORMER_STATUSES.has(member.guildStatus))
     .filter((member) => ["warning", "danger"].includes(member.evaluation.severity))
+    .filter((member) => !playerId || member.playerId === playerId)
+    .filter((member) => !type || member.evaluation.flags.some((item) => warningTypeForFlag(item) === type))
     .filter((member) => !severity || member.evaluation.severity === severity)
     .filter((member) => !flag || member.evaluation.flags.some((item) => normalize(item).includes(flag)))
     .sort((left, right) => severityRank(right.evaluation.severity) - severityRank(left.evaluation.severity) || left.name.localeCompare(right.name));
@@ -126,6 +136,7 @@ export function violationsFromData(data, searchParams) {
       memberWarningEvents(data, member.playerId)
         .filter((event) => !from || event.date >= from)
         .filter((event) => !to || event.date <= to)
+        .filter((event) => !type || event.type === type)
         .filter((event) => !severity || event.severity === severity)
         .filter((event) => !flag || normalize(event.label).includes(flag))
         .map((event) => ({
@@ -139,12 +150,117 @@ export function violationsFromData(data, searchParams) {
   return {
     items,
     summary: violationSummary(items),
+    warningSummary: warningEventSummary(allHistory),
     history: allHistory.slice(0, historyLimit),
     historyPagination: {
       limit: historyLimit,
       total: allHistory.length,
       hasMore: allHistory.length > historyLimit,
     },
+  };
+}
+
+export function warningsFromData(data, searchParams) {
+  const rulesError = warningRulesError(data);
+  if (rulesError) return { error: rulesError };
+  const query = warningQuery(searchParams, { defaultLimit: 200, maximumLimit: 1000 });
+  if (query.error) return query;
+
+  const latestDates = latestSnapshotDates(data);
+  const events = warningEventsForData(data)
+    .filter((event) => !query.playerId || event.playerId === query.playerId)
+    .filter((event) => !query.type || event.type === query.type)
+    .filter((event) => !query.severity || event.severity === query.severity)
+    .filter((event) => !query.from || event.date >= query.from)
+    .filter((event) => !query.to || event.date <= query.to)
+    .filter((event) => query.scope !== "current" || latestDates.get(event.playerId) === event.date)
+    .sort((left, right) => right.date.localeCompare(left.date) || severityRank(right.severity) - severityRank(left.severity) || left.name.localeCompare(right.name));
+
+  return {
+    scope: query.scope,
+    type: query.type,
+    summary: warningEventSummary(events),
+    items: events.slice(0, query.limit),
+    pagination: {
+      limit: query.limit,
+      total: events.length,
+      hasMore: events.length > query.limit,
+    },
+  };
+}
+
+export function warningRankingsFromData(data, searchParams) {
+  const rulesError = warningRulesError(data);
+  if (rulesError) return { error: rulesError };
+  const query = warningQuery(searchParams, {
+    defaultLimit: 10,
+    maximumLimit: 100,
+    allowPlayerId: false,
+    defaultScope: "history",
+  });
+  if (query.error) return query;
+  const order = searchParams.get("order") ?? "desc";
+  if (!["asc", "desc"].includes(order)) {
+    return { error: { code: "invalid_order", message: "order must be asc or desc." } };
+  }
+
+  const latestDates = latestSnapshotDates(data);
+  const events = warningEventsForData(data)
+    .filter((event) => !query.type || event.type === query.type)
+    .filter((event) => !query.severity || event.severity === query.severity)
+    .filter((event) => !query.from || event.date >= query.from)
+    .filter((event) => !query.to || event.date <= query.to)
+    .filter((event) => query.scope !== "current" || latestDates.get(event.playerId) === event.date);
+  const grouped = new Map();
+  for (const event of events) {
+    const current = grouped.get(event.playerId) ?? {
+      playerId: event.playerId,
+      name: event.name,
+      total: 0,
+      byType: {},
+      warning: 0,
+      danger: 0,
+      lastWarningAt: null,
+      links: {
+        api: `/api/v1/members/${encodeURIComponent(event.playerId)}/warnings`,
+        web: `/members/${encodeURIComponent(event.playerId)}`,
+      },
+    };
+    current.total += 1;
+    current.byType[event.type] = (current.byType[event.type] ?? 0) + 1;
+    current[event.severity] = (current[event.severity] ?? 0) + 1;
+    if (!current.lastWarningAt || event.date > current.lastWarningAt) current.lastWarningAt = event.date;
+    grouped.set(event.playerId, current);
+  }
+  const rows = [...grouped.values()]
+    .sort((left, right) => {
+      const totalDifference = order === "asc" ? left.total - right.total : right.total - left.total;
+      return totalDifference || right.danger - left.danger || left.name.localeCompare(right.name);
+    })
+    .slice(0, query.limit)
+    .map((row, index) => ({ rank: index + 1, ...row }));
+  return {
+    scope: query.scope,
+    type: query.type,
+    order,
+    totalMembers: grouped.size,
+    rows,
+  };
+}
+
+export function memberWarningsFromData(data, playerId, searchParams) {
+  const query = new URLSearchParams(searchParams);
+  query.set("playerId", playerId);
+  if (!query.has("scope")) query.set("scope", "history");
+  const result = warningsFromData(data, query);
+  if (result.error) return result;
+  const member = (data.guildRoster ?? []).find((row) => row.playerId === playerId);
+  return {
+    playerId,
+    name: member?.name ?? playerId,
+    warningSummary: result.summary,
+    items: result.items,
+    pagination: result.pagination,
   };
 }
 
@@ -159,7 +275,6 @@ export function memberRankingsFromData(data, searchParams) {
     return { error: { code: "invalid_order", message: "order must be asc or desc." } };
   }
   if (limit === null) return { error: { code: "invalid_limit", message: "limit must be an integer between 1 and 100." } };
-
   const rankedMembers = membersFromData(data)
     .filter((member) => !FORMER_STATUSES.has(member.guildStatus) && member.metrics.verified)
     .map((member) => ({ ...member, value: rankingValue(member, metric) }))
@@ -242,6 +357,85 @@ function memberWarningEvents(data, playerId) {
         })),
     );
   return warningHistoryEvents(rows, data.rules ?? {}, member);
+}
+
+function warningEventsForData(data) {
+  return (data.guildRoster ?? [])
+    .filter((member) => member.playerId && !FORMER_STATUSES.has(member.status))
+    .flatMap((member) =>
+      memberWarningEvents(data, member.playerId).map((event) => ({
+        ...event,
+        playerId: member.playerId,
+        name: member.name,
+        action: warningAction(data, member.playerId, event),
+      })),
+    );
+}
+
+function latestSnapshotDates(data) {
+  const dates = new Map();
+  for (const day of data.dailyRawSnapshots ?? []) {
+    for (const row of day.rows ?? []) {
+      if (!row.playerId) continue;
+      const current = dates.get(row.playerId);
+      if (!current || day.date > current) dates.set(row.playerId, day.date);
+    }
+  }
+  return dates;
+}
+
+function warningRulesError(data) {
+  const missing = WARNING_RULE_KEYS.filter((key) => typeof data.rules?.[key] !== "number");
+  return missing.length > 0
+    ? {
+        status: 503,
+        code: "rules_not_configured",
+        message: `Warning evaluation requires configured rules: ${missing.join(", ")}.`,
+      }
+    : null;
+}
+
+function warningQuery(searchParams, options) {
+  const type = searchParams.get("type");
+  const severity = searchParams.get("severity");
+  const scope = searchParams.get("scope") ?? options.defaultScope ?? "current";
+  const from = dateParameter(searchParams.get("from"));
+  const to = dateParameter(searchParams.get("to"));
+  const limit = integerParameter(searchParams.get("limit"), options.defaultLimit, 1, options.maximumLimit);
+  const playerId = options.allowPlayerId === false ? null : searchParams.get("playerId")?.trim();
+  if (type && !WARNING_TYPES.has(type)) {
+    return { error: { code: "invalid_warning_type", message: `type must be one of: ${[...WARNING_TYPES].join(", ")}.` } };
+  }
+  if (severity && !["warning", "danger"].includes(severity)) {
+    return { error: { code: "invalid_severity", message: "severity must be warning or danger." } };
+  }
+  if (!["current", "history"].includes(scope)) {
+    return { error: { code: "invalid_scope", message: "scope must be current or history." } };
+  }
+  if (from === false || to === false) {
+    return { error: { code: "invalid_date", message: "from and to must use YYYY-MM-DD format." } };
+  }
+  if (from && to && from > to) {
+    return { error: { code: "invalid_date_range", message: "from must be earlier than or equal to to." } };
+  }
+  if (limit === null) {
+    return { error: { code: "invalid_limit", message: `limit must be an integer between 1 and ${options.maximumLimit}.` } };
+  }
+  return { type, severity, scope, from, to, limit, playerId };
+}
+
+function warningEventSummary(events) {
+  const byType = {};
+  let warning = 0;
+  let danger = 0;
+  let lastWarningAt = null;
+  for (const event of events) {
+    byType[event.type] = (byType[event.type] ?? 0) + 1;
+    if (event.severity === "warning") warning += 1;
+    if (event.severity === "danger") danger += 1;
+    if (!lastWarningAt || event.date > lastWarningAt) lastWarningAt = event.date;
+  }
+  return { total: events.length, warning, danger, byType, lastWarningAt };
 }
 
 function warningAction(data, playerId, event) {

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Archero Observer API
-  version: 1.1.0
+  version: 1.2.0
   description: Read-only API intended for Discord bots and other server-side integrations.
 servers:
   - url: /api/v1
@@ -50,11 +50,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /warnings:
+    get:
+      operationId: listWarnings
+      summary: List members with current guild warnings
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
+        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
+        - { name: flag, in: query, schema: { type: string } }
+        - { name: playerId, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Warning summary and affected members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentWarningsResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /violations:
     get:
-      operationId: listViolations
-      summary: List members who do not meet guild rules
+      deprecated: true
+      operationId: listLegacyViolations
+      summary: Legacy alias for warning data
       parameters:
+        - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
         - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: flag, in: query, schema: { type: string } }
         - { name: playerId, in: query, schema: { type: string } }
@@ -63,7 +85,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
       responses:
         "200":
-          description: Violation summary and affected members
+          description: Legacy warning response retained for compatibility
           content:
             application/json:
               schema:
@@ -87,6 +109,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemberRankingResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /rankings/warnings:
+    get:
+      operationId: rankWarnings
+      summary: Rank members by accumulated warnings
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
+        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
+        - { name: scope, in: query, schema: { type: string, enum: [current, history], default: history } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: Members ordered by warning count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarningRankingResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/TooManyRequests" }
@@ -206,6 +251,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemberHistoryResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /members/{playerId}/warnings:
+    get:
+      operationId: getMemberWarnings
+      summary: Get a member's warning history
+      parameters:
+        - { name: playerId, in: path, required: true, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] } }
+        - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
+        - { name: scope, in: query, schema: { type: string, enum: [current, history], default: history } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
+      responses:
+        "200":
+          description: Member warning summary and events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberWarningsResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -399,6 +468,52 @@ components:
         byFlag:
           type: object
           additionalProperties: { type: integer }
+    WarningSummary:
+      type: object
+      required: [total, warning, danger, byType, lastWarningAt]
+      properties:
+        total: { type: integer }
+        warning: { type: integer }
+        danger: { type: integer }
+        byType:
+          type: object
+          additionalProperties: { type: integer }
+        lastWarningAt: { type: [string, "null"], format: date }
+    WarningAction:
+      type: object
+      required: [status, note, updatedAt]
+      properties:
+        status: { type: string, enum: [pending, contacted, excused, resolved] }
+        note: { type: string }
+        updatedAt: { type: [string, "null"], format: date-time }
+    WarningEvent:
+      type: object
+      required: [id, date, playerId, name, type, label, severity, value, threshold, detail, action]
+      properties:
+        id: { type: string }
+        date: { type: string, format: date }
+        playerId: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] }
+        label: { type: string }
+        severity: { type: string, enum: [warning, danger] }
+        value: { type: number }
+        threshold: { type: number }
+        detail: { type: string }
+        baselineDate: { type: string, format: date }
+        action: { $ref: "#/components/schemas/WarningAction" }
+    MemberWarning:
+      type: object
+      required: [type, label, severity, value, threshold, detail, action]
+      properties:
+        type: { type: string, enum: [game_absence, low_contribution, low_progression, missed_boss] }
+        label: { type: string }
+        severity: { type: string, enum: [warning, danger] }
+        value: { type: number }
+        threshold: { type: number }
+        detail: { type: string }
+        baselineDate: { type: string, format: date }
+        action: { $ref: "#/components/schemas/WarningAction" }
     MemberRankingRow:
       type: object
       required: [rank, playerId, name, role, value, lastSeenAt, links]
@@ -463,13 +578,16 @@ components:
           items: { $ref: "#/components/schemas/BossResult" }
     MemberHistoryPoint:
       type: object
-      required: [date, power, contribution7d, bossAttacks, lastActivityDays]
+      required: [date, power, contribution7d, bossAttacks, lastActivityDays, warnings]
       properties:
         date: { type: string, format: date }
         power: { type: [integer, "null"] }
         contribution7d: { type: [integer, "null"] }
         bossAttacks: { type: [integer, "null"] }
         lastActivityDays: { type: [integer, "null"] }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/MemberWarning" }
     GuildResponse:
       type: object
       required: [data, meta]
@@ -482,7 +600,7 @@ components:
       properties:
         data: { $ref: "#/components/schemas/GuildRules" }
         meta: { $ref: "#/components/schemas/Meta" }
-    ViolationsResponse:
+    CurrentWarningsResponse:
       type: object
       required: [data, meta]
       properties:
@@ -494,6 +612,62 @@ components:
             members:
               type: array
               items: { $ref: "#/components/schemas/Member" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    ViolationsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [summary, warningSummary, members, history, historyPagination]
+          properties:
+            summary: { $ref: "#/components/schemas/ViolationSummary" }
+            warningSummary: { $ref: "#/components/schemas/WarningSummary" }
+            members:
+              type: array
+              items: { $ref: "#/components/schemas/Member" }
+            history:
+              type: array
+              items: { $ref: "#/components/schemas/WarningEvent" }
+            historyPagination: { $ref: "#/components/schemas/WarningPagination" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    WarningPagination:
+      type: object
+      required: [limit, total, hasMore]
+      properties:
+        limit: { type: integer }
+        total: { type: integer }
+        hasMore: { type: boolean }
+    WarningRankingRow:
+      type: object
+      required: [rank, playerId, name, total, byType, warning, danger, lastWarningAt, links]
+      properties:
+        rank: { type: integer }
+        playerId: { type: string }
+        name: { type: string }
+        total: { type: integer }
+        byType:
+          type: object
+          additionalProperties: { type: integer }
+        warning: { type: integer }
+        danger: { type: integer }
+        lastWarningAt: { type: string, format: date }
+        links: { $ref: "#/components/schemas/MemberLinks" }
+    WarningRankingResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [scope, type, order, totalMembers, rows]
+          properties:
+            scope: { type: string, enum: [current, history] }
+            type: { type: [string, "null"] }
+            order: { type: string, enum: [asc, desc] }
+            totalMembers: { type: integer }
+            rows:
+              type: array
+              items: { $ref: "#/components/schemas/WarningRankingRow" }
         meta: { $ref: "#/components/schemas/Meta" }
     MemberRankingResponse:
       type: object
@@ -530,13 +704,38 @@ components:
       properties:
         data:
           type: object
-          required: [playerId, name, items]
+          required: [playerId, name, items, warningSummary]
           properties:
             playerId: { type: string }
             name: { type: string }
             items:
               type: array
               items: { $ref: "#/components/schemas/MemberHistoryPoint" }
+            warningSummary:
+              type: object
+              required: [total, byType, lastWarningAt]
+              properties:
+                total: { type: integer }
+                byType:
+                  type: object
+                  additionalProperties: { type: integer }
+                lastWarningAt: { type: [string, "null"], format: date }
+        meta: { $ref: "#/components/schemas/Meta" }
+    MemberWarningsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [playerId, name, warningSummary, items, pagination]
+          properties:
+            playerId: { type: string }
+            name: { type: string }
+            warningSummary: { $ref: "#/components/schemas/WarningSummary" }
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/WarningEvent" }
+            pagination: { $ref: "#/components/schemas/WarningPagination" }
         meta: { $ref: "#/components/schemas/Meta" }
     MemberList:
       type: object
