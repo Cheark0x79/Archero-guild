@@ -5,7 +5,22 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 
-import { MAX_UPLOAD_BYTES, findExistingScreenshotByHash, observerPythonCommand, readUploadedPng } from "../app/api/data/actions.js";
+import {
+  MAX_UPLOAD_BYTES,
+  findExistingScreenshotByHash,
+  observerPythonCommand,
+  readUploadedPng,
+  validateCaptureDate,
+} from "../app/api/data/actions.js";
+
+test("validateCaptureDate validates the calendar instead of only the shape", () => {
+  assert.equal(validateCaptureDate("2026-07-28"), true);
+  assert.equal(validateCaptureDate("2024-02-29"), true);
+  assert.equal(validateCaptureDate("2026-02-29"), false);
+  assert.equal(validateCaptureDate("2026-02-31"), false);
+  assert.equal(validateCaptureDate("2026-13-01"), false);
+  assert.equal(validateCaptureDate("28-07-2026"), false);
+});
 
 const PNG_BYTES = await sharp({
   create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },

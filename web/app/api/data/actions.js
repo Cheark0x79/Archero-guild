@@ -4,6 +4,9 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
+import { validateCaptureDate } from "./date.js";
+
+export { validateCaptureDate } from "./date.js";
 
 export const CAPTURE_KINDS = new Set(["guild-members", "guild-boss"]);
 export const DASHBOARD_ACTION_HEADER = "x-archero-dashboard-action";
@@ -137,10 +140,6 @@ export function captureDateToday() {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-}
-
-export function validateCaptureDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 export async function nextUploadPath(kind, date = captureDateToday()) {

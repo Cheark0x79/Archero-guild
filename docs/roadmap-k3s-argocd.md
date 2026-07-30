@@ -1,78 +1,76 @@
-# Roadmap de déploiement Proxmox, K3s et Argo CD
+# Proxmox, K3s, and Argo CD deployment roadmap
 
-Statut : **différé**.
+Status: **deferred**
 
-Ce document conserve le plan de déploiement cible. Il ne constitue pas la
-priorité actuelle : nous devons d'abord mettre à jour, fiabiliser et préparer
-l'application et son API.
+This document records the longer-term target architecture. The currently
+supported deployment remains Docker Compose behind Cloudflare Tunnel, as
+documented in [`production-homelab.md`](production-homelab.md).
 
-## Architecture cible
+## Target architecture
 
 ```text
 Proxmox
-└── VM Linux
-    └── K3s mono-nœud
+└── Linux VM
+    └── Single-node K3s
         ├── Argo CD
-        ├── application Archero et API
+        ├── Archero application and API
         ├── PostgreSQL
         ├── cloudflared
-        └── volumes persistants
+        └── persistent volumes
 ```
 
-## Phase différée : infrastructure
+## Phase 1: infrastructure
 
-- Créer une VM Debian ou Ubuntu Server dans Proxmox.
-- Attribuer une IP locale fixe.
-- Installer et sécuriser SSH.
-- Installer K3s en mono-nœud.
-- Configurer les namespaces `argocd` et `archero`.
-- Installer Argo CD.
-- Configurer les sauvegardes Proxmox.
-- Choisir le stockage persistant : `local-path`, NFS ou Longhorn.
+- Create a Debian or Ubuntu Server VM in Proxmox.
+- Assign a fixed local IP address.
+- Install and harden SSH.
+- Install single-node K3s.
+- Create the `argocd` and `archero` namespaces.
+- Install Argo CD.
+- Configure Proxmox backups.
+- Select persistent storage: `local-path`, NFS, or Longhorn.
 
-## Phase différée : GitOps
+## Phase 2: GitOps
 
-- Publier les images dans GHCR avec un tag correspondant au SHA Git.
-- Créer les manifests Kubernetes avec Kustomize ou Helm.
-- Créer les Deployments, Services, ConfigMaps, Secrets et PVC.
-- Déployer PostgreSQL avec un StatefulSet ou sur une VM séparée.
-- Ajouter les probes de démarrage, disponibilité et fonctionnement.
-- Créer l'Application Argo CD.
-- Activer la synchronisation automatique, `selfHeal` et `prune`.
-- Prévoir une stratégie de rollback.
+- Publish images to GHCR with immutable Git SHA tags.
+- Create Kubernetes manifests with Kustomize or Helm.
+- Define Deployments, Services, ConfigMaps, Secrets, and PVCs.
+- Run PostgreSQL as a StatefulSet or on a separate VM.
+- Add startup, readiness, and liveness probes.
+- Create the Argo CD Application.
+- Enable automated synchronization, `selfHeal`, and `prune`.
+- Document rollback for both application and schema changes.
 
-## Phase différée : Cloudflare
+## Phase 3: Cloudflare
 
-- Déployer `cloudflared` dans K3s.
-- Stocker le token du tunnel dans un Secret chiffré.
-- Publier uniquement le Service interne de l'application.
-- N'utiliser ni `NodePort` public ni redirection de ports sur la box.
-- Protéger l'application avec Cloudflare Access et MFA.
-- Maintenir la seconde authentification interne pour les fonctions admin.
+- Deploy `cloudflared` inside K3s.
+- Store the tunnel token in an encrypted Secret.
+- Publish only the internal application Service.
+- Do not expose a public `NodePort` or router port forwarding.
+- Protect the application with Cloudflare Access and MFA.
+- Keep application-level authentication for administrative functions.
 
-## Phase différée : secrets et sauvegardes
+## Phase 4: secrets and backups
 
-- Chiffrer les secrets GitOps avec SOPS et Age.
-- Sauvegarder la clé Age hors du cluster.
-- Automatiser les sauvegardes PostgreSQL.
-- Sauvegarder également `data` et `screenshots`.
-- Copier les sauvegardes hors de la VM.
-- Tester régulièrement une restauration complète.
+- Encrypt GitOps secrets with SOPS and Age.
+- Store the Age private key outside the cluster.
+- Automate PostgreSQL backups.
+- Back up `data` and `screenshots`.
+- Copy backups outside the VM.
+- Test complete restoration regularly.
 
-## Priorité actuelle
+## Entry criteria
 
-Avant de commencer cette infrastructure :
+Before implementing this architecture:
 
-1. Stabiliser les données et l'import.
-2. Finaliser la validation humaine des données.
-3. Versionner et sécuriser l'API.
-4. Terminer les comptes, rôles et permissions.
-5. Réduire la dette technique du front.
-6. Compléter les tests automatiques.
-7. Vérifier le fonctionnement dans l'image Docker.
-8. Documenter les migrations et les procédures de restauration.
-9. Préparer la publication automatique de l'image.
-10. Faire une dernière revue de sécurité avant le déploiement.
+1. Validate the current Docker deployment in staging.
+2. Finalize human review of imported data.
+3. Complete account, role, and permission decisions.
+4. Document database migration and rollback procedures.
+5. Select and test persistent storage.
+6. Select an off-VM backup destination.
+7. Define monitoring and alert ownership.
+8. Complete a final security review.
 
-Une fois ces points suffisamment avancés, reprendre ce document pour construire
-la couche K3s/Argo CD.
+Once these conditions are met, use this roadmap to build the K3s and Argo CD
+layer without changing the public API contract.

@@ -1,16 +1,14 @@
 # Storage
 
 `schema.sql` is the current PostgreSQL source of truth for the application data model.
-
-The first migration target is intentionally conservative:
-
-- keep `web/sample-data.js` and `data/imports/*.json` as the current runtime source;
-- store imported screenshots and parsed rows in PostgreSQL next;
-- move the dashboard reads to API-backed DB queries only after the import path is stable.
+When a database URL is configured, the dashboard and public API export their
+runtime data from PostgreSQL. `web/sample-data.js` is used only for the explicit
+local demonstration mode where no database URL is configured.
 
 Main tables:
 
-- `guild_members`, `member_names`: guild roster and name history;
+- `guild_members`, `member_names`: guild roster, searchable aliases stored in
+  `guild_members.metadata.searchAliases`, and name history;
 - `boss_definitions`: weekly boss rotation and UI metadata;
 - `capture_batches`, `screenshots`, `import_reports`: manual ADB/upload import traceability;
 - `guild_snapshots`, `member_metrics`: guild member metrics by capture;

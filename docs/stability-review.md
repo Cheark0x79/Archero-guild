@@ -1,70 +1,94 @@
-# Review stabilite applicative avant deploiement
+# Application stability review
 
-Date de review: 2026-07-20
+Last updated: 2026-07-28
 
-## Objectif
+## Objective
 
-Stabiliser l'application avant le deploiement: verifier le front, le back, la securite des flux de donnees, les risques de doublons, les erreurs d'import, et le suivi d'une synchronisation lancee depuis le front mais executee cote backend.
+Stabilize the dashboard, import workflow, public API, and PostgreSQL data path
+before deployment. The review focuses on data integrity, reload-safe import
+status, duplicate handling, API security, truthful availability reporting, and
+repeatable validation.
 
-## Notes
+## Current assessment
 
-| Surface | Avant | Apres | Commentaire |
+| Surface | Earlier score | Current score | Evidence |
 | --- | ---: | ---: | --- |
-| Front data/update | 6/10 | 8/10 | Le front retrouve maintenant le job serveur apres reload, poll toutes les 5s pendant une synchro, et affiche les doublons upload clairement. |
-| Backend import job | 6/10 | 8/10 | Un seul job actif, etat public nettoye, historique borne, snapshot persiste dans `data/import-jobs/state.json`. |
-| Integrite data locale | 6/10 | 8/10 | Tests anti-doublons roster, coherence latest snapshots/raw rows, ranks boss uniques. |
-| Securite API data | 5/10 | 7.5/10 | Headers d'action verifies, dates validees, logs/tracebacks retires des reponses publiques, upload PNG borne en taille. |
-| Visuel admin data | 6/10 | 7/10 | Le bloc synchro est plus clair, avec etats visuels `queued/running/succeeded/failed`; pas de refonte globale faite. |
-| Pret pour deploiement | 5/10 | 7.5/10 | Base plus stable, runtime Nix avec `psycopg`, mais il reste a valider contre une vraie DB disponible et a decider si une vraie queue persistante est necessaire. |
+| Dashboard data workflow | 6/10 | 8/10 | Reload-safe job snapshots, five-second polling, and explicit duplicate warnings |
+| Backend import job | 6/10 | 8/10 | Single active job, bounded history, redacted public state, and persisted snapshot |
+| Local data integrity | 6/10 | 8.5/10 | Roster, snapshot, boss-rank, and weekly-reset invariants are tested |
+| Public API integrity | 6/10 | 9/10 | Explicit provenance, no database/sample mixing, derived metrics, and PostgreSQL contract tests |
+| API and data security | 5/10 | 8.5/10 | Action headers, strict dates, fail-closed production auth, rate limiting, and bounded PNG decoding |
+| Deployment readiness | 5/10 | 8.5/10 | Production image, live HTTP contract, PostgreSQL 16 integration, and zero-vulnerability production audit |
 
-## Changements effectues
+## Implemented safeguards
 
-- Jobs d'import:
-  - status serveur consultable via `/api/data/import/status`;
-  - progression publique sans `stdout`, `stderr`, `stderrTail` ni stack trace;
-  - snapshot persiste best-effort dans `data/import-jobs/state.json`;
-  - jobs actifs restaures apres redemarrage marques comme interrompus, pour eviter de mentir au front.
+### Import jobs
 
-- Upload screenshots:
-  - validation signature PNG;
-  - limite de taille `15 MiB`;
-  - hash SHA-256;
-  - detection d'un doublon exact pour le meme type/date avant creation d'un nouveau fichier.
+- `/api/data/import/status` exposes sanitized server-side progress.
+- Public job objects never include raw `stdout`, `stderr`, or stack traces.
+- At most one import job is active.
+- Terminal history is bounded.
+- `data/import-jobs/state.json` stores a best-effort status snapshot.
+- Active jobs restored after a server restart are marked interrupted instead of
+  pretending to still run.
 
-- Import data:
-  - ecriture atomique des rapports JSON et de `web/sample-data.js`;
-  - correction d'une incoherence locale sur `119960803`;
-  - tests d'integrite sur les donnees sample.
+### Screenshot uploads
 
-- Front admin data:
-  - libelle `Synchronize data`;
-  - bouton `Refresh status`;
-  - polling toutes les 5s pendant un job actif;
-  - message explicite quand aucun job serveur n'est connu;
-  - upload doublon affiche comme warning.
+- PNG signature and full decode validation.
+- 15 MiB file limit and 12-million-pixel decode limit.
+- SHA-256 digest.
+- Exact duplicate detection for the same capture kind and date.
+- Path containment under `screenshots/raw`.
+- Recoverable discard workflow under `screenshots/trash`.
 
-## Points securite verifies
+### Data persistence
 
-- Les routes d'action refusent une requete sans `x-archero-dashboard-action: 1`.
-- Les dates d'import sont limitees au format `YYYY-MM-DD`.
-- Les screenshots servis restent sous `screenshots/raw`.
-- Les erreurs internes de l'export DB ne sont plus renvoyees au client.
-- Les logs process d'import ne sont pas exposes dans l'objet job public.
-- Les uploads non PNG ou trop gros sont rejetes avant ecriture.
-- Le runtime Nix de production inclut `psycopg` pour le mode PostgreSQL.
+- Atomic JSON report and local data writes.
+- PostgreSQL persistence safety checks prevent unexpectedly small OCR imports
+  from replacing larger existing datasets.
+- Database mode never fills empty domains with local sample values.
+- Rule updates use PostgreSQL when a database is configured.
+- Legacy `data/rules.json` values migrate once when `rule_settings` is empty.
+- Unknown metrics remain `null`.
 
-## Limites restantes
+### Public API
 
-- Le job continue si le navigateur reload ou quitte la page, tant que le serveur Next reste vivant.
-- Si le serveur Next redemarre pendant un import, le process enfant est considere perdu et le job restaure est marque `failed/interrupted`; une vraie queue worker serait necessaire pour reprendre automatiquement.
-- Le mode PostgreSQL complet doit encore etre valide contre une DB disponible avec donnees reelles ou staging.
-- Pas de capture visuelle automatisee produite dans cet environnement faute de navigateur headless disponible.
+- Stable `/api/v1` paths, methods, parameters, and existing response fields.
+- Additive `source`, `dataMode`, `partial`, and `missingDomains` metadata.
+- Database-derived member deltas, boss identity, previous names, and aliases.
+- Shared 15-second snapshot cache with single-flight exports.
+- Cache invalidation after imports and rule changes.
+- Production fails closed without `ARCHERO_API_KEYS`.
+- Configurable per-key rate limiting.
+- Canonical OpenAPI synchronized and checked by CI.
 
-## Commandes de verification
+## Verification
 
 ```bash
 python3 -B -m unittest discover -s tests
 npm --prefix web test
+npm --prefix web run openapi:check
 npm --prefix web run build
-nix flake check
 ```
+
+Isolated PostgreSQL:
+
+```bash
+bash scripts/test-env.sh test
+bash scripts/test-env.sh stop
+```
+
+See [`api-test-report.md`](api-test-report.md) for the latest counts and live
+HTTP compatibility results.
+
+## Remaining limitations
+
+- An import child process continues when the browser reloads, but a full Next.js
+  server restart cannot resume that process. A durable external worker queue
+  would be required for automatic process recovery.
+- API keys are configured through environment variables; there is no
+  administrative key creation or revocation interface.
+- The member history endpoint is not paginated.
+- Signed webhook notifications and API access audit logs are not implemented.
+- Production OCR still depends on platform-specific ADB and Tesseract access;
+  staging must validate those hardware and filesystem assumptions.

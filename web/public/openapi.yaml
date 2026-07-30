@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Archero Observer API
-  version: 1.0.0
-  description: API JSON en lecture seule destinée notamment aux bots Discord.
+  version: 1.1.0
+  description: Read-only API intended for Discord bots and other server-side integrations.
 servers:
   - url: /api/v1
 security:
@@ -11,112 +11,577 @@ security:
 paths:
   /health:
     get:
-      summary: Vérifier la disponibilité
+      operationId: getHealth
+      summary: Check API availability
       security: []
       responses:
-        "200": { description: API disponible }
+        "200":
+          description: API available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
   /guild:
     get:
-      summary: Obtenir le résumé de la guilde
+      operationId: getGuild
+      summary: Get the guild summary
       responses:
-        "200": { description: Résumé de guilde }
-        "401": { description: Clé API absente ou invalide }
+        "200":
+          description: Guild summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuildResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /rules:
     get:
-      summary: Obtenir les règles de guilde
+      operationId: getRules
+      summary: Get guild evaluation rules
       responses:
-        "200": { description: Règles publiques }
+        "200":
+          description: Public guild rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RulesResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /violations:
     get:
-      summary: Lister les membres qui ne respectent pas les règles
+      operationId: listViolations
+      summary: List members who do not meet guild rules
       parameters:
         - { name: severity, in: query, schema: { type: string, enum: [warning, danger] } }
         - { name: flag, in: query, schema: { type: string } }
       responses:
-        "200": { description: Résumé et membres concernés }
+        "200":
+          description: Violation summary and affected members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViolationsResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /rankings/members:
     get:
-      summary: Classer les membres selon une métrique
+      operationId: rankMembers
+      summary: Rank members by a metric
       parameters:
-        - { name: metric, in: query, schema: { type: string, enum: [power, contribution7d, powerDelta, contributionDelta, bossAttacks, activity] } }
+        - { name: metric, in: query, schema: { type: string, enum: [power, contribution7d, powerDelta, contributionDelta, bossAttacks, activity], default: power } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: desc } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
       responses:
-        "200": { description: Classement demandé }
+        "200":
+          description: Requested ranking
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberRankingResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /bosses:
     get:
-      summary: Lister les boss et leurs records
+      operationId: listBosses
+      summary: List bosses and their records
       responses:
-        "200": { description: Catalogue des boss }
+        "200":
+          description: Boss catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BossCatalogResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /boss-results:
     get:
-      summary: Lister les dégâts et rangs journaliers
+      operationId: listBossResults
+      summary: List daily boss damage and ranks
       parameters:
         - { name: date, in: query, schema: { type: string, format: date } }
         - { name: boss, in: query, schema: { type: string } }
         - { name: playerId, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
       responses:
-        "200": { description: Résultats regroupés par journée }
+        "200":
+          description: Results grouped by day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BossResultsResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /members:
     get:
-      summary: Rechercher et lister les membres
+      operationId: listMembers
+      summary: Search and list members
       parameters:
         - { name: q, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { type: string, enum: [active, former, all], default: active } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
         - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
-        "200": { description: Liste paginée }
-        "400": { description: Paramètre invalide }
-        "401": { description: Clé API absente ou invalide }
+        "200":
+          description: Paginated member list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /members/resolve:
     get:
-      summary: Résoudre un membre par ID, nom, alias ou faute légère
+      operationId: resolveMember
+      summary: Resolve a member by ID, name, alias, or typo
       parameters:
         - { name: q, in: query, required: true, schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 10, default: 5 } }
       responses:
-        "200": { description: Correspondance et suggestions }
-        "400": { description: Paramètre invalide }
+        "200":
+          description: Match and suggestions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberResolution"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /members/{playerId}:
     get:
-      summary: Obtenir un membre par Player ID
+      operationId: getMember
+      summary: Get a member by Player ID
       parameters:
-        - { name: playerId, in: path, required: true, schema: { type: string } }
+        - name: playerId
+          in: path
+          required: true
+          schema: { type: string }
       responses:
-        "200": { description: Membre trouvé }
-        "401": { description: Clé API absente ou invalide }
-        "404": { description: Membre introuvable }
+        "200":
+          description: Member found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: "#/components/schemas/Member" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /members/{playerId}/history:
     get:
-      summary: Obtenir l’historique d’un membre
+      operationId: getMemberHistory
+      summary: Get member metric history
       parameters:
         - { name: playerId, in: path, required: true, schema: { type: string } }
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, schema: { type: string, format: date } }
       responses:
-        "200": { description: Historique quotidien }
+        "200":
+          description: Daily member metric history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberHistoryResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /members/{playerId}/bosses:
     get:
-      summary: Obtenir les records boss d’un membre
+      operationId: getMemberBosses
+      summary: Get a member's boss records
       parameters:
         - { name: playerId, in: path, required: true, schema: { type: string } }
       responses:
-        "200": { description: Records, participations et rangs par boss }
-        "404": { description: Membre introuvable }
+        "200": { description: "Per-boss records, participation counts, and ranks" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /rankings/boss/{ranking}:
     get:
-      summary: Obtenir un classement boss
+      operationId: getBossRanking
+      summary: Get a boss ranking
       parameters:
-        - { name: ranking, in: path, required: true, schema: { type: string, enum: [all-time, weekly, by-boss] } }
+        - name: ranking
+          in: path
+          required: true
+          schema: { type: string, enum: [all-time, weekly, by-boss] }
         - { name: boss, in: query, schema: { type: string } }
         - { name: week, in: query, schema: { type: string, format: date } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
       responses:
-        "200": { description: Classement demandé }
-        "400": { description: Paramètre invalide }
-        "401": { description: Clé API absente ou invalide }
+        "200":
+          description: Requested boss ranking
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
     apiKey: { type: apiKey, in: header, name: X-API-Key }
+  responses:
+    BadRequest:
+      description: Invalid request parameter
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyRequests:
+      description: API rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServiceUnavailable:
+      description: API authentication is not configured in production
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Meta:
+      type: object
+      required: [apiVersion, generatedAt]
+      properties:
+        apiVersion: { type: string, const: v1 }
+        generatedAt: { type: string, format: date-time }
+        source: { type: string, enum: [database, local] }
+        dataMode: { type: string, enum: [live, demo, unavailable] }
+        partial: { type: boolean }
+        missingDomains:
+          type: array
+          items: { type: string }
+        warning: { type: string }
+        pagination:
+          type: object
+          properties:
+            limit: { type: integer }
+            offset: { type: integer }
+            total: { type: integer }
+            hasMore: { type: boolean }
+    Member:
+      type: object
+      required: [playerId, name, role, guildStatus, discordLinked, joinedAt, leftAt, lastSeenAt, metrics, evaluation, links]
+      properties:
+        playerId: { type: [string, "null"] }
+        name: { type: string }
+        role: { type: string }
+        guildStatus: { type: string }
+        discordLinked: { type: boolean }
+        joinedAt: { type: [string, "null"], format: date }
+        leftAt: { type: [string, "null"], format: date }
+        lastSeenAt: { type: [string, "null"] }
+        metrics: { $ref: "#/components/schemas/MemberMetrics" }
+        evaluation: { $ref: "#/components/schemas/MemberEvaluation" }
+        links:
+          oneOf:
+            - $ref: "#/components/schemas/MemberLinks"
+            - type: "null"
+    MemberMetrics:
+      type: object
+      required: [power, powerDelta, contribution7d, contributionDelta, bossAttacks, lastActivityDays, captured, verified]
+      properties:
+        power: { type: [integer, "null"] }
+        powerDelta: { type: [integer, "null"] }
+        contribution7d: { type: [integer, "null"] }
+        contributionDelta: { type: [integer, "null"] }
+        bossAttacks: { type: [integer, "null"] }
+        lastActivityDays: { type: [integer, "null"] }
+        captured: { type: boolean }
+        verified: { type: boolean }
+    MemberEvaluation:
+      type: object
+      required: [status, severity, flags]
+      properties:
+        status: { type: string }
+        severity: { type: string, enum: [positive, neutral, warning, danger] }
+        flags:
+          type: array
+          description: Extensible evaluation reasons; consumers must accept unknown values.
+          items: { type: string }
+    MemberLinks:
+      type: object
+      required: [api, web]
+      properties:
+        api: { type: string }
+        web: { type: string }
+    GuildSummary:
+      type: object
+      required: [members, currentMembers, formerMembers, activeToday, totalContribution, totalContributionDelta, bossDamage, bossAttacks, bossAttacksDelta, watchCount, knownIds, unresolvedIds, capturedMetrics, verifiedMetrics, reviewRequired, discordLinked, discordMissing, freeSlots, availability, lastCapturedAt, lastImportedAt]
+      properties:
+        members: { type: string, example: 38/40 }
+        currentMembers: { type: integer }
+        formerMembers: { type: integer }
+        activeToday: { type: integer }
+        totalContribution: { type: [number, "null"] }
+        totalContributionDelta: { type: [number, "null"] }
+        bossDamage: { type: [number, "null"] }
+        bossAttacks: { type: [number, "null"] }
+        bossAttacksDelta: { type: [number, "null"] }
+        watchCount: { type: integer }
+        knownIds: { type: integer }
+        unresolvedIds: { type: integer }
+        capturedMetrics: { type: integer }
+        verifiedMetrics: { type: integer }
+        reviewRequired: { type: integer }
+        discordLinked: { type: integer }
+        discordMissing: { type: integer }
+        freeSlots: { type: [integer, "null"] }
+        availability: { $ref: "#/components/schemas/SummaryAvailability" }
+        lastCapturedAt: { type: [string, "null"], format: date-time }
+        lastImportedAt: { type: [string, "null"], format: date-time }
+    SummaryAvailability:
+      type: object
+      required: [totalContribution, totalContributionDelta, bossDamage, bossAttacks, bossAttacksDelta]
+      properties:
+        totalContribution: { type: integer }
+        totalContributionDelta: { type: integer }
+        bossDamage: { type: integer }
+        bossAttacks: { type: integer }
+        bossAttacksDelta: { type: integer }
+    GuildRules:
+      type: object
+      required: [maxInactiveDays, minContribution7d, minPowerGrowth14dPercent, minBossTries, newMemberGraceDays, memberCapacity]
+      properties:
+        maxInactiveDays: { type: [number, "null"] }
+        minContribution7d: { type: [number, "null"] }
+        minPowerGrowth14dPercent: { type: [number, "null"] }
+        minBossTries: { type: [number, "null"] }
+        newMemberGraceDays: { type: [number, "null"] }
+        memberCapacity: { type: [number, "null"] }
+    ViolationSummary:
+      type: object
+      required: [total, warning, danger, byFlag]
+      properties:
+        total: { type: integer }
+        warning: { type: integer }
+        danger: { type: integer }
+        byFlag:
+          type: object
+          additionalProperties: { type: integer }
+    MemberRankingRow:
+      type: object
+      required: [rank, playerId, name, role, value, lastSeenAt, links]
+      properties:
+        rank: { type: integer }
+        playerId: { type: [string, "null"] }
+        name: { type: string }
+        role: { type: string }
+        value: { type: number }
+        belowMinimum: { type: boolean }
+        lastSeenAt: { type: [string, "null"] }
+        links:
+          oneOf:
+            - $ref: "#/components/schemas/MemberLinks"
+            - type: "null"
+    BossDefinition:
+      type: object
+      required: [key, weekday, dayLabel, name]
+      properties:
+        key: { type: string }
+        weekday: { type: [integer, "null"], minimum: 0, maximum: 6 }
+        dayLabel: { type: [string, "null"] }
+        name: { type: string }
+        imagePath: { type: [string, "null"] }
+        atk: { type: integer }
+        def: { type: integer }
+        spd: { type: integer }
+        sortOrder: { type: integer }
+    BossCatalogEntry:
+      allOf:
+        - $ref: "#/components/schemas/BossDefinition"
+        - type: object
+          required: [recordedPlayers, bestDamage, recordHolder]
+          properties:
+            recordedPlayers: { type: integer }
+            bestDamage: { type: [integer, "null"] }
+            recordHolder:
+              oneOf:
+                - type: object
+                  required: [playerId, name]
+                  properties:
+                    playerId: { type: [string, "null"] }
+                    name: { type: string }
+                - type: "null"
+    BossResult:
+      type: object
+      required: [rank, playerId, name, damage, damageText]
+      properties:
+        rank: { type: [integer, "null"] }
+        playerId: { type: [string, "null"] }
+        name: { type: [string, "null"] }
+        damage: { type: integer }
+        damageText: { type: [string, "null"] }
+    BossDay:
+      type: object
+      required: [date, boss, rows]
+      properties:
+        date: { type: string, format: date }
+        boss: { $ref: "#/components/schemas/BossDefinition" }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/BossResult" }
+    MemberHistoryPoint:
+      type: object
+      required: [date, power, contribution7d, bossAttacks, lastActivityDays]
+      properties:
+        date: { type: string, format: date }
+        power: { type: [integer, "null"] }
+        contribution7d: { type: [integer, "null"] }
+        bossAttacks: { type: [integer, "null"] }
+        lastActivityDays: { type: [integer, "null"] }
+    GuildResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/GuildSummary" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    RulesResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: "#/components/schemas/GuildRules" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    ViolationsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [summary, members]
+          properties:
+            summary: { $ref: "#/components/schemas/ViolationSummary" }
+            members:
+              type: array
+              items: { $ref: "#/components/schemas/Member" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    MemberRankingResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [metric, rows]
+          properties:
+            metric: { type: string, enum: [power, contribution7d, powerDelta, contributionDelta, bossAttacks, activity] }
+            rows:
+              type: array
+              items: { $ref: "#/components/schemas/MemberRankingRow" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    BossCatalogResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/BossCatalogEntry" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    BossResultsResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/BossDay" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    MemberHistoryResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [playerId, name, items]
+          properties:
+            playerId: { type: string }
+            name: { type: string }
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/MemberHistoryPoint" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    MemberList:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Member" } }
+        meta: { $ref: "#/components/schemas/Meta" }
+    MemberMatch:
+      type: object
+      required: [playerId, name, confidence, matchedBy, webUrl]
+      properties:
+        playerId: { type: string }
+        name: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        matchedBy:
+          type: string
+          enum: [playerId, name, discordName, previousName, alias]
+        webUrl: { type: string }
+    MemberResolution:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [query, match, suggestions]
+          properties:
+            query: { type: string }
+            match:
+              oneOf:
+                - $ref: "#/components/schemas/MemberMatch"
+                - type: "null"
+            suggestions:
+              type: array
+              items: { $ref: "#/components/schemas/MemberMatch" }
+        meta: { $ref: "#/components/schemas/Meta" }
+    Success:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {}
+        meta: { $ref: "#/components/schemas/Meta" }
+    Error:
+      type: object
+      required: [error, meta]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        meta: { $ref: "#/components/schemas/Meta" }

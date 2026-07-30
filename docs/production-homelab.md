@@ -23,9 +23,10 @@ chmod 600 .env.production
 mkdir -p data screenshots/raw screenshots/trash backups
 ```
 
-Generate five independent secrets:
+Generate six independent secrets:
 
 ```bash
+openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
@@ -36,8 +37,8 @@ openssl rand -hex 32
 Put them in `POSTGRES_PASSWORD`, `ARCHERO_USER_PASSWORD`,
 `ARCHERO_USER_SESSION_TOKEN`, `ARCHERO_ADMIN_PASSWORD`,
 `ARCHERO_ADMIN_SESSION_TOKEN`, and `ARCHERO_API_KEYS`. Keep different values
-for both dashboard accounts and
-both session tokens. Usernames default to `viewer` and `admin` and can be
+for both dashboard accounts, both session tokens, the database, and the public
+API. Usernames default to `viewer` and `admin` and can be
 changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
 Do not reuse a password or commit `.env.production`.
 
@@ -116,11 +117,13 @@ and test `/login`, `/dashboard`, `/admin/check`, and `/admin/data`.
 The following data survives container replacement:
 
 - PostgreSQL: named volume `postgres-data`
-- Reviews, rules, imports, and exports: host directory `./data`
+- Reviews, import job state, imports, and exports: host directory `./data`
 - Raw and discarded screenshots: host directory `./screenshots`
 
 The PostgreSQL schema in `observer/storage/schema.sql` is initialized only when
-the database volume is first created.
+the database volume is first created. In database mode, guild rules are stored
+in PostgreSQL `rule_settings`; a valid legacy `data/rules.json` is migrated when
+that table is empty.
 
 ## Backups
 
@@ -175,11 +178,15 @@ make pause-tunnel
 make resume-tunnel
 ```
 
-Every application page and API requires a valid account. The standard account
-can access Dashboard, Members, Boss, Records, Activity, and their read APIs.
-The administrator can additionally access `/admin/*` and `/api/data/*`.
-Only `/login`, authentication endpoints, and `/api/health` are reachable
-without a valid session.
+Dashboard pages and internal APIs require a valid application session. The
+standard account can access Dashboard, Members, Boss, Records, Activity, and
+their internal read APIs. The administrator can additionally access
+`/admin/*` and `/api/data/*`. `/login`, authentication endpoints, and
+`/api/health` are reachable without a dashboard session.
+
+The versioned integration API under `/api/v1` uses `ARCHERO_API_KEYS` instead
+of dashboard cookies. Only `/api/v1/health` is public. Configure clients
+according to [`api.md`](api.md).
 
 After adding the new user variables to an existing `.env.production`, run
 `make release`. Existing sessions are invalidated because the cookie name

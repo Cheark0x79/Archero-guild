@@ -6,6 +6,9 @@ export async function GET() {
   return NextResponse.json({
     ok: payload.ok,
     source: payload.source,
+    dataMode: payload.dataMode,
+    partial: payload.partial,
+    missingDomains: payload.missingDomains,
     warning: payload.warning,
     data: bossRankingsFromData(payload.data).weekly,
   });

@@ -28,6 +28,8 @@ jobs:
           python-version: "3.12"
       - run: pip install pillow pytesseract "psycopg[binary]"
       - run: python -m unittest discover -s tests
+        env:
+          ARCHERO_INTEGRATION_DATABASE_URL: postgresql://archero:archero_dev_password@127.0.0.1:55440/archero_observer
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -35,6 +37,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - working-directory: web
         run: npm ci
+      - working-directory: web
+        run: npm run docs:check
       - working-directory: web
         run: npm test
       - working-directory: web

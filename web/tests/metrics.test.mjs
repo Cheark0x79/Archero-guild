@@ -182,10 +182,17 @@ test("buildSummary aggregates guild metrics", () => {
   assert.equal(summary.formerMembers, 1);
   assert.equal(summary.activeToday, 1);
   assert.equal(summary.totalContribution, 800);
-  assert.equal(summary.totalContributionDelta, 0);
+  assert.equal(summary.totalContributionDelta, null);
   assert.equal(summary.bossDamage, 100);
   assert.equal(summary.bossAttacks, 2);
-  assert.equal(summary.bossAttacksDelta, 0);
+  assert.equal(summary.bossAttacksDelta, null);
+  assert.deepEqual(summary.availability, {
+    totalContribution: 1,
+    totalContributionDelta: 0,
+    bossDamage: 1,
+    bossAttacks: 1,
+    bossAttacksDelta: 0,
+  });
   assert.equal(summary.watchCount, 0);
   assert.equal(summary.knownIds, 1);
   assert.equal(summary.unresolvedIds, 0);
