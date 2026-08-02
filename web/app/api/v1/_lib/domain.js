@@ -2,6 +2,7 @@ import { buildSummary, evaluateMember, mergeRosterMetrics } from "../../../../me
 import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboard-data/source.js";
 import { evaluateWarningHistory, warningHistoryEvents, warningHistorySummary } from "../../../../warning-history.js";
 import { warningActionKey } from "../../../../lib/warning-actions.js";
+import { createMemberShareToken } from "../../../../lib/share-links.js";
 import { utcTimestamp } from "./metadata.js";
 import { absolutePublicUrl } from "./urls.js";
 
@@ -45,7 +46,7 @@ export function publicMember(member, rules, publicOrigin = "") {
     links: member.playerId
       ? {
           api: absolutePublicUrl(`/api/v1/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
-          web: absolutePublicUrl(`/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
+          web: sharedMemberWebUrl(member.playerId, publicOrigin),
         }
       : null,
   };
@@ -676,8 +677,16 @@ function publicMatch(member, confidence, matchedBy, publicOrigin) {
     name: member.name,
     confidence: Math.round(confidence * 100) / 100,
     matchedBy,
-    webUrl: absolutePublicUrl(`/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
+    webUrl: sharedMemberWebUrl(member.playerId, publicOrigin),
   };
+}
+
+function sharedMemberWebUrl(playerId, publicOrigin) {
+  const token = createMemberShareToken(playerId, { expiresInHours: 12 });
+  return absolutePublicUrl(
+    `/shared/members/${encodeURIComponent(playerId)}?token=${encodeURIComponent(token)}`,
+    publicOrigin,
+  );
 }
 
 function normalizeCompact(value) {

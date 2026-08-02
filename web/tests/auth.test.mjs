@@ -48,6 +48,10 @@ test("only login, authentication assets, and health are public", () => {
   assert.equal(isPublicPath("/api/health"), true);
   assert.equal(isPublicPath("/api/v1/health"), true);
   assert.equal(isPublicPath("/api/v1/members"), true);
+  assert.equal(isPublicPath("/shared/access"), true);
+  assert.equal(isPublicPath("/shared/expired"), true);
+  assert.equal(isPublicPath("/shared/members/119982936"), true);
+  assert.equal(isPublicPath("/bosses/flame-demon.png"), true);
   assert.equal(isPublicPath("/_next/static/app.js"), true);
   assert.equal(isPublicPath("/dashboard"), false);
   assert.equal(isPublicPath("/api/members"), false);

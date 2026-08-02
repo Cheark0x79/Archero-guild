@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+process.env.ARCHERO_SHARE_LINK_SECRET ??= "public-api-test-share-secret-longer-than-thirty-two-bytes";
+
 import { authorizeApiRequest } from "../app/api/v1/_lib/auth.js";
 import { apiLastImportDate, utcTimestamp } from "../app/api/v1/_lib/metadata.js";
+import { verifyMemberShareToken } from "../lib/share-links.js";
 import {
   bossCatalogFromData,
   bossDaysFromData,
@@ -103,10 +106,12 @@ test("public members exclude private notes and support search and pagination", (
   assert.equal(members[0].name, "Alice");
   assert.equal(members[0].metrics.power, 900000);
   assert.equal("officerNote" in members[0], false);
-  assert.deepEqual(members[0].links, {
-    api: "https://archero.example.com/api/v1/members/123",
-    web: "https://archero.example.com/members/123",
-  });
+  assert.equal(members[0].links.api, "https://archero.example.com/api/v1/members/123");
+  assert.match(members[0].links.web, /^https:\/\/archero\.example\.com\/shared\/members\/123\?token=.+/);
+  const shareToken = new URL(members[0].links.web).searchParams.get("token");
+  const shareGrant = verifyMemberShareToken(shareToken);
+  assert.equal(shareGrant.playerId, "123");
+  assert.equal((shareGrant.expiresAt.getTime() - shareGrant.issuedAt.getTime()) / 3_600_000, 12);
 
   const result = queryMembers(members, new URLSearchParams({ q: "ali", limit: "1" }));
   assert.deepEqual(result.items.map((member) => member.playerId), ["123"]);
@@ -224,18 +229,17 @@ test("member rankings support power, contribution, attacks, deltas, and activity
   const result = memberRankingsFromData(data, new URLSearchParams({ metric: "power", limit: "5" }));
   assert.equal(result.metric, "power");
   assert.equal(result.order, "desc");
-  assert.deepEqual(result.items[0], {
+  assert.deepEqual({ ...result.items[0], links: undefined }, {
     rank: 1,
     playerId: "123",
     name: "Alice",
     role: "officer",
     value: 900000,
     lastSeenAt: "2026-07-22",
-    links: {
-      api: "/api/v1/members/123",
-      web: "/members/123",
-    },
+    links: undefined,
   });
+  assert.equal(result.items[0].links.api, "/api/v1/members/123");
+  assert.match(result.items[0].links.web, /^\/shared\/members\/123\?token=.+/);
   assert.equal(memberRankingsFromData(data, new URLSearchParams({ metric: "unknown" })).error.code, "invalid_metric");
 });
 
@@ -283,9 +287,9 @@ test("member resolver accepts IDs, normalized names, aliases, and typos", () => 
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "chef" })).match.matchedBy, "alias");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "old mundo" })).match.matchedBy, "previousName");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mndo" })).match.playerId, "123");
-  assert.equal(
+  assert.match(
     resolveMemberFromData(resolverData, new URLSearchParams({ q: "123" }), "https://archero.example.com").match.webUrl,
-    "https://archero.example.com/members/123",
+    /^https:\/\/archero\.example\.com\/shared\/members\/123\?token=.+/,
   );
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams()).error.code, "missing_query");
 });

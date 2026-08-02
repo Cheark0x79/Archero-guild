@@ -24,7 +24,13 @@ export function middleware(request) {
     if (pathname === "/login" && authenticated) {
       return NextResponse.redirect(applicationUrl("/dashboard", request.url));
     }
-    return NextResponse.next();
+    const response = NextResponse.next();
+    if (pathname.startsWith("/shared/")) {
+      response.headers.set("Cache-Control", "no-store");
+      response.headers.set("Referrer-Policy", "no-referrer");
+      response.headers.set("X-Robots-Tag", "noindex, nofollow");
+    }
+    return response;
   }
 
   if (authenticated && isAdminPath(pathname) && role !== ADMIN_ROLE) {

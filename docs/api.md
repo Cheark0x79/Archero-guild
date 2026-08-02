@@ -60,8 +60,10 @@ ARCHERO_PUBLIC_ORIGIN=https://archero.example.com
 
 Local development uses `http://localhost:5181`. Member `links.api`,
 `links.web`, and resolver `webUrl` values are returned as absolute URLs built
-from this origin. Changing the domain therefore requires only an environment
-update and no bot code change.
+from this origin. `links.api` is permanent. `links.web` and resolver `webUrl`
+are signed, read-only member links that can be opened repeatedly for 12 hours.
+The bot can therefore send the URL from its existing member response without a
+second API call. Changing the domain requires only an environment update.
 
 ## Endpoint reference
 
