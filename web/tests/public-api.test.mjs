@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { authorizeApiRequest } from "../app/api/v1/_lib/auth.js";
+import { apiLastImportDate } from "../app/api/v1/_lib/metadata.js";
 import {
   bossCatalogFromData,
   bossDaysFromData,
@@ -58,6 +59,23 @@ const data = {
     newMemberGraceDays: 7,
   },
 };
+
+test("API metadata reports the latest imported game day", () => {
+  const importedData = {
+    ...data,
+    dailyRawSnapshots: [{ date: "2026-07-21", rows: [] }, { date: "2026-07-22", rows: [] }],
+    captures: { lastImportedAt: "2026-07-23T00:05:00+02:00" },
+  };
+  assert.equal(
+    apiLastImportDate({ data: importedData }),
+    "2026-07-22",
+  );
+  assert.equal(
+    apiLastImportDate({ data: { captures: { lastImportedAt: "2026-07-22T10:05:00Z" } } }),
+    "2026-07-22",
+  );
+  assert.equal(apiLastImportDate({}), null);
+});
 
 test("API authentication accepts bearer and x-api-key credentials", () => {
   assert.equal(authorizeApiRequest(requestWith(), "").authorized, true);

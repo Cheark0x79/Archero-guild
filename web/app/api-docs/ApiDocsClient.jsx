@@ -330,7 +330,12 @@ function codeExample(item, mode, apiBaseUrl) {
   if (mode === "response") {
     return JSON.stringify({
       data: item.response,
-      meta: { apiVersion: "v1", generatedAt: "2026-07-26T12:00:00.000Z", source: "database" },
+      meta: {
+        apiVersion: "v1",
+        generatedAt: "2026-07-26T12:00:00.000Z",
+        lastImportDate: "2026-07-25",
+        source: "database",
+      },
     }, null, 2);
   }
 

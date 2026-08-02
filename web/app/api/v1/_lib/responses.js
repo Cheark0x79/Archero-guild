@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeApiRequest } from "./auth.js";
+import { apiLastImportDate } from "./metadata.js";
 import { checkApiRateLimit } from "./rate-limit.js";
 
 export function requireApiKey(request) {
@@ -42,6 +43,7 @@ export function apiSuccess(data, options = {}) {
       meta: {
         apiVersion: "v1",
         generatedAt: new Date().toISOString(),
+        lastImportDate: apiLastImportDate(options),
         ...(options.source ? { source: options.source } : {}),
         ...(options.dataMode ? { dataMode: options.dataMode } : {}),
         ...(typeof options.partial === "boolean" ? { partial: options.partial } : {}),
@@ -58,7 +60,11 @@ export function apiError(status, code, message, headers = {}) {
   return NextResponse.json(
     {
       error: { code, message },
-      meta: { apiVersion: "v1", generatedAt: new Date().toISOString() },
+      meta: {
+        apiVersion: "v1",
+        generatedAt: new Date().toISOString(),
+        lastImportDate: null,
+      },
     },
     { status, headers: { "Cache-Control": "no-store", ...headers } },
   );
