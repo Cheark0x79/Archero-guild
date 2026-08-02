@@ -50,6 +50,19 @@ configured.
 
 Keys must remain server-side and must only be transmitted over HTTPS.
 
+## Public URLs
+
+Configure the browser-facing origin in every environment:
+
+```env
+ARCHERO_PUBLIC_ORIGIN=https://archero.example.com
+```
+
+Local development uses `http://localhost:5181`. Member `links.api`,
+`links.web`, and resolver `webUrl` values are returned as absolute URLs built
+from this origin. Changing the domain therefore requires only an environment
+update and no bot code change.
+
 ## Endpoint reference
 
 | Method and path | Parameters | Purpose |

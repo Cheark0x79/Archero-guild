@@ -85,7 +85,7 @@ Returned by member list and detail endpoints.
 | `lastSeenAt` | date or timestamp | Yes | Date of the latest member metrics |
 | `metrics` | object | No | Latest public measurements |
 | `evaluation` | object | No | Rule-based status, severity, and flags |
-| `links` | object | Yes | Stable API and dashboard links when `playerId` exists |
+| `links` | object | Yes | Absolute API and dashboard URLs when `playerId` exists |
 
 Private fields such as officer notes, absence reasons, raw OCR payloads, and
 Discord names are not included.
@@ -135,7 +135,7 @@ flag catalog.
 | `name` | string | Current member name |
 | `confidence` | number from 0 to 1 | Match confidence |
 | `matchedBy` | string | `playerId`, `name`, `discordName`, `previousName`, or `alias` |
-| `webUrl` | string | Relative member page URL |
+| `webUrl` | string | Absolute member page URL generated from `ARCHERO_PUBLIC_ORIGIN` |
 
 Previous names come from `member_names`. Search aliases come from
 `guild_members.metadata.searchAliases`; the legacy metadata key `aliases` is

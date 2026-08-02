@@ -31,3 +31,18 @@ test("every data-backed public API route propagates source provenance", async ()
     assert.match(source, /apiSuccess\([\s\S]*payload/, `${path.relative(apiRoot, file)} must pass provenance to apiSuccess`);
   }
 });
+
+test("every public API route returning member links supplies the public origin", async () => {
+  const linkedRoutes = [
+    path.join(apiRoot, "members", "route.js"),
+    path.join(apiRoot, "members", "resolve", "route.js"),
+    path.join(apiRoot, "members", "[playerId]", "route.js"),
+    path.join(apiRoot, "members", "[playerId]", "bosses", "route.js"),
+    path.join(apiRoot, "rankings", "members", "route.js"),
+  ];
+
+  for (const file of linkedRoutes) {
+    const source = await fs.readFile(file, "utf8");
+    assert.match(source, /publicApiOrigin\(request\)/, `${path.relative(apiRoot, file)} must use the configured public origin`);
+  }
+});

@@ -10,6 +10,7 @@ import {
   roleForSessionToken,
   USER_ROLE,
 } from "../lib/auth.js";
+import { absolutePublicUrl, publicApiOrigin } from "../app/api/v1/_lib/urls.js";
 
 test("public application origin overrides an internal proxy URL", () => {
   const environment = { ARCHERO_PUBLIC_ORIGIN: "https://archero.example.com" };
@@ -23,6 +24,19 @@ test("application URLs fall back to the request origin in local development", ()
   assert.equal(
     applicationUrl("/dashboard", "http://127.0.0.1:5181/login", {}).href,
     "http://127.0.0.1:5181/dashboard",
+  );
+});
+
+test("public API links use the configured origin with a request-origin fallback", () => {
+  const request = { url: "http://127.0.0.1:5181/api/v1/members/123" };
+  assert.equal(
+    publicApiOrigin(request, { ARCHERO_PUBLIC_ORIGIN: "https://archero.example.com" }),
+    "https://archero.example.com",
+  );
+  assert.equal(publicApiOrigin(request, {}), "http://127.0.0.1:5181");
+  assert.equal(
+    absolutePublicUrl("/members/123", "https://archero.example.com"),
+    "https://archero.example.com/members/123",
   );
 });
 

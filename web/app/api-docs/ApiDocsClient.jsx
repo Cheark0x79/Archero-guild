@@ -41,7 +41,7 @@ const endpoints = [
     limit: "[optional query] 1–10 suggestions · default: 5",
   }, {
     query: "ExampleChamp",
-    match: { playerId: "100000002", name: "ExampleChampion", confidence: 0.94, matchedBy: "name", webUrl: "/members/100000002" },
+    match: { playerId: "100000002", name: "ExampleChampion", confidence: 0.94, matchedBy: "name", webUrl: "https://archero.example.com/members/100000002" },
     suggestions: [],
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}", "Member profile", "Public profile and current metrics for a member.", true, {

@@ -99,10 +99,14 @@ test("API authentication fails closed when production has no configured key", ()
 });
 
 test("public members exclude private notes and support search and pagination", () => {
-  const members = membersFromData(data);
+  const members = membersFromData(data, "https://archero.example.com");
   assert.equal(members[0].name, "Alice");
   assert.equal(members[0].metrics.power, 900000);
   assert.equal("officerNote" in members[0], false);
+  assert.deepEqual(members[0].links, {
+    api: "https://archero.example.com/api/v1/members/123",
+    web: "https://archero.example.com/members/123",
+  });
 
   const result = queryMembers(members, new URLSearchParams({ q: "ali", limit: "1" }));
   assert.deepEqual(result.items.map((member) => member.playerId), ["123"]);
@@ -279,6 +283,10 @@ test("member resolver accepts IDs, normalized names, aliases, and typos", () => 
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "chef" })).match.matchedBy, "alias");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "old mundo" })).match.matchedBy, "previousName");
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mndo" })).match.playerId, "123");
+  assert.equal(
+    resolveMemberFromData(resolverData, new URLSearchParams({ q: "123" }), "https://archero.example.com").match.webUrl,
+    "https://archero.example.com/members/123",
+  );
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams()).error.code, "missing_query");
 });
 

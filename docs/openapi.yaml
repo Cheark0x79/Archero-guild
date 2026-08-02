@@ -412,8 +412,8 @@ components:
       type: object
       required: [api, web]
       properties:
-        api: { type: string }
-        web: { type: string }
+        api: { type: string, format: uri, description: Absolute API URL generated from the configured public origin. }
+        web: { type: string, format: uri, description: Absolute member profile URL generated from the configured public origin. }
     GuildSummary:
       type: object
       required: [members, currentMembers, formerMembers, activeToday, totalContribution, totalContributionDelta, bossDamage, bossAttacks, bossAttacksDelta, watchCount, knownIds, unresolvedIds, capturedMetrics, verifiedMetrics, reviewRequired, discordLinked, discordMissing, freeSlots, availability, lastCapturedAt, lastImportedAt]
@@ -771,7 +771,7 @@ components:
         matchedBy:
           type: string
           enum: [playerId, name, discordName, previousName, alias]
-        webUrl: { type: string }
+        webUrl: { type: string, format: uri, description: Absolute member profile URL generated from the configured public origin. }
     MemberResolution:
       type: object
       required: [data, meta]

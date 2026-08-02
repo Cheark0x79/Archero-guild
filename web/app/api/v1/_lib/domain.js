@@ -3,6 +3,7 @@ import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboar
 import { evaluateWarningHistory, warningHistoryEvents, warningHistorySummary } from "../../../../warning-history.js";
 import { warningActionKey } from "../../../../lib/warning-actions.js";
 import { utcTimestamp } from "./metadata.js";
+import { absolutePublicUrl } from "./urls.js";
 
 const FORMER_STATUSES = new Set(["inactive", "left", "kicked"]);
 const ALLOWED_MEMBER_STATUSES = new Set(["active", "former", "all"]);
@@ -10,11 +11,12 @@ const RANKING_METRICS = new Set(["power", "contribution7d", "powerDelta", "contr
 const WARNING_TYPES = new Set(["game_absence", "low_contribution", "low_progression", "missed_boss"]);
 const WARNING_RULE_KEYS = ["maxInactiveDays", "minContribution7d", "minPowerGrowth14dPercent", "minBossTries"];
 
-export function membersFromData(data) {
-  return mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? []).map((member) => publicMember(member, data.rules ?? {}));
+export function membersFromData(data, publicOrigin = "") {
+  return mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? [])
+    .map((member) => publicMember(member, data.rules ?? {}, publicOrigin));
 }
 
-export function publicMember(member, rules) {
+export function publicMember(member, rules, publicOrigin = "") {
   const evaluation = evaluateMember(member, rules);
   return {
     playerId: member.playerId,
@@ -42,14 +44,14 @@ export function publicMember(member, rules) {
     },
     links: member.playerId
       ? {
-          api: `/api/v1/members/${encodeURIComponent(member.playerId)}`,
-          web: `/members/${encodeURIComponent(member.playerId)}`,
+          api: absolutePublicUrl(`/api/v1/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
+          web: absolutePublicUrl(`/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
         }
       : null,
   };
 }
 
-export function resolveMemberFromData(data, searchParams) {
+export function resolveMemberFromData(data, searchParams, publicOrigin = "") {
   const query = searchParams.get("q")?.trim();
   const limit = integerParameter(searchParams.get("limit"), 5, 1, 10);
   if (!query) return { error: { code: "missing_query", message: "q is required." } };
@@ -58,7 +60,7 @@ export function resolveMemberFromData(data, searchParams) {
   const normalizedQuery = normalizeCompact(query);
   const candidates = mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? [])
     .filter((member) => member.playerId && !FORMER_STATUSES.has(member.status))
-    .map((member) => bestMemberMatch(member, query, normalizedQuery))
+    .map((member) => bestMemberMatch(member, query, normalizedQuery, publicOrigin))
     .filter((match) => match.confidence >= 0.5)
     .sort((left, right) => right.confidence - left.confidence || left.name.localeCompare(right.name))
     .slice(0, limit);
@@ -251,7 +253,7 @@ export function memberWarningsFromData(data, playerId, searchParams) {
   };
 }
 
-export function memberRankingsFromData(data, searchParams) {
+export function memberRankingsFromData(data, searchParams, publicOrigin = "") {
   const metric = searchParams.get("metric") ?? "power";
   const order = searchParams.get("order") ?? (metric === "activity" ? "asc" : "desc");
   const limit = integerParameter(searchParams.get("limit"), 10, 1, 100);
@@ -262,7 +264,7 @@ export function memberRankingsFromData(data, searchParams) {
     return { error: { code: "invalid_order", message: "order must be asc or desc." } };
   }
   if (limit === null) return { error: { code: "invalid_limit", message: "limit must be an integer between 1 and 100." } };
-  const rankedMembers = membersFromData(data)
+  const rankedMembers = membersFromData(data, publicOrigin)
     .filter((member) => !FORMER_STATUSES.has(member.guildStatus) && member.metrics.verified)
     .map((member) => ({ ...member, value: rankingValue(member, metric) }))
     .filter((member) => typeof member.value === "number")
@@ -533,8 +535,8 @@ export function bossCatalogFromData(data) {
   }));
 }
 
-export function memberBossesFromData(data, playerId) {
-  const member = membersFromData(data).find((item) => item.playerId === playerId);
+export function memberBossesFromData(data, playerId, publicOrigin = "") {
+  const member = membersFromData(data, publicOrigin).find((item) => item.playerId === playerId);
   if (!member) return null;
 
   const rankings = bossRankingsFromData(data);
@@ -648,33 +650,33 @@ function rankingPosition(index, total, metric, order) {
   return index + 1;
 }
 
-function bestMemberMatch(member, rawQuery, normalizedQuery) {
-  if (member.playerId === rawQuery) return publicMatch(member, 1, "playerId");
+function bestMemberMatch(member, rawQuery, normalizedQuery, publicOrigin) {
+  if (member.playerId === rawQuery) return publicMatch(member, 1, "playerId", publicOrigin);
   const values = [
     ["name", member.name],
     ["discordName", member.discordName],
     ...((member.previousNames ?? []).map((value) => ["previousName", value])),
     ...((member.searchAliases ?? []).map((value) => ["alias", value])),
   ].filter(([, value]) => value);
-  let best = publicMatch(member, 0, "name");
+  let best = publicMatch(member, 0, "name", publicOrigin);
   for (const [matchedBy, value] of values) {
     const normalizedValue = normalizeCompact(value);
     let confidence = stringSimilarity(normalizedQuery, normalizedValue);
     if (normalizedValue === normalizedQuery) confidence = 1;
     else if (normalizedValue.startsWith(normalizedQuery) || normalizedQuery.startsWith(normalizedValue)) confidence = Math.max(confidence, 0.9);
     else if (normalizedValue.includes(normalizedQuery) || normalizedQuery.includes(normalizedValue)) confidence = Math.max(confidence, 0.8);
-    if (confidence > best.confidence) best = publicMatch(member, confidence, matchedBy);
+    if (confidence > best.confidence) best = publicMatch(member, confidence, matchedBy, publicOrigin);
   }
   return best;
 }
 
-function publicMatch(member, confidence, matchedBy) {
+function publicMatch(member, confidence, matchedBy, publicOrigin) {
   return {
     playerId: member.playerId,
     name: member.name,
     confidence: Math.round(confidence * 100) / 100,
     matchedBy,
-    webUrl: `/members/${encodeURIComponent(member.playerId)}`,
+    webUrl: absolutePublicUrl(`/members/${encodeURIComponent(member.playerId)}`, publicOrigin),
   };
 }
 
