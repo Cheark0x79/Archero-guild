@@ -333,7 +333,7 @@ function codeExample(item, mode, apiBaseUrl) {
       meta: {
         apiVersion: "v1",
         generatedAt: "2026-07-26T12:00:00.000Z",
-        lastImportDate: "2026-07-25",
+        lastImportDate: "2026-07-26T00:00:00.000Z",
         source: "database",
       },
     }, null, 2);

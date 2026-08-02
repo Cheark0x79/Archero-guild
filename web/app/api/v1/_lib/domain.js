@@ -2,6 +2,7 @@ import { buildSummary, evaluateMember, mergeRosterMetrics } from "../../../../me
 import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboard-data/source.js";
 import { evaluateWarningHistory, warningHistoryEvents, warningHistorySummary } from "../../../../warning-history.js";
 import { warningActionKey } from "../../../../lib/warning-actions.js";
+import { utcTimestamp } from "./metadata.js";
 
 const FORMER_STATUSES = new Set(["inactive", "left", "kicked"]);
 const ALLOWED_MEMBER_STATUSES = new Set(["active", "former", "all"]);
@@ -78,8 +79,8 @@ export function guildSummaryFromData(data) {
   const members = mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? []);
   return {
     ...buildSummary(members, data.rules ?? {}),
-    lastCapturedAt: data.captures?.lastCapturedAt ?? null,
-    lastImportedAt: data.captures?.lastImportedAt ?? null,
+    lastCapturedAt: utcTimestamp(data.captures?.lastCapturedAt),
+    lastImportedAt: utcTimestamp(data.captures?.lastImportedAt),
   };
 }
 
@@ -448,7 +449,8 @@ function compactWarningMember(member) {
 }
 
 function warningAction(data, playerId, event) {
-  return data.warningActions?.[warningActionKey(playerId, event.date, event.type)] ?? {
+  const action = data.warningActions?.[warningActionKey(playerId, event.date, event.type)];
+  return action ? { ...action, updatedAt: utcTimestamp(action.updatedAt) } : {
     status: "pending",
     note: "",
     updatedAt: null,

@@ -37,7 +37,10 @@ export async function POST(request) {
     if (!result.ok) {
       return apiError(result.status || 500, "import_failed", result.error || "The import failed.");
     }
-    return apiSuccess(result.data, { status: result.data.replayed ? 200 : 201 });
+    return apiSuccess(result.data, {
+      status: result.data.replayed ? 200 : 201,
+      importDate: result.data.result?.captureDate ?? batch.captureDate,
+    });
   } finally {
     if (temporaryDirectory) {
       await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});

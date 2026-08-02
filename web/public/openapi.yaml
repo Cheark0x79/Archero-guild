@@ -352,8 +352,8 @@ components:
         generatedAt: { type: string, format: date-time }
         lastImportDate:
           type: [string, "null"]
-          format: date
-          description: Latest imported game day represented by the data. Null when the endpoint has no data source.
+          format: date-time
+          description: End of the latest imported game day, normalized to UTC. Null when the endpoint has no data source.
         source: { type: string, enum: [database, local] }
         dataMode: { type: string, enum: [live, demo, unavailable] }
         partial: { type: boolean }

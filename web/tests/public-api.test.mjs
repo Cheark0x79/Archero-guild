@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { authorizeApiRequest } from "../app/api/v1/_lib/auth.js";
-import { apiLastImportDate } from "../app/api/v1/_lib/metadata.js";
+import { apiLastImportDate, utcTimestamp } from "../app/api/v1/_lib/metadata.js";
 import {
   bossCatalogFromData,
   bossDaysFromData,
@@ -68,13 +68,19 @@ test("API metadata reports the latest imported game day", () => {
   };
   assert.equal(
     apiLastImportDate({ data: importedData }),
-    "2026-07-22",
+    "2026-07-23T00:00:00.000Z",
   );
   assert.equal(
     apiLastImportDate({ data: { captures: { lastImportedAt: "2026-07-22T10:05:00Z" } } }),
-    "2026-07-22",
+    "2026-07-23T00:00:00.000Z",
   );
+  assert.equal(apiLastImportDate({ importDate: "2026-12-31" }), "2027-01-01T00:00:00.000Z");
   assert.equal(apiLastImportDate({}), null);
+});
+
+test("API timestamps are normalized to UTC without changing their instant", () => {
+  assert.equal(utcTimestamp("2026-08-03T00:05:00+02:00"), "2026-08-02T22:05:00.000Z");
+  assert.equal(utcTimestamp("invalid"), null);
 });
 
 test("API authentication accepts bearer and x-api-key credentials", () => {
@@ -116,6 +122,8 @@ test("guild summary and boss ranking are shaped for bot commands", () => {
   const summary = guildSummaryFromData(data);
   assert.equal(summary.currentMembers, 1);
   assert.equal(summary.discordLinked, 1);
+  assert.equal(summary.lastCapturedAt, "2026-07-22T10:00:00.000Z");
+  assert.equal(summary.lastImportedAt, "2026-07-22T10:05:00.000Z");
 
   const ranking = bossRankings(data, "all-time", new URLSearchParams({ limit: "5" }));
   assert.equal(ranking.items[0].name, "Alice");

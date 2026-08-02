@@ -17,5 +17,5 @@ export async function GET(request) {
       power: member.metrics?.power ?? null,
     }));
 
-  return apiSuccess(roster, { source: payload.source });
+  return apiSuccess(roster, payload);
 }
