@@ -3,9 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const docsRoot = path.join(repositoryRoot, "docs");
 const documentationRoots = [
   path.join(repositoryRoot, "README.md"),
-  path.join(repositoryRoot, "docs"),
+  docsRoot,
   path.join(repositoryRoot, "observer", "storage", "README.md"),
 ];
 
@@ -34,8 +35,17 @@ for (const file of markdownFiles) {
   }
 }
 
+const documentationIndex = await fs.readFile(path.join(docsRoot, "README.md"), "utf8");
+for (const file of markdownFiles) {
+  if (!file.startsWith(`${docsRoot}${path.sep}`) || file === path.join(docsRoot, "README.md")) continue;
+  const relative = path.relative(docsRoot, file).split(path.sep).join("/");
+  if (!documentationIndex.includes(`](${relative})`)) {
+    failures.push(`docs/README.md does not index ${relative}`);
+  }
+}
+
 if (failures.length > 0) {
-  console.error(`Broken documentation links:\n${failures.map((item) => `- ${item}`).join("\n")}`);
+  console.error(`Documentation contract failures:\n${failures.map((item) => `- ${item}`).join("\n")}`);
   process.exitCode = 1;
 } else {
   console.log(`Checked ${markdownFiles.length} Markdown files: all local links resolve.`);

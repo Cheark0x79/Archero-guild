@@ -4,7 +4,7 @@ Status: **deferred**
 
 This document records the longer-term target architecture. The currently
 supported deployment remains Docker Compose behind Cloudflare Tunnel, as
-documented in [`production-homelab.md`](production-homelab.md).
+documented in [`../deployment/homelab.md`](../deployment/homelab.md).
 
 ## Target architecture
 

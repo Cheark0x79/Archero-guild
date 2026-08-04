@@ -54,4 +54,4 @@ restore on a disposable test database.
 
 For the one-time migration from the former root Compose files, including the
 verified database backup and preservation of the existing Docker volume, use
-[`docs/migration-platform-split.md`](../docs/migration-platform-split.md).
+[`docs/deployment/migration-platform-split.md`](../docs/deployment/migration-platform-split.md).

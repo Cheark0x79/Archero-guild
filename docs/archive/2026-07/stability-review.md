@@ -1,5 +1,8 @@
 # Application stability review
 
+> Status: historical review from July 2026. It is not a current operations
+> runbook.
+
 Last updated: 2026-07-28
 
 ## Objective

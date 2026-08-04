@@ -67,3 +67,43 @@ test("React runtime packages are pinned to the same exact version", () => {
   assert.equal(packageLock.packages["node_modules/react"].version, packageJson.dependencies.react);
   assert.equal(packageLock.packages["node_modules/react-dom"].version, packageJson.dependencies["react-dom"]);
 });
+
+test("environment examples cover Compose inputs and the configuration contract", () => {
+  const configuration = fs.readFileSync(path.join(projectRoot, "docs", "configuration.md"), "utf8");
+  const derivedComposeSettings = new Set(["ARCHERO_IMAGE_TAG"]);
+  const products = [
+    {
+      compose: fs.readFileSync(path.join(projectRoot, "platform", "compose.yml"), "utf8"),
+      example: fs.readFileSync(path.join(projectRoot, "platform", ".env.example"), "utf8"),
+    },
+    {
+      compose: fs.readFileSync(path.join(projectRoot, "ocr", "compose.yml"), "utf8"),
+      example: fs.readFileSync(path.join(projectRoot, "ocr", ".env.example"), "utf8"),
+    },
+  ];
+  const examples = [
+    fs.readFileSync(path.join(projectRoot, ".env.example"), "utf8"),
+    fs.readFileSync(path.join(projectRoot, "web", ".env.local.example"), "utf8"),
+    ...products.map((product) => product.example),
+  ];
+
+  for (const { compose, example } of products) {
+    const exampleNames = environmentNames(example);
+    for (const match of compose.matchAll(/\$\{([A-Z][A-Z0-9_]*)/g)) {
+      if (derivedComposeSettings.has(match[1])) continue;
+      assert.ok(exampleNames.has(match[1]), `${match[1]} must appear in the matching environment example`);
+    }
+  }
+
+  for (const example of examples) {
+    for (const name of environmentNames(example)) {
+      assert.ok(configuration.includes("`" + name + "`"), `${name} must be documented in docs/configuration.md`);
+    }
+  }
+});
+
+function environmentNames(content) {
+  return new Set(
+    [...content.matchAll(/^(?:# )?([A-Z][A-Z0-9_]*)=/gm)].map((match) => match[1]),
+  );
+}

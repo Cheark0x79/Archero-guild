@@ -1,5 +1,8 @@
 # API v1 compatibility test report
 
+> Status: historical evidence from July 2026. Use the current tests and
+> [`../../api.md`](../../api.md) for present behavior.
+
 Last updated: 2026-07-28
 
 ## Scope

@@ -23,9 +23,11 @@ chmod 600 platform/.env.production
 mkdir -p data screenshots/raw screenshots/trash backups
 ```
 
-Generate six independent secrets:
+Generate eight independent secrets:
 
 ```bash
+openssl rand -hex 32
+openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
 openssl rand -hex 32
@@ -36,9 +38,11 @@ openssl rand -hex 32
 
 Put them in `POSTGRES_PASSWORD`, `ARCHERO_USER_PASSWORD`,
 `ARCHERO_USER_SESSION_TOKEN`, `ARCHERO_ADMIN_PASSWORD`,
-`ARCHERO_ADMIN_SESSION_TOKEN`, and `ARCHERO_API_KEYS`. Keep different values
-for both dashboard accounts, both session tokens, the database, and the public
-API. Usernames default to `viewer` and `admin` and can be
+`ARCHERO_ADMIN_SESSION_TOKEN`, `ARCHERO_API_KEYS`,
+`ARCHERO_SHARE_LINK_SECRET`, and `ARCHERO_INGESTION_KEYS`. Keep different
+values for both dashboard accounts, both session tokens, the database, the
+public API, temporary member sharing, and OCR ingestion. Usernames default to
+`viewer` and `admin` and can be
 changed with `ARCHERO_USER_USERNAME` and `ARCHERO_ADMIN_USERNAME`.
 Do not reuse a password or commit `platform/.env.production`.
 
@@ -69,8 +73,9 @@ Docker network, so the service name `app` is intentional. Do not use
 
 ## 3. Protect access
 
-Create a Cloudflare Access self-hosted application for the hostname before
-sharing it. The safest initial policy is:
+Create path-scoped Cloudflare Access applications for authenticated dashboard
+and administration routes before sharing the hostname. A suitable initial
+policy for those protected paths is:
 
 - Action: `Allow`
 - Include: only your email address, identity-provider group, or household
@@ -78,14 +83,18 @@ sharing it. The safest initial policy is:
 - Session duration: 8 to 24 hours
 - Require: MFA when supported by the identity provider
 
-Protecting the whole hostname is recommended for the first deployment. The app
-also requires its own account on every page and enforces the administrator
-role on `/admin/*` and `/api/data/*`, providing a second layer for
-administrative actions.
+Do not place an interactive Cloudflare Access login in front of `/s/*` or
+`/shared/*`. These paths implement temporary bearer access for Discord
+recipients who intentionally do not have dashboard accounts. The application
+validates the signed grant, expiration, and member scope itself. Static boss
+images under `/bosses/*` must remain reachable by those shared profiles.
 
-If the public dashboard must later be anonymous, create more specific Access
-applications for `/admin/*` and `/api/data/*` instead of removing the
-application's own admin authentication.
+The application still requires its own account on normal dashboard pages and
+enforces the administrator role on `/admin/*` and `/api/data/*`. Protect the
+machine-to-machine `/api/v1/imports*` paths with a Cloudflare Service Auth
+policy when Cloudflare Access is enabled. Other `/api/v1` consumers either use
+their application API key directly or a dedicated service token according to
+the chosen Cloudflare policy.
 
 ## 4. Start and verify
 
@@ -204,8 +213,11 @@ Local OCR pages and capture mutation routes return `404` in the platform
 image.
 
 The versioned integration API under `/api/v1` uses `ARCHERO_API_KEYS` instead
-of dashboard cookies. Only `/api/v1/health` is public. Configure clients
-according to [`api.md`](api.md).
+of dashboard cookies. Only `/api/v1/health` needs no API key. Configure clients
+according to [`../api.md`](../api.md).
+
+Temporary `/s/*` and `/shared/*` member routes also bypass dashboard login, but
+they reveal profile data only when a valid, unexpired share grant is present.
 
 After adding the new user variables to an existing `platform/.env.production`, run
 `make release`. Existing sessions are invalidated because the cookie name
@@ -233,7 +245,7 @@ ingestion-key-protected endpoints:
 - `POST /api/v1/imports` for transactional and idempotent publication.
 
 The workstation flow is documented in
-[`ocr-distant.md`](ocr-distant.md). Never expose PostgreSQL or copy partial OCR
+[`ocr-workstation.md`](ocr-workstation.md). Never expose PostgreSQL or copy partial OCR
 files into production.
 
 ### Cloudflare request limits

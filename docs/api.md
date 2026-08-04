@@ -58,12 +58,18 @@ Configure the browser-facing origin in every environment:
 ARCHERO_PUBLIC_ORIGIN=https://archero.example.com
 ```
 
-Local development uses `http://localhost:5181`. Member `links.api`,
+Local development uses `http://127.0.0.1:5181`. Member `links.api`,
 `links.web`, and resolver `webUrl` values are returned as absolute URLs built
 from this origin. `links.api` is permanent. `links.web` and resolver `webUrl`
-are signed, read-only member links that can be opened repeatedly for 12 hours.
-The bot can therefore send the URL from its existing member response without a
-second API call. Changing the domain requires only an environment update.
+use compact `/s/<signed-code>` URLs that can be opened repeatedly for 12 hours.
+Opening one validates the signed grant, stores an expiring member-scoped cookie,
+and redirects to a clean read-only profile URL without requiring login. The bot
+can send the URL from its existing member response without a second API call.
+Changing the domain requires only an environment update.
+
+These URLs are bearer grants: do not log, expand, or publish them outside the
+intended Discord conversation. Rotating `ARCHERO_SHARE_LINK_SECRET`
+invalidates every outstanding share link.
 
 ## Endpoint reference
 
@@ -207,6 +213,8 @@ protection.
 - Accept `null` for unknown metrics.
 - Retry `429` only after the `Retry-After` delay.
 - Treat unknown evaluation flags as forward-compatible values.
+- Send the API-provided `links.web` value unchanged; do not construct a member
+  URL or expose its signed code in logs.
 
 Suggested mapping:
 

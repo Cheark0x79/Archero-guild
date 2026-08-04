@@ -135,7 +135,7 @@ flag catalog.
 | `name` | string | Current member name |
 | `confidence` | number from 0 to 1 | Match confidence |
 | `matchedBy` | string | `playerId`, `name`, `discordName`, `previousName`, or `alias` |
-| `webUrl` | string | Signed read-only member URL generated from `ARCHERO_PUBLIC_ORIGIN`, reusable for 12 hours |
+| `webUrl` | string | Compact `/s/<signed-code>` read-only member URL generated from `ARCHERO_PUBLIC_ORIGIN`, reusable for 12 hours |
 
 Previous names come from `member_names`. Search aliases come from
 `guild_members.metadata.searchAliases`; the legacy metadata key `aliases` is
