@@ -12,6 +12,14 @@ const RANKING_METRICS = new Set(["power", "contribution7d", "powerDelta", "contr
 const WARNING_TYPES = new Set(["game_absence", "low_contribution", "low_progression", "missed_boss"]);
 const WARNING_RULE_KEYS = ["maxInactiveDays", "minContribution7d", "minPowerGrowth14dPercent", "minBossTries"];
 
+function currentPlayerIdsFromData(data) {
+  return new Set(
+    (data.guildRoster ?? [])
+      .filter((member) => member.playerId && !FORMER_STATUSES.has(member.status))
+      .map((member) => member.playerId),
+  );
+}
+
 export function membersFromData(data, publicOrigin = "") {
   return mergeRosterMetrics(data.guildRoster ?? [], data.memberSnapshots ?? [])
     .map((member) => publicMember(member, data.rules ?? {}, publicOrigin));
@@ -120,6 +128,7 @@ export function violationsFromData(data, searchParams) {
   }
   const flag = normalize(searchParams.get("flag"));
   const playerId = searchParams.get("playerId")?.trim();
+  const currentPlayerIds = currentPlayerIdsFromData(data);
   const items = membersFromData(data)
     .map((member) => effectiveViolationMember(data, member))
     .filter((member) => !FORMER_STATUSES.has(member.guildStatus))
@@ -131,6 +140,7 @@ export function violationsFromData(data, searchParams) {
     .sort((left, right) => left.name.localeCompare(right.name));
   const allHistory = (data.guildRoster ?? [])
     .filter((member) => member.playerId)
+    .filter((member) => playerId || currentPlayerIds.has(member.playerId))
     .filter((member) => !playerId || member.playerId === playerId)
     .flatMap((member) =>
       memberWarningEvents(data, member.playerId)
@@ -166,7 +176,20 @@ export function warningsFromData(data, searchParams) {
   if (query.error) return query;
 
   const latestDates = latestSnapshotDates(data);
-  const events = warningEventsForData(data)
+  const currentPlayerIds = currentPlayerIdsFromData(data);
+  const requestedMember = query.playerId
+    ? (data.guildRoster ?? []).find((member) => member.playerId === query.playerId)
+    : null;
+  const sourceEvents = requestedMember
+    ? memberWarningEvents(data, requestedMember.playerId).map((event) => ({
+        ...event,
+        playerId: requestedMember.playerId,
+        name: requestedMember.name,
+        action: warningAction(data, requestedMember.playerId, event),
+      }))
+    : warningEventsForData(data);
+  const events = sourceEvents
+    .filter((event) => query.playerId || currentPlayerIds.has(event.playerId))
     .filter((event) => !query.playerId || event.playerId === query.playerId)
     .filter((event) => !query.type || event.type === query.type)
     .filter((event) => !query.from || event.date >= query.from)
@@ -203,7 +226,9 @@ export function warningRankingsFromData(data, searchParams) {
   }
 
   const latestDates = latestSnapshotDates(data);
+  const currentPlayerIds = currentPlayerIdsFromData(data);
   const events = warningEventsForData(data)
+    .filter((event) => currentPlayerIds.has(event.playerId))
     .filter((event) => !warningActionClosed(event.action?.status))
     .filter((event) => !query.type || event.type === query.type)
     .filter((event) => !query.from || event.date >= query.from)
@@ -499,6 +524,7 @@ export function bossDaysFromData(data, searchParams) {
   const limit = integerParameter(searchParams.get("limit"), 100, 1, 100);
   if (date === false) return { error: { code: "invalid_date", message: "date must use YYYY-MM-DD format." } };
   if (limit === null) return { error: { code: "invalid_limit", message: "limit must be an integer between 1 and 100." } };
+  const currentPlayerIds = currentPlayerIdsFromData(data);
 
   const groups = (data.dailyBossRawSnapshots ?? [])
     .filter((day) => !date || day.date === date)
@@ -508,7 +534,7 @@ export function bossDaysFromData(data, searchParams) {
         date: day.date,
         boss: definition,
         rows: (day.rows ?? [])
-          .filter((row) => !playerId || row.playerId === playerId)
+          .filter((row) => playerId ? row.playerId === playerId : currentPlayerIds.has(row.playerId))
           .filter((row) => typeof row.bossDamageToday === "number")
           .sort((left, right) => (left.bossRank ?? Number.MAX_SAFE_INTEGER) - (right.bossRank ?? Number.MAX_SAFE_INTEGER))
           .slice(0, limit)

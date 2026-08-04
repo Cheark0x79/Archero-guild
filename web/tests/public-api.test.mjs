@@ -418,6 +418,47 @@ test("warning list, ranking, and member detail expose current and historical dat
   assert.equal(warningRankingsFromData(warningData, new URLSearchParams({ scope: "future" })).error.code, "invalid_scope");
 });
 
+test("aggregate bot lists hide former members while direct history remains available", () => {
+  const formerData = {
+    ...data,
+    memberSnapshots: [
+      ...data.memberSnapshots,
+      {
+        playerId: "456",
+        power: 600000,
+        contribution7d: 100,
+        bossAttacks: 0,
+        lastActivityDays: 5,
+        metricsVerified: true,
+      },
+    ],
+    dailyRawSnapshots: [{
+      date: "2026-07-21",
+      rows: [
+        { playerId: "123", power: 900000, contribution7d: 1200, bossAttacks: 2, lastActivityDays: 0 },
+        { playerId: "456", power: 600000, contribution7d: 100, bossAttacks: 0, lastActivityDays: 5 },
+      ],
+    }],
+    dailyBossRawSnapshots: [{
+      date: "2026-07-21",
+      rows: [
+        { playerId: "123", name: "Alice", bossDamageToday: 5000, bossRank: 1 },
+        { playerId: "456", name: "Bob", bossDamageToday: 4000, bossRank: 2 },
+      ],
+    }],
+  };
+
+  assert.equal(warningsFromData(formerData, new URLSearchParams()).warnings.some((event) => event.playerId === "456"), false);
+  assert.equal(warningRankingsFromData(formerData, new URLSearchParams()).rankings.some((row) => row.playerId === "456"), false);
+  assert.equal(violationsFromData(formerData, new URLSearchParams()).history.some((event) => event.playerId === "456"), false);
+  assert.equal(bossDaysFromData(formerData, new URLSearchParams()).items[0].rows.some((row) => row.playerId === "456"), false);
+
+  const formerWarnings = warningsFromData(formerData, new URLSearchParams({ playerId: "456" }));
+  assert.equal(formerWarnings.warnings.some((event) => event.playerId === "456"), true);
+  const formerBossDays = bossDaysFromData(formerData, new URLSearchParams({ playerId: "456" }));
+  assert.deepEqual(formerBossDays.items[0].rows.map((row) => row.playerId), ["456"]);
+});
+
 test("boss results prefer the boss identity stored by PostgreSQL over weekday inference", () => {
   const explicitBossData = {
     ...data,
