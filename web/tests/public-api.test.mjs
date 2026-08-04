@@ -5,7 +5,7 @@ process.env.ARCHERO_SHARE_LINK_SECRET ??= "public-api-test-share-secret-longer-t
 
 import { authorizeApiRequest } from "../app/api/v1/_lib/auth.js";
 import { apiLastImportDate, utcTimestamp } from "../app/api/v1/_lib/metadata.js";
-import { verifyMemberShareToken } from "../lib/share-links.js";
+import { verifyMemberShareCode } from "../lib/share-links.js";
 import {
   bossCatalogFromData,
   bossDaysFromData,
@@ -107,9 +107,9 @@ test("public members exclude private notes and support search and pagination", (
   assert.equal(members[0].metrics.power, 900000);
   assert.equal("officerNote" in members[0], false);
   assert.equal(members[0].links.api, "https://archero.example.com/api/v1/members/123");
-  assert.match(members[0].links.web, /^https:\/\/archero\.example\.com\/shared\/members\/123\?token=.+/);
-  const shareToken = new URL(members[0].links.web).searchParams.get("token");
-  const shareGrant = verifyMemberShareToken(shareToken);
+  assert.match(members[0].links.web, /^https:\/\/archero\.example\.com\/s\/[A-Za-z0-9_-]{35,60}$/);
+  const shareCode = new URL(members[0].links.web).pathname.split("/").at(-1);
+  const shareGrant = verifyMemberShareCode(shareCode);
   assert.equal(shareGrant.playerId, "123");
   assert.equal((shareGrant.expiresAt.getTime() - shareGrant.issuedAt.getTime()) / 3_600_000, 12);
 
@@ -239,7 +239,7 @@ test("member rankings support power, contribution, attacks, deltas, and activity
     links: undefined,
   });
   assert.equal(result.items[0].links.api, "/api/v1/members/123");
-  assert.match(result.items[0].links.web, /^\/shared\/members\/123\?token=.+/);
+  assert.match(result.items[0].links.web, /^\/s\/[A-Za-z0-9_-]{35,60}$/);
   assert.equal(memberRankingsFromData(data, new URLSearchParams({ metric: "unknown" })).error.code, "invalid_metric");
 });
 
@@ -289,7 +289,7 @@ test("member resolver accepts IDs, normalized names, aliases, and typos", () => 
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams({ q: "mndo" })).match.playerId, "123");
   assert.match(
     resolveMemberFromData(resolverData, new URLSearchParams({ q: "123" }), "https://archero.example.com").match.webUrl,
-    /^https:\/\/archero\.example\.com\/shared\/members\/123\?token=.+/,
+    /^https:\/\/archero\.example\.com\/s\/[A-Za-z0-9_-]{35,60}$/,
   );
   assert.equal(resolveMemberFromData(resolverData, new URLSearchParams()).error.code, "missing_query");
 });

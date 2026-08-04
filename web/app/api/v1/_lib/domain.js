@@ -2,7 +2,7 @@ import { buildSummary, evaluateMember, mergeRosterMetrics } from "../../../../me
 import { bossDefinitionFromSnapshot, bossRankingsFromData } from "../../dashboard-data/source.js";
 import { evaluateWarningHistory, warningHistoryEvents, warningHistorySummary } from "../../../../warning-history.js";
 import { warningActionKey } from "../../../../lib/warning-actions.js";
-import { createMemberShareToken } from "../../../../lib/share-links.js";
+import { createMemberShareCode } from "../../../../lib/share-links.js";
 import { utcTimestamp } from "./metadata.js";
 import { absolutePublicUrl } from "./urls.js";
 
@@ -682,9 +682,9 @@ function publicMatch(member, confidence, matchedBy, publicOrigin) {
 }
 
 function sharedMemberWebUrl(playerId, publicOrigin) {
-  const token = createMemberShareToken(playerId, { expiresInHours: 12 });
+  const code = createMemberShareCode(playerId, { expiresInHours: 12 });
   return absolutePublicUrl(
-    `/shared/members/${encodeURIComponent(playerId)}?token=${encodeURIComponent(token)}`,
+    `/s/${code}`,
     publicOrigin,
   );
 }

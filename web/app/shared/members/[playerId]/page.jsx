@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { loadDashboardData } from "../../../api/dashboard-data/source.js";
 import { apiLastImportDate } from "../../../api/v1/_lib/metadata.js";
-import { shareCookieName, verifyMemberShareToken } from "../../../../lib/share-links.js";
+import { shareCookieName, verifyMemberShareCode, verifyMemberShareToken } from "../../../../lib/share-links.js";
 import { sharedMemberProfileFromData } from "../../../../lib/shared-member.js";
 import SharedMemberProfile from "../../SharedMemberProfile.jsx";
 
@@ -15,10 +15,11 @@ export default async function SharedMemberPage({ params, searchParams }) {
   const playerId = decodeURIComponent(rawPlayerId);
   const query = await searchParams;
   const cookieStore = await cookies();
-  const token = typeof query?.token === "string"
-    ? query.token
-    : cookieStore.get(shareCookieName(playerId))?.value;
-  const grant = verifyMemberShareToken(token);
+  const legacyToken = typeof query?.token === "string" ? query.token : null;
+  const shortCode = cookieStore.get(shareCookieName(playerId))?.value;
+  const grant = legacyToken
+    ? verifyMemberShareToken(legacyToken)
+    : verifyMemberShareCode(shortCode);
   if (!grant || grant.playerId !== playerId) redirect("/shared/expired");
 
   const payload = await loadDashboardData();

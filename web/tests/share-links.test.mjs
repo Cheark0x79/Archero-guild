@@ -3,9 +3,11 @@ import fs from "node:fs/promises";
 import test from "node:test";
 
 import {
+  createMemberShareCode,
   createMemberShareToken,
   normalizeShareHours,
   shareCookieName,
+  verifyMemberShareCode,
   verifyMemberShareToken,
 } from "../lib/share-links.js";
 import { sharedMemberProfileFromData } from "../lib/shared-member.js";
@@ -22,6 +24,20 @@ import {
 const environment = { ARCHERO_SHARE_LINK_SECRET: "share-test-secret-that-is-longer-than-thirty-two-bytes" };
 process.env.ARCHERO_SHARE_LINK_SECRET ??= environment.ARCHERO_SHARE_LINK_SECRET;
 const now = new Date("2026-08-03T10:00:00.000Z");
+
+test("member share codes are compact, signed, reusable, and time limited", () => {
+  const code = createMemberShareCode("119982936", { environment, now, expiresInHours: 2 });
+  const firstGrant = verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T10:30:00.000Z") });
+  const secondGrant = verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T11:30:00.000Z") });
+  assert.ok(code.length <= 60);
+  assert.equal(code.includes("."), false);
+  assert.equal(firstGrant.playerId, "119982936");
+  assert.equal(secondGrant.playerId, "119982936");
+  assert.equal(firstGrant.expiresAt.toISOString(), "2026-08-03T12:00:00.000Z");
+  assert.equal(verifyMemberShareCode(`${code.slice(0, -1)}x`, { environment, now }), null);
+  assert.equal(verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T12:00:00.000Z") }), null);
+  assert.equal(verifyMemberShareCode(code, { environment: { ARCHERO_SHARE_LINK_SECRET: `${environment.ARCHERO_SHARE_LINK_SECRET}x` }, now }), null);
+});
 
 test("member share tokens are scoped, signed, reusable, and time limited", () => {
   const token = createMemberShareToken("119982936", { environment, now, expiresInHours: 2 });
@@ -61,6 +77,7 @@ test("shared member data contains charts and boss ranks without warnings or priv
   assert.equal(typeof profile.powerWeekDelta, "number");
   assert.ok(profile.bossDamageHistory.length > 0);
   assert.equal(profile.personalBests.length, 7);
+  assert.equal(profile.personalBests.every((record) => record.boss.imagePath?.startsWith("/bosses/")), true);
   assert.equal(Object.hasOwn(profile, "warnings"), false);
   assert.equal(JSON.stringify(profile).includes("private"), false);
   assert.equal(JSON.stringify(profile).includes("warningActions"), false);

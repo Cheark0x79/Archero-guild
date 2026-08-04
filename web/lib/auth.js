@@ -15,7 +15,7 @@ const PUBLIC_PATHS = new Set([
 export function isPublicPath(pathname) {
   return PUBLIC_PATHS.has(pathname)
     || pathname.startsWith("/_next/")
-    || pathname === "/shared/access"
+    || pathname.startsWith("/s/")
     || pathname === "/shared/expired"
     || pathname.startsWith("/shared/members/")
     || pathname.startsWith("/bosses/")

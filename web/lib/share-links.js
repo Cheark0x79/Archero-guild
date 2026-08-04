@@ -2,8 +2,56 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const TOKEN_AUDIENCE = "archero-member-share";
 const TOKEN_VERSION = 1;
+const SHORT_CODE_VERSION = 1;
+const SHORT_CODE_HEADER_BYTES = 9;
+const SHORT_CODE_MAC_BYTES = 16;
+const SHORT_CODE_CONTEXT = "archero-member-share-short-v1\0";
 export const DEFAULT_SHARE_HOURS = 24;
 export const MAX_SHARE_HOURS = 24;
+
+export function createMemberShareCode(playerId, options = {}) {
+  const secret = shareSecret(options.environment);
+  const now = options.now ?? new Date();
+  const expiresInHours = normalizeShareHours(options.expiresInHours);
+  const issuedAt = Math.floor(now.getTime() / 1000);
+  const expiresAt = issuedAt + expiresInHours * 60 * 60;
+  const playerIdBytes = Buffer.from(cleanPlayerId(playerId), "ascii");
+  const payload = Buffer.alloc(SHORT_CODE_HEADER_BYTES + playerIdBytes.length);
+  payload.writeUInt8(SHORT_CODE_VERSION, 0);
+  payload.writeUInt32BE(issuedAt, 1);
+  payload.writeUInt32BE(expiresAt, 5);
+  playerIdBytes.copy(payload, SHORT_CODE_HEADER_BYTES);
+  return Buffer.concat([payload, shortCodeMac(payload, secret)]).toString("base64url");
+}
+
+export function verifyMemberShareCode(code, options = {}) {
+  try {
+    const secret = shareSecret(options.environment);
+    const encodedCode = String(code ?? "");
+    if (!/^[A-Za-z0-9_-]{35,60}$/.test(encodedCode)) return null;
+    const bytes = Buffer.from(encodedCode, "base64url");
+    if (bytes.toString("base64url") !== encodedCode) return null;
+    if (bytes.length < SHORT_CODE_HEADER_BYTES + 1 + SHORT_CODE_MAC_BYTES) return null;
+    const payload = bytes.subarray(0, -SHORT_CODE_MAC_BYTES);
+    const suppliedMac = bytes.subarray(-SHORT_CODE_MAC_BYTES);
+    const expectedMac = shortCodeMac(payload, secret);
+    if (!timingSafeEqual(suppliedMac, expectedMac)) return null;
+    if (payload.readUInt8(0) !== SHORT_CODE_VERSION) return null;
+    const issuedAt = payload.readUInt32BE(1);
+    const expiresAt = payload.readUInt32BE(5);
+    const nowSeconds = Math.floor((options.now ?? new Date()).getTime() / 1000);
+    if (expiresAt <= nowSeconds || issuedAt > nowSeconds + 60 || expiresAt <= issuedAt) return null;
+    if (expiresAt - issuedAt > MAX_SHARE_HOURS * 60 * 60) return null;
+    return {
+      playerId: cleanPlayerId(payload.subarray(SHORT_CODE_HEADER_BYTES).toString("ascii")),
+      issuedAt: new Date(issuedAt * 1000),
+      expiresAt: new Date(expiresAt * 1000),
+      tokenId: null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function createMemberShareToken(playerId, options = {}) {
   const secret = shareSecret(options.environment);
@@ -75,4 +123,12 @@ function cleanPlayerId(value) {
 
 function signature(payload, secret) {
   return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+function shortCodeMac(payload, secret) {
+  return createHmac("sha256", secret)
+    .update(SHORT_CODE_CONTEXT)
+    .update(payload)
+    .digest()
+    .subarray(0, SHORT_CODE_MAC_BYTES);
 }

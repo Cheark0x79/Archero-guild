@@ -41,7 +41,7 @@ const endpoints = [
     limit: "[optional query] 1–10 suggestions · default: 5",
   }, {
     query: "ExampleChamp",
-    match: { playerId: "100000002", name: "ExampleChampion", confidence: 0.94, matchedBy: "name", webUrl: "https://archero.example.com/shared/members/100000002?token=temporary-signed-token" },
+    match: { playerId: "100000002", name: "ExampleChampion", confidence: 0.94, matchedBy: "name", webUrl: "https://archero.example.com/s/AWmt-example-short-share-code" },
     suggestions: [],
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}", "Member profile", "Public profile and current metrics for a member.", true, {
@@ -52,7 +52,7 @@ const endpoints = [
     evaluation: { status: "Active", severity: "positive", flags: [] },
     links: {
       api: "https://archero.example.com/api/v1/members/100000002",
-      web: "https://archero.example.com/shared/members/100000002?token=temporary-signed-token",
+      web: "https://archero.example.com/s/AWmt-example-short-share-code",
     },
   }),
   endpoint("Members", "GET", "/api/v1/members/{playerId}/history", "Member history", "Daily metrics and durable automatic warning history.", true, {

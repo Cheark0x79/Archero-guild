@@ -209,13 +209,13 @@ export function bossDefinitionFromSnapshot(data, snapshot) {
 }
 
 const BOSS_ROTATION = [
-  { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian" },
-  { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon" },
-  { key: "flame-demon", weekday: 3, dayLabel: "Wed", name: "Flame Demon" },
-  { key: "medusa", weekday: 4, dayLabel: "Thu", name: "Medusa" },
-  { key: "stoneman", weekday: 5, dayLabel: "Fri", name: "Stoneman" },
-  { key: "cyclops-mage", weekday: 6, dayLabel: "Sat", name: "Cyclops Mage" },
-  { key: "grim-reaper", weekday: 0, dayLabel: "Sun", name: "Grim Reaper" },
+  { key: "treant-guardian", weekday: 1, dayLabel: "Mon", name: "Treant Guardian", imagePath: "/bosses/treant-guardian.png" },
+  { key: "fire-dragon", weekday: 2, dayLabel: "Tue", name: "Fire Dragon", imagePath: "/bosses/fire-dragon.png" },
+  { key: "flame-demon", weekday: 3, dayLabel: "Wed", name: "Flame Demon", imagePath: "/bosses/flame-demon.png" },
+  { key: "medusa", weekday: 4, dayLabel: "Thu", name: "Medusa", imagePath: "/bosses/medusa.png" },
+  { key: "stoneman", weekday: 5, dayLabel: "Fri", name: "Stoneman", imagePath: "/bosses/stoneman.png" },
+  { key: "cyclops-mage", weekday: 6, dayLabel: "Sat", name: "Cyclops Mage", imagePath: "/bosses/cyclops-mage.png" },
+  { key: "grim-reaper", weekday: 0, dayLabel: "Sun", name: "Grim Reaper", imagePath: "/bosses/grim-reaper.png" },
 ];
 
 function isFormerStatus(status) {

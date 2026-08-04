@@ -25,7 +25,7 @@ export function middleware(request) {
       return NextResponse.redirect(applicationUrl("/dashboard", request.url));
     }
     const response = NextResponse.next();
-    if (pathname.startsWith("/shared/")) {
+    if (pathname.startsWith("/shared/") || pathname.startsWith("/s/")) {
       response.headers.set("Cache-Control", "no-store");
       response.headers.set("Referrer-Policy", "no-referrer");
       response.headers.set("X-Robots-Tag", "noindex, nofollow");
