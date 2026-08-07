@@ -13,6 +13,7 @@ import {
   ocrQueue,
 } from "../../../sample-data.js";
 import { projectRoot, runObserverModule } from "../data/actions.js";
+import { bossDefinitionForSnapshot } from "../../../lib/boss-identity.js";
 import { readMemberAdminRecords } from "../../../lib/member-admin.js";
 import { readWarningActions } from "../../../lib/warning-actions.js";
 
@@ -195,17 +196,7 @@ export function bossRankingsFromData(data) {
 
 export function bossDefinitionFromSnapshot(data, snapshot) {
   const definitions = bossDefinitionsFromData(data);
-  const explicitKey = snapshot?.boss?.key ?? snapshot?.bossKey;
-  if (explicitKey) {
-    const stored = definitions.find((boss) => boss.key === explicitKey);
-    return stored ?? {
-      key: explicitKey,
-      weekday: snapshot?.boss?.weekday ?? null,
-      dayLabel: snapshot?.boss?.dayLabel ?? null,
-      name: snapshot?.boss?.name ?? explicitKey,
-    };
-  }
-  return bossForDate(snapshot?.date, definitions);
+  return bossDefinitionForSnapshot(snapshot, definitions);
 }
 
 const BOSS_ROTATION = [
@@ -226,12 +217,6 @@ function bossDefinitionsFromData(data) {
   return Array.isArray(data.bossDefinitions) && data.bossDefinitions.length > 0
     ? data.bossDefinitions
     : BOSS_ROTATION;
-}
-
-function bossForDate(date, definitions = BOSS_ROTATION) {
-  const [year, month, day] = String(date).split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
-  return definitions.find((boss) => boss.weekday === weekday) ?? definitions[0] ?? BOSS_ROTATION[0];
 }
 
 function weekStart(date) {

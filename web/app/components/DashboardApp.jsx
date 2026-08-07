@@ -19,6 +19,7 @@ import {
   sortMembers,
 } from "../../metrics.js";
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
+import { bossDefinitionForDate, bossDefinitionForSnapshot } from "../../lib/boss-identity.js";
 import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
@@ -1461,7 +1462,7 @@ function BossView() {
   const [bossSection, setBossSection] = useState("weekly");
   const selectedBossKey = bossFilter === "all" ? null : bossFilter;
   const selectedBoss = selectedBossKey ? bossForKey(selectedBossKey) : null;
-  const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossForDate(date).key === selectedBossKey) : bossData.dates;
+  const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates;
   const selectedSeries = bossData.players
     .filter((player) => selectedPlayers.has(player.playerId))
     .map((player) => ({ ...player, points: selectedBossKey ? player.points.filter((point) => point.bossKey === selectedBossKey) : player.points }))
@@ -3149,10 +3150,11 @@ function buildBossDashboardData() {
   const rosterNames = new Map(guildRoster.filter((entry) => isCurrentPlayerId(entry.playerId)).map((entry) => [entry.playerId, entry.name]));
   const playersById = new Map();
   const latestDate = dates.at(-1) ?? currentIsoDate();
-  const activeBoss = bossForDate(latestDate);
+  const bossesByDate = new Map((dailyBossRawSnapshots ?? []).map((day) => [day.date, bossForSnapshot(day)]));
+  const activeBoss = bossesByDate.get(latestDate) ?? bossForDate(latestDate);
 
   for (const day of dailyBossRawSnapshots ?? []) {
-    const boss = bossForDate(day.date);
+    const boss = bossForSnapshot(day);
     for (const row of day.rows ?? []) {
       if (!isCurrentPlayerId(row.playerId) || typeof row.bossDamageToday !== "number") continue;
       const current = playersById.get(row.playerId) ?? {
@@ -3207,6 +3209,7 @@ function buildBossDashboardData() {
     dates,
     latestDate,
     activeBoss,
+    bossesByDate,
     players,
     dailyRankings: bossDailyRankings(players),
     bestDayRecords: bossBestDayRecords(players),
@@ -3223,14 +3226,11 @@ function bossForKey(key) {
 }
 
 function bossForDate(date) {
-  const weekday = weekdayFromIsoDate(date);
-  return BOSS_ROTATION.find((boss) => boss.weekday === weekday) ?? BOSS_ROTATION[0];
+  return bossDefinitionForDate(date, BOSS_ROTATION) ?? BOSS_ROTATION[0];
 }
 
-function weekdayFromIsoDate(date) {
-  const [year, month, day] = String(date).split("-").map(Number);
-  if (!year || !month || !day) return new Date().getDay();
-  return new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
+function bossForSnapshot(snapshot) {
+  return bossDefinitionForSnapshot(snapshot, BOSS_ROTATION) ?? BOSS_ROTATION[0];
 }
 
 function bossBestPointsByBoss(points) {
@@ -3271,7 +3271,7 @@ function bossDailyRankings(players) {
     .sort(([left], [right]) => right.localeCompare(left))
     .map(([date, rows]) => ({
       date,
-      boss: bossForDate(date),
+      boss: bossForKey(rows[0]?.bossKey),
       rows: rows.sort((left, right) => right.damage - left.damage || left.name.localeCompare(right.name)),
     }));
 }
@@ -3304,7 +3304,7 @@ function memberBossPersonalBests(member) {
 
   const bestByBoss = new Map();
   for (const day of Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : []) {
-    const boss = bossForDate(day.date);
+    const boss = bossForSnapshot(day);
     for (const row of day.rows ?? []) {
       if (row.playerId !== member.playerId || typeof row.bossDamageToday !== "number") continue;
       const previous = bestByBoss.get(boss.key);
