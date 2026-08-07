@@ -379,6 +379,7 @@ function DataView() {
   const [busyAction, setBusyAction] = useState(null);
   const [importDate, setImportDate] = useState(todayLabel());
   const [messages, setMessages] = useState([]);
+  const [bossAudit, setBossAudit] = useState({ loading: true, audit: null, dataAvailable: false, error: null });
   const [adbStatus, setAdbStatus] = useState({ checking: true, connected: false, devices: [], error: null });
   const [captureDialog, setCaptureDialog] = useState(null);
   const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
@@ -388,6 +389,7 @@ function DataView() {
   const importRunning = importJob && ["queued", "running"].includes(importJob.status);
 
   useEffect(() => {
+    refreshBossAudit();
     refreshAdbStatus();
     refreshImportJobStatus();
   }, []);
@@ -416,6 +418,18 @@ function DataView() {
         devices: [],
         error: error instanceof Error ? error.message : "ADB status unavailable",
       });
+    }
+  }
+
+  async function refreshBossAudit() {
+    setBossAudit((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const response = await fetch("/api/data/boss-history-audit", { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.audit) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      setBossAudit({ loading: false, audit: payload.audit, dataAvailable: payload.dataAvailable !== false, error: null });
+    } catch (error) {
+      setBossAudit({ loading: false, audit: null, dataAvailable: false, error: error instanceof Error ? error.message : "Boss history audit unavailable" });
     }
   }
 
@@ -563,6 +577,51 @@ function DataView() {
 
   return (
     <div className="data-page">
+      <section className="panel data-status-panel">
+        <PanelHeading
+          title="Boss history audit"
+          subtitle="Read-only verification of result dates, exported boss identities, and personal records."
+          action={
+            <button className="secondary-button compact-action" type="button" onClick={refreshBossAudit} disabled={bossAudit.loading}>
+              {bossAudit.loading ? "Checking..." : "Refresh"}
+            </button>
+          }
+        />
+        {bossAudit.error ? <p className="muted">Audit unavailable: {bossAudit.error}</p> : null}
+        {bossAudit.audit ? (
+          <>
+            <div className="data-status-row">
+              <StatusPill
+                label={!bossAudit.dataAvailable ? "No live data" : bossAudit.audit.summary.issues === 0 ? "Aligned" : `${bossAudit.audit.summary.issues} issue${bossAudit.audit.summary.issues === 1 ? "" : "s"}`}
+                severity={bossAudit.dataAvailable && bossAudit.audit.summary.issues === 0 ? "positive" : "warning"}
+              />
+              <span className="muted">
+                {!bossAudit.dataAvailable ? "Rotation available, but no database export could be audited." : `${bossAudit.audit.summary.daysChecked} days · ${bossAudit.audit.summary.rowsChecked} results · ${bossAudit.audit.summary.personalBestsAffected} PB affected`}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Day</th><th>Expected boss</th><th>Exported boss</th><th>Impact</th><th>Suggested date</th></tr></thead>
+                <tbody>
+                  {bossAudit.audit.issues.length ? bossAudit.audit.issues.map((issue, index) => (
+                    <tr key={`${issue.type}-${issue.date ?? "unknown"}-${index}`}>
+                      <td>{issue.date ?? "Invalid date"}</td>
+                      <td>{issue.expectedBoss?.name ?? "Unknown"}</td>
+                      <td>{issue.actualBoss?.name ?? issue.bossKeys?.join(", ") ?? "Missing"}</td>
+                      <td>{bossAuditIssueLabel(issue)}</td>
+                      <td>{issue.suggestedPreviousDate ?? "—"}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan="5">No date/boss inconsistency detected in the current export.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted">Rotation: {bossAudit.audit.rotation.map((boss) => `${boss.dayLabel} ${boss.name}`).join(" · ")}</p>
+          </>
+        ) : null}
+      </section>
+
       <section className={`panel data-status-panel ${adbStatus.connected ? "connected" : "disconnected"}`}>
         <PanelHeading
           title="ADB"
@@ -690,6 +749,17 @@ function DataView() {
       ) : null}
     </div>
   );
+}
+
+function bossAuditIssueLabel(issue) {
+  const impact = `${issue.rowsAffected ?? 0} result${issue.rowsAffected === 1 ? "" : "s"}, ${issue.personalBestsAffected ?? 0} PB`;
+  return {
+    weekday_mismatch: `Boss does not match weekday · ${impact}`,
+    missing_explicit_boss: `Legacy export without boss identity · ${impact}`,
+    unknown_boss: `Unknown exported boss · ${impact}`,
+    multiple_bosses_for_date: `Several bosses share this date · ${impact}`,
+    invalid_date: `Invalid result date · ${impact}`,
+  }[issue.type] ?? impact;
 }
 
 function DataActionButton({ title, detail, disabled, onClick }) {

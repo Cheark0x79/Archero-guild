@@ -14,7 +14,7 @@ export function apiLastImportDate(options = {}) {
   if (!importDate) return null;
   const [year, month, day] = importDate.split("-").map(Number);
   if (![year, month, day].every(Number.isInteger)) return null;
-  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString();
+  return new Date(Date.UTC(year, month - 1, day)).toISOString();
 }
 
 export function utcTimestamp(value) {
