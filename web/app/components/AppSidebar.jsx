@@ -14,6 +14,8 @@ export default function AppSidebar({
   const navRoute = activeRoute === "member" ? "members" : activeRoute;
   const navigation = navigationItemsForRole(sessionRole, {
     localOcrEnabled: process.env.NEXT_PUBLIC_LOCAL_OCR_ENABLED === "1",
+    testToolsEnabled: process.env.NEXT_PUBLIC_TEST_DATA_ADMIN === "1"
+      && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV),
   });
   const roleLabel = sessionRoleLabel(sessionRole);
 
@@ -37,6 +39,16 @@ export default function AppSidebar({
         <nav className="nav-list admin-nav-list" aria-label="Admin pages">
           <span>Admin</span>
           {navigation.admin.map(([key, label, href]) => (
+            <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
+              {label}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
+      {navigation.test.length > 0 ? (
+        <nav className="nav-list test-nav-list" aria-label="Test pages">
+          <span>Test</span>
+          {navigation.test.map(([key, label, href]) => (
             <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
               {label}
             </Link>

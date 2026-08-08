@@ -10,6 +10,8 @@ services:
         APP_VERSION: ${ARCHERO_IMAGE_TAG:-local}
         STRICT_DATABASE: "1"
         LOCAL_OCR_ENABLED: "0"
+        TEST_DATA_ADMIN: "0"
+        DEPLOYMENT_ENV: "production"
     restart: unless-stopped
     init: true
     cpus: "1.50"
@@ -36,6 +38,7 @@ services:
       ARCHERO_DATABASE_URL: postgresql://${POSTGRES_USER:-archero}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-archero_observer}
       ARCHERO_PYTHON: /opt/archero-venv/bin/python
       ARCHERO_REQUIRE_DATABASE: "1"
+      ARCHERO_DEPLOYMENT_ENV: production
       ARCHERO_LOCAL_OCR_ENABLED: "0"
       TZ: Europe/Paris
     depends_on:

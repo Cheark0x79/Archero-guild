@@ -67,6 +67,7 @@ test("only login, authentication assets, and health are public", () => {
 test("admin pages and data mutation APIs require the admin role", () => {
   assert.equal(isAdminPath("/admin"), true);
   assert.equal(isAdminPath("/admin/rules"), true);
+  assert.equal(isAdminPath("/test"), true);
   assert.equal(isAdminPath("/api/data/import"), true);
   assert.equal(isAdminPath("/api/member-admin"), true);
   assert.equal(isAdminPath("/api/warning-actions"), true);
@@ -80,6 +81,7 @@ test("the route access matrix distinguishes public, viewer, and admin paths", ()
   assert.equal(accessLevelForPath("/admin"), ADMIN_ACCESS);
   assert.equal(roleCanAccessPath("/members", USER_ROLE), true);
   assert.equal(roleCanAccessPath("/admin", USER_ROLE), false);
+  assert.equal(roleCanAccessPath("/test", USER_ROLE), false);
   assert.equal(roleCanAccessPath("/api/member-admin", USER_ROLE), false);
   assert.equal(roleCanAccessPath("/admin/rules", ADMIN_ROLE), true);
   assert.equal(roleCanAccessPath("/dashboard", null), false);
@@ -88,11 +90,15 @@ test("the route access matrix distinguishes public, viewer, and admin paths", ()
 test("viewer navigation excludes every admin page while admin navigation is explicit", () => {
   const viewerNavigation = navigationItemsForRole(USER_ROLE, { localOcrEnabled: true });
   assert.deepEqual(viewerNavigation.admin, []);
+  assert.deepEqual(viewerNavigation.test, []);
   assert.equal(viewerNavigation.primary.some((item) => item[2].startsWith("/admin")), false);
   assert.equal(sessionRoleLabel(USER_ROLE), "Viewer");
 
   const platformAdminNavigation = navigationItemsForRole(ADMIN_ROLE);
   assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/rules"]);
+  assert.deepEqual(platformAdminNavigation.test, []);
+  const testAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { testToolsEnabled: true });
+  assert.deepEqual(testAdminNavigation.test.map((item) => item[2]), ["/test"]);
   const localAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { localOcrEnabled: true });
   assert.deepEqual(localAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/data", "/admin/rules"]);
   assert.equal(sessionRoleLabel(ADMIN_ROLE), "Administrator");

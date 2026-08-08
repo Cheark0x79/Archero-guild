@@ -46,9 +46,12 @@ operator account (`chmod 600` on Linux).
 | `ARCHERO_DATA_ERROR_CACHE_TTL_MS` | Optional, default `2000` | Failed export cache duration, maximum 300000 ms |
 | `ARCHERO_API_RATE_LIMIT_PER_MINUTE` | Optional, default `120` | Per-principal API limit; `0` disables it |
 | `ARCHERO_DATA_MODE` | Local test only | Set to `demo` to force synthetic fixtures on a loopback origin; refused by strict database mode |
+| `ARCHERO_DEPLOYMENT_ENV` | Required environment class | `development`, `test`, or `production`; synthetic database controls require `development` or `test` |
 | `ARCHERO_DEMO_SEED` | Local test only | Stable seed used to reproduce the same fictional identities and metrics |
 | `ARCHERO_DEMO_ANCHOR_DATE` | Local test only | Final fixture date in `YYYY-MM-DD` format; twenty preceding days are generated |
 | `ARCHERO_DEMO_SCENARIO` | Local test only | Synthetic variant: `baseline`, `audit-anomalies`, `record-variants`, or `sparse` |
+| `ARCHERO_ENVIRONMENT_ID` | Isolated test only | Launcher-owned identity matching `t-*`; required by the administrator test-data loader |
+| `ARCHERO_ENABLE_TEST_DATA_ADMIN` | Isolated test only | Enables synthetic PostgreSQL load/clear only in development/test mode with a loopback origin, a `t-*` identity, and non-strict database mode |
 
 Comment out both database URL variables to use explicit demonstration mode.
 Database mode never falls back to demonstration data.
@@ -93,7 +96,8 @@ in `ocr/.env` or Git.
 ## Internal and test-only settings
 
 `ARCHERO_NEXT_OUTPUT`, `ARCHERO_API_TEST_URL`, `ARCHERO_API_TOKEN`,
-`NEXT_PUBLIC_APP_VERSION`, `NEXT_PUBLIC_LOCAL_OCR_ENABLED`, `ARCHERO_PYTHON`,
+`NEXT_PUBLIC_APP_VERSION`, `NEXT_PUBLIC_LOCAL_OCR_ENABLED`,
+`NEXT_PUBLIC_TEST_DATA_ADMIN`, `NEXT_PUBLIC_DEPLOYMENT_ENV`, `ARCHERO_PYTHON`,
 `ARCHERO_OCR_UI_ROOT`, `ARCHERO_PROGRESS`, `ARCHERO_RULES_FILE`, and
 `ARCHERO_WSL_DISTRO` are owned by builds, tests, wrappers, or internal runtime
 adapters. They are intentionally absent from operator examples.

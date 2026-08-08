@@ -96,12 +96,14 @@ button {
   gap: 4px;
 }
 
-.admin-nav-list {
+.admin-nav-list,
+.test-nav-list {
   border-top: 1px solid oklch(34% 0.03 250);
   padding-top: 12px;
 }
 
-.admin-nav-list > span {
+.admin-nav-list > span,
+.test-nav-list > span {
   color: oklch(76% 0.025 250);
   padding: 0 12px 4px;
   font-size: 12px;
@@ -218,6 +220,52 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.test-data-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-color: oklch(78% 0.11 85);
+  background: oklch(97% 0.025 85);
+}
+
+.test-data-panel h2 {
+  margin: 6px 0 4px;
+}
+
+.test-data-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.environment-badge {
+  display: inline-flex;
+  border-radius: 999px;
+  background: oklch(86% 0.12 85);
+  color: oklch(35% 0.1 70);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.test-data-actions {
+  display: grid;
+  flex: 0 0 min(320px, 100%);
+  gap: 8px;
+}
+
+.test-data-clear {
+  border-color: oklch(67% 0.13 28);
+  color: oklch(43% 0.15 28);
+}
+
+.test-data-clear:hover,
+.test-data-clear:focus-visible {
+  background: oklch(95% 0.035 28);
 }
 
 .main {
@@ -3156,6 +3204,15 @@ th.numeric {
   .data-modal-actions .secondary-button {
     justify-content: center;
     width: 100%;
+  }
+
+  .test-data-panel {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .test-data-actions {
+    flex-basis: auto;
   }
 
   .bar-row {

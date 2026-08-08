@@ -27,7 +27,9 @@ export function isPublicPath(pathname) {
 }
 
 export function isAdminPath(pathname) {
-  return pathname === "/admin"
+  return pathname === "/test"
+    || pathname.startsWith("/test/")
+    || pathname === "/admin"
     || pathname.startsWith("/admin/")
     || pathname === "/api/member-admin"
     || pathname === "/api/warning-actions"

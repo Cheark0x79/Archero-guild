@@ -206,6 +206,7 @@ const routeMeta = {
   boss: ["Boss", "Guild boss damage comparison, daily rankings, and records."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
   admin: ["Admin", "Operational tools and local rules."],
+  test: ["Test", "Synthetic fixtures and isolated environment controls."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
   activity: ["Activity", "Roster events, absences, and warnings."],
@@ -341,6 +342,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         {!dataLoading && activeRoute === "boss" && <BossView />}
         {!dataLoading && activeRoute === "data" && <DataView />}
         {!dataLoading && activeRoute === "admin" && <AdminView dataVersion={dataVersion} />}
+        {!dataLoading && activeRoute === "test" && <TestEnvironmentView />}
         {!dataLoading && activeRoute === "member" && selectedMember && (
           <MemberDetail
             member={selectedMember}
@@ -901,6 +903,86 @@ function AdminView({ dataVersion }) {
         </section>
       </div>
     </div>
+  );
+}
+
+function TestEnvironmentView() {
+  return (
+    <div className="admin-management">
+      <TestDataPanel />
+    </div>
+  );
+}
+
+function TestDataPanel() {
+  const [state, setState] = useState({ operation: "", error: "", success: "" });
+
+  async function loadTestData() {
+    const confirmed = window.confirm(
+      "Load deterministic synthetic members and boss history into this isolated test database? Existing real data will never be overwritten.",
+    );
+    if (!confirmed) return;
+    setState({ operation: "load", error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/test-data", {
+        method: "POST",
+        headers: dataActionHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) throw new Error(payload.error ?? "Unable to load synthetic test data.");
+      setState({
+        operation: "",
+        error: "",
+        success: `${payload.members} fictional members and ${payload.days} days loaded. Refreshing the Web views…`,
+      });
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      setState({ operation: "", error: error instanceof Error ? error.message : "Unable to load synthetic test data.", success: "" });
+    }
+  }
+
+  async function clearTestData() {
+    const confirmed = window.confirm(
+      "Clear every synthetic member, history day, and boss result from this isolated test database? This cannot clear a database containing non-synthetic data.",
+    );
+    if (!confirmed) return;
+    setState({ operation: "clear", error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/test-data", {
+        method: "DELETE",
+        headers: dataActionHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) throw new Error(payload.error ?? "Unable to clear synthetic test data.");
+      setState({
+        operation: "",
+        error: "",
+        success: `${payload.cleared?.members ?? 0} fictional members cleared. Refreshing the Web views…`,
+      });
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      setState({ operation: "", error: error instanceof Error ? error.message : "Unable to clear synthetic test data.", success: "" });
+    }
+  }
+
+  return (
+    <section className="panel test-data-panel" aria-labelledby="test-data-title">
+      <div>
+        <span className="environment-badge">Test environment</span>
+        <h2 id="test-data-title">Synthetic database</h2>
+        <p>Load fictional members, daily metrics, and boss rankings without contacting OCR or using production data.</p>
+      </div>
+      <div className="test-data-actions">
+        <button className="primary-button" type="button" disabled={Boolean(state.operation)} onClick={loadTestData}>
+          {state.operation === "load" ? "Loading test data…" : "Load synthetic test data"}
+        </button>
+        <button className="secondary-button test-data-clear" type="button" disabled={Boolean(state.operation)} onClick={clearTestData}>
+          {state.operation === "clear" ? "Clearing test data…" : "Clear synthetic data"}
+        </button>
+        {state.error ? <span className="form-error" role="alert">{state.error}</span> : null}
+        {state.success ? <span className="form-success" role="status">{state.success}</span> : null}
+      </div>
+    </section>
   );
 }
 

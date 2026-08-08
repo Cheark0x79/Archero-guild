@@ -14,11 +14,12 @@ const adminNavItems = [
   ["settings", "Rules", "/admin/rules"],
 ];
 
-export function navigationItemsForRole(role, { localOcrEnabled = false } = {}) {
-  if (role !== ADMIN_ROLE) return { primary: publicNavItems, admin: [] };
+export function navigationItemsForRole(role, { localOcrEnabled = false, testToolsEnabled = false } = {}) {
+  if (role !== ADMIN_ROLE) return { primary: publicNavItems, admin: [], test: [] };
   const admin = [...adminNavItems];
   if (localOcrEnabled) admin.splice(1, 0, ["data", "Data", "/admin/data"]);
-  return { primary: publicNavItems, admin };
+  const test = testToolsEnabled ? [["test", "Test tools", "/test"]] : [];
+  return { primary: publicNavItems, admin, test };
 }
 
 export function sessionRoleLabel(role) {
