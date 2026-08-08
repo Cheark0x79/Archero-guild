@@ -20,7 +20,8 @@ BlueStacks / exported PNG
           |
           v
 OCR workstation (:5190)
-capture -> OCR -> human review -> import-batch.schema.json validation
+explicit roster sync <- HTTPS ingestion API <- PostgreSQL
+local cache -> capture -> OCR -> human review -> import-batch.schema.json validation
           |
           | HTTPS + ingestion key (+ Cloudflare service token when enabled)
           v
@@ -33,7 +34,9 @@ PostgreSQL -> dashboard export adapter -> dashboard and /api/v1
 ```
 
 Raw screenshots remain on the workstation. Only reviewed structured JSON is
-sent to the server.
+sent to the server. Player IDs can be explicitly synchronized from the roster
+API and cached locally; local extraction never opens a hidden database or
+network connection.
 
 ## Trust boundaries
 

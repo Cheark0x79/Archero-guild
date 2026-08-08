@@ -76,6 +76,22 @@ class OcrPublishTests(unittest.TestCase):
             with self.assertRaises(PublishError):
                 publish_batch({}, target="https://guild.example", token="secret")
 
+    def test_reports_destination_validation_errors(self) -> None:
+        with patch(
+            "observer.ocr.publish._post_json",
+            return_value={"data": {"publishable": False, "errors": ["boss rank 4 is missing"]}},
+        ):
+            with self.assertRaisesRegex(PublishError, "boss rank 4 is missing"):
+                publish_batch({}, target="https://guild.example", token="secret")
+
+    def test_explains_a_destination_contract_version_mismatch(self) -> None:
+        with patch(
+            "observer.ocr.publish._post_json",
+            return_value={"data": {"publishable": False, "errors": []}},
+        ):
+            with self.assertRaisesRegex(PublishError, "combined Members \\+ Boss import update"):
+                publish_batch({}, target="https://guild.example", token="secret")
+
     def test_adds_cloudflare_service_token_headers(self) -> None:
         with patch(
             "observer.ocr.publish._post_json",

@@ -1,12 +1,71 @@
 import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlparse
 
+import observer.storage.ingest_batch as ingest_module
 from observer.storage.ingest_batch import ingest_batch
 
 
 TEST_DSN = os.environ.get("ARCHERO_TEST_DATABASE_URL")
+
+
+def integration_batch(*, idempotency_key: str = "2099-01-05:integration-test") -> dict:
+    return {
+        "schemaVersion": 1,
+        "captureDate": "2099-01-05",
+        "generatedAt": "2099-01-05T20:15:00+01:00",
+        "agentVersion": "integration-test",
+        "idempotencyKey": idempotency_key,
+        "sourceImages": [
+            {
+                "kind": "guild-members",
+                "sha256": "a" * 64,
+                "width": 1440,
+                "height": 2560,
+                "detectedRows": 1,
+                "sourceName": "members.png",
+            },
+            {
+                "kind": "guild-boss",
+                "sha256": "b" * 64,
+                "width": 1440,
+                "height": 2560,
+                "detectedRows": 1,
+                "sourceName": "boss.png",
+            },
+        ],
+        "members": [
+            {
+                "playerId": "999000001",
+                "name": "Integration Test",
+                "role": "member",
+                "power": 1_000_000,
+                "powerText": "1M",
+                "contribution7d": 500,
+                "bossAttacks": 2,
+                "lastActivityDays": 0,
+                "activityText": "Online",
+                "source": "members.png row 0",
+                "matchScore": 1,
+            }
+        ],
+        "bossRankings": [
+            {
+                "playerId": "999000001",
+                "name": "Integration Test",
+                "rawName": "Integration Test",
+                "rank": 1,
+                "damageText": "2.5M",
+                "damage": 2_500_000,
+                "area": "podium",
+                "rowIndex": 0,
+                "source": "boss.png podium 1",
+            }
+        ],
+        "quality": {"status": "pass", "coverage": 1, "completeness": 1, "warnings": []},
+    }
 
 
 @unittest.skipUnless(TEST_DSN, "ARCHERO_TEST_DATABASE_URL is required for PostgreSQL integration tests")
@@ -30,40 +89,7 @@ class IngestBatchPostgresTests(unittest.TestCase):
         self._truncate()
 
     def test_ingestion_is_transactional_and_idempotent(self) -> None:
-        batch = {
-            "schemaVersion": 1,
-            "captureDate": "2099-01-05",
-            "generatedAt": "2099-01-05T20:15:00+01:00",
-            "agentVersion": "integration-test",
-            "idempotencyKey": "2099-01-05:integration-test",
-            "sourceImages": [
-                {
-                    "kind": "guild-members",
-                    "sha256": "a" * 64,
-                    "width": 1440,
-                    "height": 2560,
-                    "detectedRows": 1,
-                    "sourceName": "members.png",
-                }
-            ],
-            "members": [
-                {
-                    "playerId": "999000001",
-                    "name": "Integration Test",
-                    "role": "member",
-                    "power": 1_000_000,
-                    "powerText": "1M",
-                    "contribution7d": 500,
-                    "bossAttacks": 2,
-                    "lastActivityDays": 0,
-                    "activityText": "Online",
-                    "source": "members.png row 0",
-                    "matchScore": 1,
-                }
-            ],
-            "bossRankings": [],
-            "quality": {"status": "pass", "coverage": 1, "completeness": 1, "warnings": []},
-        }
+        batch = integration_batch()
 
         first = ingest_batch(batch, TEST_DSN)
         replay = ingest_batch(batch, TEST_DSN)
@@ -89,6 +115,10 @@ class IngestBatchPostgresTests(unittest.TestCase):
                 """,
                 (batch["captureDate"],),
             ).fetchone()[0]
+            boss_count = connection.execute(
+                "SELECT count(*) FROM boss_daily_results WHERE capture_date = %s",
+                (batch["captureDate"],),
+            ).fetchone()[0]
             stored_payload = connection.execute(
                 "SELECT payload FROM remote_import_batches WHERE idempotency_key = %s",
                 (batch["idempotencyKey"],),
@@ -96,7 +126,40 @@ class IngestBatchPostgresTests(unittest.TestCase):
 
         self.assertEqual(remote_count, 1)
         self.assertEqual(metric_count, 1)
+        self.assertEqual(boss_count, 1)
         self.assertEqual(stored_payload["members"][0]["playerId"], "999000001")
+
+    def test_failure_after_combined_persistence_rolls_back_every_scope(self) -> None:
+        batch = integration_batch(idempotency_key="2099-01-05:rollback-test")
+        persist = ingest_module.persist_import_report_in_connection
+
+        def persist_then_fail(*args, **kwargs):
+            persist(*args, **kwargs)
+            raise RuntimeError("simulated failure after persistence")
+
+        with patch.object(ingest_module, "persist_import_report_in_connection", side_effect=persist_then_fail):
+            with self.assertRaisesRegex(RuntimeError, "simulated failure"):
+                ingest_batch(batch, TEST_DSN)
+
+        import psycopg
+
+        with psycopg.connect(TEST_DSN) as connection:
+            counts = {
+                table: connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "remote_import_batches",
+                    "guild_snapshots",
+                    "member_metrics",
+                    "boss_daily_results",
+                )
+            }
+
+        self.assertEqual(counts, {
+            "remote_import_batches": 0,
+            "guild_snapshots": 0,
+            "member_metrics": 0,
+            "boss_daily_results": 0,
+        })
 
     @staticmethod
     def _truncate() -> None:

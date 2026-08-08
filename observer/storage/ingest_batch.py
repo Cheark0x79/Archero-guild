@@ -209,12 +209,21 @@ def _validate_batch(batch: dict[str, Any]) -> None:
         for image in batch.get("sourceImages", [])
         if isinstance(image, dict)
     }
-    if len(source_kinds) != 1 or quality.get("coverage") != 1:
-        raise BatchIngestionError("quality gate requires one capture scope with 100% coverage")
-    if source_kinds == {"guild-members"} and not batch.get("members"):
+    if not source_kinds or not source_kinds.issubset({"guild-members", "guild-boss"}) or quality.get("coverage") != 1:
+        raise BatchIngestionError("quality gate requires every capture scope with 100% coverage")
+    if "guild-members" in source_kinds and not batch.get("members"):
         raise BatchIngestionError("quality gate requires at least one member row")
-    if source_kinds == {"guild-boss"} and (
-        not batch.get("bossRankings") or quality.get("completeness") != 1
+    boss_rows = batch.get("bossRankings") or []
+    if "guild-boss" in source_kinds and (
+        not boss_rows
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("rank"), int)
+            or not str(row.get("name") or "").strip()
+            or not isinstance(row.get("damage"), int)
+            or not str(row.get("damageText") or "").strip()
+            for row in boss_rows
+        )
     ):
         raise BatchIngestionError("quality gate requires complete boss rows")
 

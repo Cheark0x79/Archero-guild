@@ -8,6 +8,8 @@ const state = {
   images: [],
   referenceImages: [],
   preflight: null,
+  editingTargetKey: null,
+  sessionDate: null,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -84,6 +86,10 @@ function setCaptureDate(isoDate) {
   $("capture-date-display").value = formatFrenchDate(isoDate);
 }
 
+function activeSessionDate() {
+  return state.sessionDate || localDate();
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     cache: "no-store",
@@ -100,6 +106,7 @@ function setBusy(busy) {
   [
     "upload", "scan", "refresh", "clear", "preflight", "add-row",
     "reset-session", "reference-previous", "reference-next",
+    "sync-roster", "add-target", "edit-target", "delete-target", "save-target",
   ].forEach((id) => { $(id).disabled = busy; });
   document.querySelectorAll("[data-edit-field]").forEach((control) => { control.disabled = busy; });
   document.querySelectorAll(".delete-row, .add-missing-member").forEach((control) => { control.disabled = busy; });
@@ -122,22 +129,22 @@ async function loadStatus() {
     $("service-dot").classList.add("online");
     $("service-label").textContent = payload.busy ? "OCR busy" : "OCR ready";
     $("agent-version").textContent = `Agent ${payload.agentVersion}`;
+    const visibleTargets = payload.targets.filter((target) => target.mode === "local" || target.configured);
     const previous = $("target").value;
-    $("target").replaceChildren(...payload.targets.map((target) => {
+    $("target").replaceChildren(...visibleTargets.map((target) => {
       const option = document.createElement("option");
       option.value = target.key;
-      option.disabled = target.mode === "remote" && !target.configured;
       const destination = target.mode === "local"
         ? "clear/review only"
-        : target.configured ? target.url : "configuration required";
+        : target.url;
       option.textContent = `${target.label} · ${destination}`;
       return option;
     }));
-    const selected = payload.targets.find((target) => target.key === previous)
-      ?? payload.targets.find((target) => target.key === "preprod" && target.configured)
-      ?? payload.targets.find((target) => target.mode === "remote" && target.configured)
-      ?? payload.targets[0];
+    const selected = visibleTargets.find((target) => target.key === previous)
+      ?? visibleTargets.find((target) => target.key === "local")
+      ?? visibleTargets[0];
     if (selected) $("target").value = selected.key;
+    renderRosterControls();
     updateTargetEditor();
     updateTargetControls();
     await loadDay();
@@ -148,8 +155,7 @@ async function loadStatus() {
 }
 
 async function loadDay() {
-  const captureDate = $("capture-date").value;
-  if (!captureDate) return;
+  const captureDate = activeSessionDate();
   try {
     const payload = await request(`/api/day?date=${encodeURIComponent(captureDate)}`);
     state.images = [];
@@ -201,13 +207,17 @@ function renderExtractionSelection() {
     ? `${count} screenshot${count === 1 ? "" : "s"} ready`
     : existingScope
       ? "Existing batch available in Review"
-      : "Upload screenshots in Step 1";
+      : `Upload ${scopeLabel(workflowKind())} screenshots in the current capture step`;
   $("scan").disabled = state.busy || count === 0;
   $("scan-help").textContent = count
     ? `Validate this ${label} session to start local OCR. No destination is contacted.`
     : existingScope
-      ? "Upload new screenshots in Step 1 to start another extraction."
-      : "Upload screenshots in Step 1 before extraction.";
+      ? "Upload new screenshots in this capture step to replace its current extraction."
+      : "Upload screenshots in the current capture step before extraction.";
+}
+
+function workflowKind(step = state.step) {
+  return step === 3 || step === 4 ? "guild-boss" : "guild-members";
 }
 
 function selectedImageKind() {
@@ -235,12 +245,12 @@ async function uploadImages() {
     const payload = await request("/api/upload", {
       method: "POST",
       body: JSON.stringify({
-        date: $("capture-date").value,
+        date: activeSessionDate(),
         kind: $("upload-kind").value,
         files: encoded,
       }),
     });
-    const captureDate = $("capture-date").value;
+    const captureDate = activeSessionDate();
     const kind = $("upload-kind").value;
     state.images = payload.files.map((file) => ({
       ...file,
@@ -248,12 +258,12 @@ async function uploadImages() {
     }));
     state.referenceImages = [...state.images];
     $("upload-files").value = "";
-    clearBatchView();
+    await loadBatch().catch(() => clearBatchView());
     renderUploadSelection();
     renderExtractionSelection();
     renderReferenceOptions();
-    message(`${payload.files.length} ${scopeLabel(kind)} screenshot(s) uploaded. The previous active session was archived.`);
-    goToStep(2);
+    message(`${payload.files.length} ${scopeLabel(kind)} screenshot(s) uploaded. Validate the local extraction below.`);
+    document.querySelector('[data-step-panel="2"]').scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     message(error.message, true);
   } finally {
@@ -262,8 +272,8 @@ async function uploadImages() {
 }
 
 async function resetCaptureSession() {
-  const captureDate = $("capture-date").value;
-  const kind = $("upload-kind").value;
+  const captureDate = activeSessionDate();
+  const kind = workflowKind();
   const label = scopeLabel(kind);
   if (!window.confirm(`Reset the active ${label} capture session for ${captureDate}? The old screenshots will be archived.`)) return;
   setBusy(true);
@@ -280,7 +290,7 @@ async function resetCaptureSession() {
     state.images = [];
     state.referenceImages = [];
     $("upload-files").value = "";
-    clearBatchView();
+    await loadBatch().catch(() => clearBatchView());
     renderUploadSelection();
     renderExtractionSelection();
     message(`${label} session reset. ${payload.archivedImages} active screenshot(s) archived.`);
@@ -303,31 +313,32 @@ function fileToDataUrl(file) {
 async function runScan() {
   const images = state.images.map(({ kind, name }) => ({ kind, name }));
   if (!images.length) {
-    message("Select at least one screenshot in Step 1 before extraction.", true);
-    goToStep(1);
+    message("Select at least one screenshot in the current capture step before extraction.", true);
+    goToStep(workflowKind() === "guild-boss" ? 3 : 1);
     return;
   }
   if (new Set(images.map((image) => image.kind)).size !== 1) {
     message("Extract Guild members and Guild boss as two separate batches.", true);
-    goToStep(1);
+    goToStep(workflowKind() === "guild-boss" ? 3 : 1);
     return;
   }
   setBusy(true);
+  state.table = images[0].kind === "guild-boss" ? "bosses" : "members";
   $("extraction-progress").hidden = false;
   $("scan").textContent = "Extracting…";
   message(`Running Tesseract locally on ${images.length} selected screenshot(s)…`);
   try {
     const payload = await request("/api/scan", {
       method: "POST",
-      body: JSON.stringify({ date: $("capture-date").value, images }),
+      body: JSON.stringify({ date: activeSessionDate(), images }),
     });
     const rosterSource = payload.result?.rosterSource;
     const rosterMessage = rosterSource?.type === "database"
       ? ` IDs were matched against ${rosterSource.label}.`
       : rosterSource ? " The local fallback roster was used for ID matching." : "";
-    message(`OCR extraction finished.${rosterMessage} Review rows highlighted in red.`);
+    message(`OCR extraction finished.${rosterMessage} Review this source, then process the other one before export.`);
     await loadBatch();
-    goToStep(3);
+    goToStep(images[0].kind === "guild-boss" ? 4 : 2);
   } catch (error) {
     message(error.message, true);
   } finally {
@@ -338,7 +349,7 @@ async function runScan() {
 }
 
 async function loadBatch() {
-  const payload = await request(`/api/batch?date=${encodeURIComponent($("capture-date").value)}`);
+  const payload = await request(`/api/batch?date=${encodeURIComponent(activeSessionDate())}`);
   state.batch = payload.batch;
   state.corrections = payload.corrections || { entries: [] };
   renderBatch();
@@ -359,12 +370,15 @@ function clearBatchView() {
   $("publish-scope").textContent = "No source ready";
   $("review-head").replaceChildren();
   $("review-body").replaceChildren();
+  $("review-members").disabled = true;
+  $("review-boss").disabled = true;
   $("missing-members").hidden = true;
   $("missing-members-list").replaceChildren();
   if (!state.images.length) state.referenceImages = [];
   renderReferenceOptions();
   renderCorrections();
   updateTargetControls();
+  renderWorkflowProgress();
 }
 
 function renderBatch() {
@@ -381,42 +395,48 @@ function renderBatch() {
   $("completeness").textContent = percent(quality.completeness);
   $("batch-key").textContent = batch.idempotencyKey || "No idempotency key";
   $("review-scope-label").textContent = scopeLabel(scope);
-  const reviewRows = scope === "guild-boss" ? batch.bossRankings || [] : batch.members || [];
-  const incompleteRows = reviewRows.filter((row) => missingFields(row, scope === "guild-boss" ? "bosses" : "members").length > 0).length;
-  const duplicateIds = scope === "guild-members" ? duplicateValues(reviewRows, "playerId") : new Set();
+  if (state.table === "members" && !(batch.members || []).length && (batch.bossRankings || []).length) state.table = "bosses";
+  if (state.table === "bosses" && !(batch.bossRankings || []).length && (batch.members || []).length) state.table = "members";
+  const reviewRows = state.table === "bosses" ? batch.bossRankings || [] : batch.members || [];
+  const incompleteRows = reviewRows.filter((row) => missingFields(row, state.table).length > 0).length;
+  const duplicateIds = state.table === "members" ? duplicateValues(reviewRows, "playerId") : new Set();
   const duplicateRows = reviewRows.filter((row) => duplicateIds.has(row.playerId)).length;
   $("review-count").textContent = [
     `${reviewRows.length} row${reviewRows.length === 1 ? "" : "s"}`,
     incompleteRows ? `${incompleteRows} incomplete` : "",
     duplicateRows ? `${duplicateRows} duplicate IDs` : "",
   ].filter(Boolean).join(" · ");
-  $("publish-scope").textContent = `${scopeLabel(scope)} only`;
+  $("publish-scope").textContent = scope === "mixed" ? "Guild members + Guild boss · one atomic export" : `${scopeLabel(scope)} ready · add the other source`;
   $("quality-warnings").replaceChildren(...(quality.warnings || []).map((warning) => {
     const row = document.createElement("span");
     row.textContent = warning;
     return row;
   }));
   if (scope !== "mixed") state.table = scope === "guild-boss" ? "bosses" : "members";
+  $("review-scope-label").textContent = state.table === "bosses" ? "Guild boss" : "Guild members";
+  $("review-members").disabled = state.busy || !(batch.members || []).length;
+  $("review-boss").disabled = state.busy || !(batch.bossRankings || []).length;
   state.referenceImages = (batch.sourceImages || []).map((image) => ({
     kind: image.kind,
     name: image.sourceName,
-    url: captureImageUrl($("capture-date").value, image.kind, image.sourceName),
+    url: captureImageUrl(activeSessionDate(), image.kind, image.sourceName),
   }));
   renderReferenceOptions();
   renderTable();
   renderCorrections();
   renderExtractionSelection();
   updateTargetControls();
+  renderWorkflowProgress();
 }
 
 async function loadMissingMembers() {
-  if (!state.batch || batchScope(state.batch) !== "guild-members") {
+  if (!state.batch || state.table !== "members" || !(state.batch.members || []).length) {
     $("missing-members").hidden = true;
     $("missing-members-list").replaceChildren();
     return;
   }
   try {
-    const payload = await request(`/api/missing-members?date=${encodeURIComponent($("capture-date").value)}`);
+    const payload = await request(`/api/missing-members?date=${encodeURIComponent(activeSessionDate())}`);
     const members = payload.members || [];
     $("missing-members").hidden = members.length === 0;
     $("missing-members-count").textContent = `${members.length} missing`;
@@ -457,7 +477,7 @@ async function addReviewedRow(initial = {}) {
     const payload = await request("/api/add-row", {
       method: "POST",
       body: JSON.stringify({
-        date: $("capture-date").value,
+        date: activeSessionDate(),
         category,
         initial,
       }),
@@ -562,7 +582,7 @@ async function deleteReviewedRow(category, rowIndex, row) {
     const payload = await request("/api/delete-row", {
       method: "POST",
       body: JSON.stringify({
-        date: $("capture-date").value,
+        date: activeSessionDate(),
         category,
         rowIndex,
       }),
@@ -607,7 +627,7 @@ async function saveEdit(category, rowIndex, field, value) {
     const payload = await request("/api/edit", {
       method: "POST",
       body: JSON.stringify({
-        date: $("capture-date").value,
+        date: activeSessionDate(),
         category,
         rowIndex,
         field,
@@ -670,7 +690,7 @@ function deletedRowLabel(row) {
 }
 
 async function clearExtractedData() {
-  const captureDate = $("capture-date").value;
+  const captureDate = activeSessionDate();
   if (!state.batch) {
     message("There is no extracted JSON to clear.", true);
     return;
@@ -697,19 +717,19 @@ async function publishBatch() {
     return;
   }
   setBusy(true);
-  message("Destination checked. Publishing the reviewed JSON…");
+  message("Destination checked. Exporting Members and Boss together…");
   try {
     const payload = await request("/api/publish", {
       method: "POST",
       body: JSON.stringify({
         date: $("capture-date").value,
+        sessionDate: activeSessionDate(),
         target: $("target").value,
-        confirmation: $("confirmation").value.trim(),
+        confirmation: `PUBLISH ${$("target").value.toUpperCase()}`,
       }),
     });
-    $("confirmation").value = "";
     const label = scopeLabel(batchScope(state.batch));
-    message(payload.result.import?.replayed ? `${label} batch was already present on the target.` : `${label} batch published successfully.`);
+    message(payload.result.import?.replayed ? `${label} batch was already present on the target.` : `${label} exported successfully in one transaction.`);
     resetPreflight();
   } catch (error) {
     message(error.message, true);
@@ -732,6 +752,7 @@ function resetPreflight() {
   $("preflight-state").textContent = "Not checked";
   $("preflight-state").className = "badge neutral";
   $("preflight-help").textContent = "Check connectivity, authentication and batch validity before sending.";
+  renderWorkflowProgress();
 }
 
 async function checkDestination() {
@@ -750,14 +771,16 @@ async function checkDestination() {
       method: "POST",
       body: JSON.stringify({
         date: $("capture-date").value,
+        sessionDate: activeSessionDate(),
         target: target.key,
       }),
     });
     state.preflight = { key: preflightKey() };
+    renderWorkflowProgress();
     $("preflight-state").textContent = "Ready to send";
     $("preflight-state").className = "badge pass";
     $("preflight-help").textContent = "Connectivity, authentication and batch validation succeeded. No data was imported.";
-    message(`${target.label} check passed. You can now confirm and publish.`);
+    message(`${target.label} check passed. You can now open the export confirmation.`);
   } catch (error) {
     resetPreflight();
     $("preflight-state").textContent = "Check failed";
@@ -778,11 +801,39 @@ function batchScope(batch) {
 function scopeLabel(scope) {
   if (scope === "guild-members") return "Guild members";
   if (scope === "guild-boss") return "Guild boss";
-  return "Mixed";
+  return "Members + Boss";
 }
 
 function selectedTarget() {
   return state.status?.targets?.find((target) => target.key === $("target").value);
+}
+
+function remoteTargets() {
+  return (state.status?.targets || []).filter((target) => target.mode === "remote" && target.configured);
+}
+
+function renderRosterControls() {
+  const previous = $("roster-source").value;
+  const targets = remoteTargets();
+  $("roster-source").replaceChildren(...targets.map((target) => {
+    const option = document.createElement("option");
+    option.value = target.key;
+    option.textContent = `${target.label} · ${target.url}`;
+    return option;
+  }));
+  if (targets.some((target) => target.key === previous)) $("roster-source").value = previous;
+  const cache = state.status?.rosterCache;
+  $("sync-roster").disabled = state.busy || targets.length === 0;
+  $("roster-cache-state").textContent = cache?.configured ? `${cache.count} IDs cached` : "Not synchronized";
+  $("roster-cache-state").className = `badge ${cache?.configured ? "pass" : "neutral"}`;
+  if (cache?.configured) {
+    const updated = cache.updatedAt ? new Date(cache.updatedAt).toLocaleString() : "unknown date";
+    $("roster-cache-summary").textContent = `Last synchronized from ${cache.source?.label || "a remote application"} on ${updated}. Local OCR can reuse this cache offline.`;
+  } else {
+    $("roster-cache-summary").textContent = targets.length
+      ? "No remote IDs have been cached. Choose a source and synchronize explicitly, or keep using the bundled local fallback."
+      : "No remote destination is configured. Local OCR uses the bundled fallback and previously reviewed identities.";
+  }
 }
 
 function updateTargetEditor() {
@@ -795,7 +846,111 @@ function updateTargetEditor() {
     ? "Local test keeps the reviewed JSON on this PC and never sends data."
     : target.configured
       ? `Configured endpoint: ${target.url}`
-      : "This destination is not configured. Update ocr/targets.json before publishing.";
+      : "This destination is not configured.";
+  $("edit-target").disabled = state.busy || local;
+  $("delete-target").disabled = state.busy || local;
+  $("add-target").disabled = state.busy;
+}
+
+function slugifyTarget(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+}
+
+function openTargetForm(target = null) {
+  state.editingTargetKey = target?.key || null;
+  $("target-dialog").showModal();
+  $("target-form-title").textContent = target ? `Edit ${target.label}` : "Add destination";
+  $("target-label").value = target?.label || "";
+  $("target-key").value = target?.key || "";
+  $("target-key").disabled = Boolean(target);
+  $("target-url").value = target?.url || "";
+  $("target-token").value = "";
+  $("target-token").required = !target;
+  $("target-cf-id").value = "";
+  $("target-cf-secret").value = "";
+  $("target-cf-clear").checked = false;
+  $("target-label").focus();
+}
+
+function closeTargetForm() {
+  state.editingTargetKey = null;
+  $("target-dialog").close();
+  $("target-form").reset();
+}
+
+async function saveTarget(event) {
+  event.preventDefault();
+  const key = state.editingTargetKey || $("target-key").value.trim();
+  setBusy(true);
+  message("Saving the private destination…");
+  try {
+    await request("/api/targets", {
+      method: "POST",
+      body: JSON.stringify({
+        key,
+        label: $("target-label").value,
+        url: $("target-url").value,
+        ingestionToken: $("target-token").value,
+        cfAccessClientId: $("target-cf-id").value,
+        cfAccessClientSecret: $("target-cf-secret").value,
+        clearCloudflareAccess: $("target-cf-clear").checked,
+        createOnly: !state.editingTargetKey,
+      }),
+    });
+    closeTargetForm();
+    await loadStatus();
+    $("target").value = key;
+    updateTargetEditor();
+    updateTargetControls();
+    message("Destination saved locally. Its secret was not returned to the browser.");
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteTarget() {
+  const target = selectedTarget();
+  if (!target || target.mode === "local") return;
+  if (!window.confirm(`Delete the local destination “${target.label}”? OCR batches and captures are kept.`)) return;
+  setBusy(true);
+  try {
+    await request("/api/targets/delete", { method: "POST", body: JSON.stringify({ key: target.key }) });
+    closeTargetForm();
+    await loadStatus();
+    message(`Destination “${target.label}” deleted. OCR data was kept.`);
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function synchronizeRoster() {
+  const target = remoteTargets().find((item) => item.key === $("roster-source").value);
+  if (!target) return;
+  setBusy(true);
+  message(`Synchronizing player IDs from ${target.label}…`);
+  try {
+    const payload = await request("/api/roster/sync", {
+      method: "POST",
+      body: JSON.stringify({ target: target.key }),
+    });
+    state.status.rosterCache = payload.rosterCache;
+    renderRosterControls();
+    message(`${payload.rosterCache.count} player IDs cached locally. No OCR batch was published.`);
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    setBusy(false);
+  }
 }
 
 function updateTargetControls() {
@@ -808,26 +963,23 @@ function updateTargetControls() {
     $("preflight-state").textContent = "Not required";
     $("preflight-state").className = "badge neutral";
     $("preflight-help").textContent = "Local test does not send data.";
-    $("confirmation-help").textContent = "Local test keeps data on this PC. Use Clear or choose a remote destination.";
-    $("confirmation").placeholder = "Publication disabled for local test";
-    $("confirmation").disabled = true;
     $("publish").disabled = true;
     return;
   }
-  const phrase = `PUBLISH ${target.key.toUpperCase()}`;
-  const confirmationMatches = $("confirmation").value.trim() === phrase;
   const duplicateMemberIds = duplicateValues(state.batch?.members || [], "playerId");
   const coverage = Number(state.batch?.quality?.coverage);
   const blocker = !target.configured
-    ? "Configure this destination in ocr/targets.json."
+    ? "Configure this destination from the local destination editor."
     : !state.batch
       ? "Complete OCR extraction and review before checking the destination."
-    : batchScope(state.batch) === "mixed"
-      ? "Guild and Boss must be extracted and published as two separate batches."
+    : batchScope(state.batch) !== "mixed"
+      ? "Review both Guild members and Guild boss before exporting them together."
     : duplicateMemberIds.size
       ? `Resolve duplicate Player IDs: ${[...duplicateMemberIds].join(", ")}.`
     : Number.isFinite(coverage) && coverage < 1
-      ? `Coverage is ${(coverage * 100).toFixed(1)}%. Review or add the missing row before checking the destination.`
+      ? state.batch.members.length < Number(state.batch.quality?.memberExpectedRows || 0)
+        ? `Members coverage is ${(coverage * 100).toFixed(1)}%. Review or add the missing guild member.`
+        : `Boss ranks contain a gap. Review the missing rank before checking the destination.`
     : !hasPublishableBatch
       ? "A linked name is required for every row. Other missing member metrics may stay empty."
       : null;
@@ -840,29 +992,20 @@ function updateTargetControls() {
     $("preflight-state").className = "badge neutral";
     $("preflight-help").textContent = "Check connectivity, authentication and batch validity before sending.";
   }
-  $("confirmation-help").textContent = blocker
-    ?? (!hasValidPreflight
-        ? "Check the destination before confirming publication."
-        : `Type ${phrase}`);
-  $("confirmation").placeholder = phrase;
-  $("confirmation").disabled = state.busy || !target.configured || !hasPublishableBatch || !hasValidPreflight;
-  $("publish").disabled = state.busy || !target.publishable || !hasPublishableBatch || !hasValidPreflight || !confirmationMatches;
+  $("publish").disabled = state.busy || !target.publishable || !hasPublishableBatch || !hasValidPreflight;
 }
 
 function isLocallyPublishableBatch(batch) {
-  if (!batch || batchScope(batch) === "mixed" || batch.quality?.coverage !== 1) return false;
+  if (!batch || batchScope(batch) !== "mixed" || batch.quality?.coverage !== 1) return false;
   const scope = batchScope(batch);
-  if (scope === "guild-members") {
-    const rows = batch.members || [];
-    return rows.length > 0
-      && duplicateValues(rows, "playerId").size === 0
-      && rows.every((row) => Boolean(String(row.name || "").trim()));
-  }
-  if (scope === "guild-boss") {
-    const rows = batch.bossRankings || [];
-    return rows.length > 0 && rows.every((row) => missingFields(row, "bosses").length === 0);
-  }
-  return false;
+  const members = batch.members || [];
+  const bosses = batch.bossRankings || [];
+  return scope === "mixed"
+    && members.length > 0
+    && duplicateValues(members, "playerId").size === 0
+    && members.every((row) => Boolean(String(row.name || "").trim()))
+    && bosses.length > 0
+    && bosses.every((row) => missingFields(row, "bosses").length === 0);
 }
 
 function renderReferenceOptions() {
@@ -913,10 +1056,13 @@ function selectReferenceForTable() {
 }
 
 function goToStep(step) {
-  const next = Math.max(1, Math.min(4, Number(step) || 1));
+  const next = Math.max(1, Math.min(5, Number(step) || 1));
   state.step = next;
+  const visiblePanels = next === 1 || next === 3
+    ? new Set([1, 2])
+    : next === 2 || next === 4 ? new Set([3]) : new Set([4]);
   document.querySelectorAll("[data-step-panel]").forEach((panel) => {
-    panel.classList.toggle("active", Number(panel.dataset.stepPanel) === next);
+    panel.classList.toggle("active", visiblePanels.has(Number(panel.dataset.stepPanel)));
   });
   document.querySelectorAll("[data-go-step]").forEach((button) => {
     const active = Number(button.dataset.goStep) === next;
@@ -924,11 +1070,52 @@ function goToStep(step) {
     if (active) button.setAttribute("aria-current", "step");
     else button.removeAttribute("aria-current");
   });
-  $("previous-step").disabled = next === 1;
-  $("next-step").disabled = next === 4;
-  $("step-position").textContent = `Step ${next} of 4`;
-  if (next === 3) selectReferenceForTable();
+  if (next === 1 || next === 3) {
+    const kind = workflowKind(next);
+    $("upload-kind").value = kind;
+    const members = kind === "guild-members";
+    $("capture-step-label").textContent = members ? "STEP 01 · MEMBERS" : "STEP 03 · BOSS";
+    $("capture-title").textContent = members ? "Add Guild member screenshots" : "Add Guild boss screenshots";
+    $("capture-scope").textContent = members ? "Guild members" : "Guild boss";
+    $("capture-order-help").textContent = members
+      ? "Extract and review these rows before moving to Guild boss."
+      : "The reviewed member rows stay saved while you process the boss screenshots.";
+    $("extract-step-label").textContent = members ? "STEP 01 · LOCAL EXTRACTION" : "STEP 03 · LOCAL EXTRACTION";
+    $("extract-title").textContent = members ? "Extract Guild members locally" : "Extract Guild boss locally";
+    if (selectedImageKind() !== kind) {
+      $("upload-files").value = "";
+      state.images = [];
+    }
+    renderUploadSelection();
+    renderExtractionSelection();
+  }
+  $("reset-session").hidden = next === 5;
+  $("reset-session").textContent = workflowKind(next) === "guild-boss" ? "Clear Boss…" : "Clear Members…";
+  if (next === 2 || next === 4) {
+    state.table = next === 2 ? "members" : "bosses";
+    $("review-step-label").textContent = next === 2 ? "STEP 02 · REVIEW MEMBERS" : "STEP 04 · REVIEW BOSS";
+    $("review-title").textContent = next === 2 ? "Review and correct Guild members" : "Review and correct Guild boss";
+    if (state.batch) {
+      renderBatch();
+      loadMissingMembers();
+    }
+    selectReferenceForTable();
+  }
+  renderWorkflowProgress();
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderWorkflowProgress() {
+  const kinds = new Set((state.batch?.sourceImages || []).map((image) => image.kind));
+  const completed = new Set();
+  if (kinds.has("guild-members")) completed.add(1);
+  if ((state.batch?.members || []).length) completed.add(2);
+  if (kinds.has("guild-boss")) completed.add(3);
+  if ((state.batch?.bossRankings || []).length) completed.add(4);
+  if (state.preflight?.key === preflightKey()) completed.add(5);
+  document.querySelectorAll("[data-go-step]").forEach((button) => {
+    button.classList.toggle("complete", completed.has(Number(button.dataset.goStep)));
+  });
 }
 
 function displayValue(value) {
@@ -941,6 +1128,8 @@ function percent(value) {
 }
 
 setCaptureDate(localDate());
+state.sessionDate = localStorage.getItem("archero-ocr-session-date") || localDate();
+localStorage.setItem("archero-ocr-session-date", state.sessionDate);
 $("refresh").addEventListener("click", () => {
   state.images = [];
   state.referenceImages = [];
@@ -955,9 +1144,8 @@ function commitCaptureDate() {
   }
   if ($("capture-date").value === captureDate) return true;
   setCaptureDate(captureDate);
-  state.images = [];
-  state.referenceImages = [];
-  loadDay();
+  resetPreflight();
+  updateTargetControls();
   return true;
 }
 $("capture-date-display").addEventListener("change", commitCaptureDate);
@@ -974,7 +1162,15 @@ $("target").addEventListener("change", () => {
   updateTargetEditor();
   updateTargetControls();
 });
-$("confirmation").addEventListener("input", updateTargetControls);
+$("target-label").addEventListener("input", () => {
+  if (!state.editingTargetKey) $("target-key").value = slugifyTarget($("target-label").value);
+});
+$("add-target").addEventListener("click", () => openTargetForm());
+$("edit-target").addEventListener("click", () => openTargetForm(selectedTarget()));
+$("delete-target").addEventListener("click", deleteTarget);
+$("cancel-target").addEventListener("click", closeTargetForm);
+$("target-form").addEventListener("submit", saveTarget);
+$("sync-roster").addEventListener("click", synchronizeRoster);
 $("reference-image").addEventListener("change", renderReferenceImage);
 $("reference-previous").addEventListener("click", () => moveReferenceImage(-1));
 $("reference-next").addEventListener("click", () => moveReferenceImage(1));
@@ -982,11 +1178,28 @@ $("upload").addEventListener("click", uploadImages);
 $("reset-session").addEventListener("click", resetCaptureSession);
 $("scan").addEventListener("click", runScan);
 $("clear").addEventListener("click", clearExtractedData);
-$("publish").addEventListener("click", publishBatch);
+$("publish").addEventListener("click", () => {
+  const target = selectedTarget();
+  $("export-confirmation-summary").textContent = `Export to “${target?.label || "destination"}” for ${formatFrenchDate($("capture-date").value)}?`;
+  $("export-dialog").showModal();
+});
+$("confirm-export").addEventListener("click", async (event) => {
+  event.preventDefault();
+  $("export-dialog").close();
+  await publishBatch();
+});
 $("preflight").addEventListener("click", checkDestination);
 $("add-row").addEventListener("click", () => addReviewedRow());
-$("previous-step").addEventListener("click", () => goToStep(state.step - 1));
-$("next-step").addEventListener("click", () => goToStep(state.step + 1));
+$("review-members").addEventListener("click", () => {
+  state.table = "members";
+  renderBatch();
+  loadMissingMembers();
+});
+$("review-boss").addEventListener("click", () => {
+  state.table = "bosses";
+  renderBatch();
+  loadMissingMembers();
+});
 document.querySelectorAll("[data-go-step]").forEach((button) => {
   button.addEventListener("click", () => goToStep(button.dataset.goStep));
 });

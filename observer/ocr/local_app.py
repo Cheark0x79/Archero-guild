@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import urllib.parse
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -32,6 +32,10 @@ from observer.ocr.review import (
     clear_reviewed_data,
     delete_batch_row,
     load_review_log,
+    merge_reviewed_scope,
+    prepare_export_batch,
+    refresh_reviewed_batch,
+    remove_reviewed_scope,
 )
 from observer.pipeline.guild_member_ocr import RosterEntry
 
@@ -47,6 +51,9 @@ CAPTURE_KINDS = {
 }
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 JOB_LOCK = threading.Lock()
+LOCAL_TARGET_KEY = "local"
+TARGET_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+MAX_ROSTER_CACHE_ENTRIES = 500
 
 
 class LocalOcrError(RuntimeError):
@@ -107,7 +114,7 @@ def load_targets(path: Path) -> dict[str, dict[str, Any]]:
 
     targets: dict[str, dict[str, Any]] = {}
     for key, raw in payload.items():
-        if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", str(key)) or not isinstance(raw, dict):
+        if not TARGET_KEY_PATTERN.fullmatch(str(key)) or not isinstance(raw, dict):
             raise LocalOcrError(f"invalid target name: {key}")
         mode = str(raw.get("mode") or "remote").strip().lower()
         if mode not in {"local", "remote"}:
@@ -135,7 +142,153 @@ def load_targets(path: Path) -> dict[str, dict[str, Any]]:
             "cfAccessClientSecret": client_secret,
             "configured": configured,
         }
+    local_target = targets.get(LOCAL_TARGET_KEY)
+    if local_target is None or local_target["mode"] != "local":
+        raise LocalOcrError("target configuration must contain the protected local test destination")
     return targets
+
+
+def _serialize_targets(targets: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        target_key: {
+            "label": item["label"],
+            "mode": item["mode"],
+            **(
+                {"url": item["url"], "ingestionToken": item["ingestionToken"]}
+                if item["mode"] == "remote"
+                else {}
+            ),
+            **({"cfAccessClientId": item["cfAccessClientId"]} if item.get("cfAccessClientId") else {}),
+            **({"cfAccessClientSecret": item["cfAccessClientSecret"]} if item.get("cfAccessClientSecret") else {}),
+        }
+        for target_key, item in targets.items()
+    }
+
+
+def _write_private_json(path: Path, payload: object) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+    except OSError as exc:
+        raise LocalOcrError(f"could not save private OCR data: {exc}") from exc
+
+
+def save_targets(path: Path, targets: dict[str, dict[str, Any]]) -> None:
+    _write_private_json(path, _serialize_targets(targets))
+
+
+def upsert_remote_target(
+    path: Path,
+    targets: dict[str, dict[str, Any]],
+    *,
+    key: str,
+    label: str,
+    url: str,
+    ingestion_token: str,
+    access_client_id: str = "",
+    access_client_secret: str = "",
+    clear_cloudflare_access: bool = False,
+    create_only: bool = False,
+) -> dict[str, Any]:
+    key = key.strip().lower()
+    label = label.strip()
+    if key == LOCAL_TARGET_KEY:
+        raise LocalOcrError("the local test destination cannot be changed")
+    if not TARGET_KEY_PATTERN.fullmatch(key):
+        raise LocalOcrError("destination identifier must start with a letter and contain only lowercase letters, numbers, or hyphens")
+    if not label or len(label) > 80:
+        raise LocalOcrError("destination name must contain between 1 and 80 characters")
+    existing = targets.get(key)
+    if create_only and existing is not None:
+        raise LocalOcrError("a destination already uses this identifier")
+    if existing is not None and existing.get("mode") != "remote":
+        raise LocalOcrError("the local test destination cannot be changed")
+    target_url = _validated_target(url)
+    token = ingestion_token.strip() or str((existing or {}).get("ingestionToken") or "")
+    if len(token) < 16 or token.startswith(("generate-", "replace-")):
+        raise LocalOcrError("enter a real ingestion token containing at least 16 characters")
+    if clear_cloudflare_access:
+        client_id = ""
+        client_secret = ""
+    else:
+        client_id = access_client_id.strip() or str((existing or {}).get("cfAccessClientId") or "")
+        client_secret = access_client_secret.strip() or str((existing or {}).get("cfAccessClientSecret") or "")
+    cloudflare_access_headers(client_id, client_secret)
+    target = {
+        "label": label,
+        "mode": "remote",
+        "url": target_url,
+        "ingestionToken": token,
+        "cfAccessClientId": client_id,
+        "cfAccessClientSecret": client_secret,
+        "configured": True,
+    }
+    targets[key] = target
+    save_targets(path, targets)
+    return target
+
+
+def delete_remote_target(path: Path, targets: dict[str, dict[str, Any]], *, key: str) -> None:
+    target = targets.get(key)
+    if target is None:
+        raise LocalOcrError("destination not found")
+    if key == LOCAL_TARGET_KEY or target.get("mode") != "remote":
+        raise LocalOcrError("the local test destination cannot be deleted")
+    del targets[key]
+    save_targets(path, targets)
+
+
+def save_roster_cache(path: Path, roster: list[RosterEntry], *, key: str, label: str) -> dict[str, Any]:
+    if not roster or len(roster) > MAX_ROSTER_CACHE_ENTRIES:
+        raise LocalOcrError(f"roster cache must contain between 1 and {MAX_ROSTER_CACHE_ENTRIES} members")
+    updated_at = datetime.now(UTC).isoformat()
+    payload = {
+        "version": 1,
+        "updatedAt": updated_at,
+        "source": {"key": key, "label": label},
+        "members": [
+            {"playerId": entry.player_id, "name": entry.name, "power": entry.power_hint}
+            for entry in roster
+        ],
+    }
+    _write_private_json(path, payload)
+    return {"configured": True, "count": len(roster), "updatedAt": updated_at, "source": payload["source"]}
+
+
+def load_roster_cache(path: Path) -> tuple[list[RosterEntry], dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return [], {"configured": False, "count": 0, "updatedAt": None, "source": None}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LocalOcrError(f"roster cache is invalid: {path}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1 or not isinstance(payload.get("members"), list):
+        raise LocalOcrError(f"roster cache is invalid: {path}")
+    raw_members = payload["members"]
+    if not raw_members or len(raw_members) > MAX_ROSTER_CACHE_ENTRIES:
+        raise LocalOcrError(f"roster cache is invalid: {path}")
+    roster: list[RosterEntry] = []
+    for raw in raw_members:
+        if not isinstance(raw, dict):
+            raise LocalOcrError(f"roster cache is invalid: {path}")
+        player_id = str(raw.get("playerId") or "").strip()
+        name = str(raw.get("name") or "").strip()
+        power = raw.get("power")
+        if not player_id or not name or (power is not None and not isinstance(power, int)):
+            raise LocalOcrError(f"roster cache is invalid: {path}")
+        roster.append(RosterEntry(player_id=player_id, name=name, power_hint=power))
+    source = payload.get("source") if isinstance(payload.get("source"), dict) else None
+    metadata = {
+        "configured": True,
+        "count": len(roster),
+        "updatedAt": str(payload.get("updatedAt") or ""),
+        "source": {
+            "key": str(source.get("key") or "") if source else "",
+            "label": str(source.get("label") or "") if source else "",
+        },
+    }
+    return roster, metadata
 
 
 def store_uploaded_images(
@@ -311,29 +464,15 @@ def update_remote_target(
 ) -> dict[str, Any]:
     target = targets.get(key)
     if target is None or target.get("mode") != "remote":
-        raise LocalOcrError("select App test, preprod, or prod")
-    target_url = _validated_target(url)
-    token = ingestion_token.strip() or str(target.get("ingestionToken") or "")
-    if len(token) < 16 or token.startswith(("generate-", "replace-")):
-        raise LocalOcrError("enter a real ingestion token containing at least 16 characters")
-    target["url"] = target_url
-    target["ingestionToken"] = token
-    target["configured"] = True
-    serialized = {
-        target_key: {
-            "label": item["label"],
-            "mode": item["mode"],
-            **({"url": item["url"], "ingestionToken": item["ingestionToken"]} if item["mode"] == "remote" else {}),
-            **({"cfAccessClientId": item["cfAccessClientId"]} if item.get("cfAccessClientId") else {}),
-            **({"cfAccessClientSecret": item["cfAccessClientSecret"]} if item.get("cfAccessClientSecret") else {}),
-        }
-        for target_key, item in targets.items()
-    }
-    try:
-        path.write_text(json.dumps(serialized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        raise LocalOcrError(f"could not save OCR destinations: {exc}") from exc
-    return target
+        raise LocalOcrError("select a configured remote destination")
+    return upsert_remote_target(
+        path,
+        targets,
+        key=key,
+        label=target["label"],
+        url=url,
+        ingestion_token=ingestion_token,
+    )
 
 
 class LocalOcrHandler(BaseHTTPRequestHandler):
@@ -366,12 +505,14 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                     },
                     reverse=True,
                 ) if self.app.screenshots_root.exists() else []
+                _, roster_cache = load_roster_cache(self.app.roster_cache_path)
                 self._send_json({
                     "ok": True,
                     "service": "archero-local-ocr",
                     "busy": JOB_LOCK.locked(),
                     "agentVersion": self.app.agent_version,
                     "targets": configured_target_public(self.app.targets),
+                    "rosterCache": roster_cache,
                     "dates": dates,
                 })
                 return
@@ -386,9 +527,15 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 if not batch_path.exists():
                     raise LocalOcrError("no reviewed OCR batch exists for this date")
                 corrections = load_review_log(self._corrections_path(capture_date), capture_date)
+                batch = json.loads(batch_path.read_text(encoding="utf-8"))
+                if not isinstance(batch, dict):
+                    raise LocalOcrError("the reviewed OCR batch is invalid")
+                # Recalculate legacy batches in memory so old overlapping Boss
+                # captures immediately benefit from the current quality rules.
+                refresh_reviewed_batch(batch)
                 self._send_json({
                     "ok": True,
-                    "batch": json.loads(batch_path.read_text(encoding="utf-8")),
+                    "batch": batch,
                     "corrections": corrections,
                 })
                 return
@@ -433,6 +580,33 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             if self.path == "/api/session/reset":
                 self._reset_capture_session(payload)
                 return
+            if self.path == "/api/targets":
+                key = str(payload.get("key") or "").strip().lower()
+                upsert_remote_target(
+                    self.app.targets_file,
+                    self.app.targets,
+                    key=key,
+                    label=str(payload.get("label") or ""),
+                    url=str(payload.get("url") or ""),
+                    ingestion_token=str(payload.get("ingestionToken") or ""),
+                    access_client_id=str(payload.get("cfAccessClientId") or ""),
+                    access_client_secret=str(payload.get("cfAccessClientSecret") or ""),
+                    clear_cloudflare_access=payload.get("clearCloudflareAccess") is True,
+                    create_only=payload.get("createOnly") is True,
+                )
+                self._send_json({
+                    "ok": True,
+                    "target": next(item for item in configured_target_public(self.app.targets) if item["key"] == key),
+                })
+                return
+            if self.path == "/api/targets/delete":
+                key = str(payload.get("key") or "")
+                delete_remote_target(self.app.targets_file, self.app.targets, key=key)
+                self._send_json({"ok": True, "deleted": key})
+                return
+            if self.path == "/api/roster/sync":
+                self._sync_roster(payload)
+                return
             if self.path == "/api/target":
                 target = update_remote_target(
                     self.app.targets_file,
@@ -474,10 +648,11 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 payload.get("files") if isinstance(payload.get("files"), list) else [],
                 replace_existing=True,
             )
-            removed = clear_reviewed_data(
+            removed = remove_reviewed_scope(
                 self.app.outbox_root / f"{capture_date}.json",
                 self._corrections_path(capture_date),
                 capture_date,
+                kind,
             )
         finally:
             JOB_LOCK.release()
@@ -499,10 +674,11 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             return
         try:
             archived = archive_capture_session(self.app.screenshots_root, capture_date, kind)
-            removed = clear_reviewed_data(
+            removed = remove_reviewed_scope(
                 self.app.outbox_root / f"{capture_date}.json",
                 self._corrections_path(capture_date),
                 capture_date,
+                kind,
             )
         finally:
             JOB_LOCK.release()
@@ -514,8 +690,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
 
     def _run_ocr_action(self, payload: dict[str, Any], *, publish: bool) -> None:
         capture_date = str(payload.get("date") or "")
+        session_date = str(payload.get("sessionDate") or capture_date) if publish else capture_date
         target_key = str(payload.get("target") or "") if publish else "local"
         _validate_date(capture_date)
+        _validate_date(session_date)
         target = self.app.targets.get(target_key)
         if target is None:
             raise LocalOcrError("select a configured target")
@@ -531,14 +709,53 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
         try:
+            if publish:
+                batch_path = self.app.outbox_root / f"{session_date}.json"
+                try:
+                    local_batch = json.loads(batch_path.read_text(encoding="utf-8"))
+                except FileNotFoundError as exc:
+                    raise LocalOcrError("no reviewed OCR batch exists for this local session") from exc
+                if not isinstance(local_batch, dict) or local_batch.get("captureDate") != session_date:
+                    raise LocalOcrError("the reviewed OCR batch does not match the local session")
+                batch = prepare_export_batch(local_batch, capture_date)
+                check_target(
+                    target["url"],
+                    target["ingestionToken"],
+                    timeout=15,
+                    access_client_id=target["cfAccessClientId"],
+                    access_client_secret=target["cfAccessClientSecret"],
+                )
+                published = publish_batch(
+                    batch,
+                    target=target["url"],
+                    token=target["ingestionToken"],
+                    timeout=30,
+                    import_timeout=180,
+                    access_client_id=target["cfAccessClientId"],
+                    access_client_secret=target["cfAccessClientSecret"],
+                )
+                result = {
+                    "captureDate": capture_date,
+                    "sessionDate": session_date,
+                    "output": str(batch_path),
+                    "quality": batch["quality"],
+                    **published,
+                }
+                self._send_json({"ok": True, "result": result})
+                return
             member_paths: list[Path] | None = None
             boss_paths: list[Path] | None = None
+            existing_batch: dict[str, Any] | None = None
             if not publish:
                 member_paths, boss_paths = selected_capture_paths(
                     self.app.screenshots_root,
                     capture_date,
                     payload.get("images"),
                 )
+                batch_path = self.app.outbox_root / f"{capture_date}.json"
+                if batch_path.exists():
+                    loaded = json.loads(batch_path.read_text(encoding="utf-8"))
+                    existing_batch = loaded if isinstance(loaded, dict) else None
             if target["mode"] == "local":
                 roster, roster_source = self._scan_roster()
                 result = run_day(
@@ -585,22 +802,35 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 if roster_source is not None:
                     result["rosterSource"] = roster_source
             if not publish:
-                self._corrections_path(capture_date).unlink(missing_ok=True)
+                batch_path = self.app.outbox_root / f"{capture_date}.json"
+                incoming = json.loads(batch_path.read_text(encoding="utf-8"))
+                combined = merge_reviewed_scope(existing_batch, incoming)
+                _write_private_json(batch_path, combined)
+                result["quality"] = combined["quality"]
         finally:
             JOB_LOCK.release()
         self._send_json({"ok": True, "result": result})
 
     def _scan_roster(self, preferred: tuple[str, dict[str, Any]] | None = None):
-        try:
-            target_key, target = preferred or self._preferred_roster_target()
-            roster = fetch_roster(
-                target["url"],
-                target["ingestionToken"],
-                timeout=15,
-                access_client_id=target["cfAccessClientId"],
-                access_client_secret=target["cfAccessClientSecret"],
-            )
+        if preferred is not None:
+            target_key, target = preferred
+            try:
+                roster = fetch_roster(
+                    target["url"],
+                    target["ingestionToken"],
+                    timeout=15,
+                    access_client_id=target["cfAccessClientId"],
+                    access_client_secret=target["cfAccessClientSecret"],
+                )
+            except RemoteOcrError as exc:
+                raise LocalOcrError(f"could not synchronize roster from {target['label']}: {exc}") from exc
             if roster:
+                save_roster_cache(
+                    self.app.roster_cache_path,
+                    roster,
+                    key=target_key,
+                    label=target["label"],
+                )
                 merged = merge_reviewed_roster(roster, self.app.outbox_root)
                 return merged, {
                     "type": "database",
@@ -608,8 +838,15 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                     "label": target["label"],
                     "localReviewedIdentities": len(merged) - len(roster),
                 }
-        except (LocalOcrError, RemoteOcrError):
-            pass
+        roster, cache = load_roster_cache(self.app.roster_cache_path)
+        if roster:
+            merged = merge_reviewed_roster(roster, self.app.outbox_root)
+            return merged, {
+                "type": "local-cache",
+                "label": cache["source"]["label"] or "local roster cache",
+                "updatedAt": cache["updatedAt"],
+                "localReviewedIdentities": len(merged) - len(roster),
+            }
         roster = read_roster_entries(self.app.local_roster_path)
         if not roster:
             raise LocalOcrError(f"OCR roster is empty: {self.app.local_roster_path}")
@@ -620,19 +857,48 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             "localReviewedIdentities": len(merged) - len(roster),
         }
 
-    def _preflight_publish(self, payload: dict[str, Any]) -> None:
-        capture_date = str(payload.get("date") or "")
+    def _sync_roster(self, payload: dict[str, Any]) -> None:
         target_key = str(payload.get("target") or "")
-        _validate_date(capture_date)
         target = self.app.targets.get(target_key)
         if target is None or target["mode"] != "remote" or not target["configured"]:
             raise LocalOcrError("select a configured remote destination")
-        batch_path = self.app.outbox_root / f"{capture_date}.json"
+        if not JOB_LOCK.acquire(blocking=False):
+            self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            roster = fetch_roster(
+                target["url"],
+                target["ingestionToken"],
+                timeout=15,
+                access_client_id=target["cfAccessClientId"],
+                access_client_secret=target["cfAccessClientSecret"],
+            )
+            cache = save_roster_cache(
+                self.app.roster_cache_path,
+                roster,
+                key=target_key,
+                label=target["label"],
+            )
+        finally:
+            JOB_LOCK.release()
+        self._send_json({"ok": True, "rosterCache": cache})
+
+    def _preflight_publish(self, payload: dict[str, Any]) -> None:
+        capture_date = str(payload.get("date") or "")
+        session_date = str(payload.get("sessionDate") or capture_date)
+        target_key = str(payload.get("target") or "")
+        _validate_date(capture_date)
+        _validate_date(session_date)
+        target = self.app.targets.get(target_key)
+        if target is None or target["mode"] != "remote" or not target["configured"]:
+            raise LocalOcrError("select a configured remote destination")
+        batch_path = self.app.outbox_root / f"{session_date}.json"
         if not batch_path.exists():
             raise LocalOcrError("no reviewed OCR batch exists for this date")
         batch = json.loads(batch_path.read_text(encoding="utf-8"))
-        if not isinstance(batch, dict) or batch.get("captureDate") != capture_date:
-            raise LocalOcrError("the reviewed OCR batch does not match the selected date")
+        if not isinstance(batch, dict) or batch.get("captureDate") != session_date:
+            raise LocalOcrError("the reviewed OCR batch does not match the local session")
+        batch = prepare_export_batch(batch, capture_date)
         if not JOB_LOCK.acquire(blocking=False):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
@@ -667,10 +933,11 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             return
         try:
             move_capture_to_trash(self.app.screenshots_root, capture_date, kind, name)
-            removed = clear_reviewed_data(
+            removed = remove_reviewed_scope(
                 self.app.outbox_root / f"{capture_date}.json",
                 self._corrections_path(capture_date),
                 capture_date,
+                kind,
             )
         finally:
             JOB_LOCK.release()
@@ -787,17 +1054,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             for image in batch.get("sourceImages", [])
             if isinstance(image, dict)
         }
-        if source_kinds != {"guild-members"}:
+        if "guild-members" not in source_kinds:
             self._send_json({"ok": True, "members": [], "target": None})
             return
-        target_key, target = self._preferred_roster_target()
-        roster = fetch_roster(
-            target["url"],
-            target["ingestionToken"],
-            timeout=15,
-            access_client_id=target["cfAccessClientId"],
-            access_client_secret=target["cfAccessClientSecret"],
-        )
+        roster, roster_source = self._scan_roster()
         present_ids = {
             str(row.get("playerId"))
             for row in batch.get("members", [])
@@ -815,17 +1075,8 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
         self._send_json({
             "ok": True,
             "members": missing,
-            "target": {"key": target_key, "label": target["label"]},
+            "target": {"key": "local", "label": roster_source["label"]},
         })
-
-    def _preferred_roster_target(self) -> tuple[str, dict[str, Any]]:
-        preferred = self.app.targets.get("app-test")
-        if preferred and preferred["mode"] == "remote" and preferred["configured"]:
-            return "app-test", preferred
-        for key, target in self.app.targets.items():
-            if target["mode"] == "remote" and target["configured"]:
-                return key, target
-        raise LocalOcrError("configure a remote destination to compare missing members")
 
     def _read_json(self) -> dict[str, Any]:
         try:
@@ -847,7 +1098,7 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
         if not origin:
             return
         parsed = urllib.parse.urlparse(origin)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+        if parsed.scheme != "http" or parsed.hostname not in self.app.public_hosts:
             raise LocalOcrError("cross-origin requests are not allowed")
         if parsed.port not in {self.app.public_port, None}:
             raise LocalOcrError("cross-origin requests are not allowed")
@@ -895,28 +1146,35 @@ class LocalOcrServer(ThreadingHTTPServer):
         outbox_root: Path,
         targets: dict[str, dict[str, Any]],
         targets_file: Path,
+        roster_cache_path: Path,
         ui_root: Path,
         local_roster_path: Path,
         agent_version: str,
         public_port: int,
+        public_host: str,
     ) -> None:
         super().__init__(address, LocalOcrHandler)
         self.screenshots_root = screenshots_root
         self.outbox_root = outbox_root
         self.targets = targets
         self.targets_file = targets_file
+        self.roster_cache_path = roster_cache_path
         self.ui_root = ui_root
         self.local_roster_path = local_roster_path
         self.agent_version = agent_version
         self.public_port = public_port
+        self.public_hosts = {"127.0.0.1", "localhost", public_host}
 
 
 def main() -> int:
     host = os.environ.get("ARCHERO_OCR_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("ARCHERO_OCR_UI_PORT", "5190"))
+    public_port = int(os.environ.get("ARCHERO_OCR_PUBLIC_PORT", str(port)))
+    public_host = os.environ.get("ARCHERO_OCR_PUBLIC_HOST", "127.0.0.1").strip()
     screenshots_root = Path(os.environ.get("ARCHERO_SCREENSHOTS_ROOT", "/captures"))
     outbox_root = Path(os.environ.get("ARCHERO_OUTBOX_ROOT", "/outbox"))
     targets_file = Path(os.environ.get("ARCHERO_OCR_TARGETS_FILE", "/run/secrets/targets.json"))
+    roster_cache_path = Path(os.environ.get("ARCHERO_OCR_ROSTER_CACHE", str(targets_file.with_name("roster-cache.json"))))
     ui_root = Path(os.environ.get("ARCHERO_OCR_UI_ROOT", "/app/ocr/ui"))
     local_roster_path = Path(os.environ.get("ARCHERO_OCR_LOCAL_ROSTER", "/app/web/sample-data.js"))
     targets = load_targets(targets_file)
@@ -928,10 +1186,12 @@ def main() -> int:
         outbox_root=outbox_root,
         targets=targets,
         targets_file=targets_file,
+        roster_cache_path=roster_cache_path,
         ui_root=ui_root,
         local_roster_path=local_roster_path,
         agent_version=os.environ.get("ARCHERO_AGENT_VERSION", "development"),
-        public_port=port,
+        public_port=public_port,
+        public_host=public_host,
     )
     print(f"Archero OCR UI listening on http://127.0.0.1:{port}")
     try:

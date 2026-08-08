@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,77 @@ BOSS_FIELDS = {
 }
 ROLES = {"leader", "officer", "elder", "member"}
 BOSS_AREAS = {"podium", "list"}
+
+
+def merge_reviewed_scope(existing: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
+    """Replace one extracted scope while preserving the other reviewed scope."""
+    incoming_kinds = {
+        image.get("kind")
+        for image in incoming.get("sourceImages", [])
+        if isinstance(image, dict)
+    }
+    if len(incoming_kinds) != 1:
+        raise ReviewError("a scope extraction must contain exactly one source kind")
+    if not existing:
+        refresh_reviewed_batch(incoming)
+        return incoming
+    if existing.get("captureDate") != incoming.get("captureDate"):
+        raise ReviewError("cannot merge OCR scopes from different dates")
+
+    kind = next(iter(incoming_kinds))
+    merged = deepcopy(existing)
+    merged["generatedAt"] = incoming["generatedAt"]
+    merged["agentVersion"] = incoming["agentVersion"]
+    merged["sourceImages"] = [
+        image for image in merged.get("sourceImages", [])
+        if isinstance(image, dict) and image.get("kind") != kind
+    ] + deepcopy(incoming["sourceImages"])
+    rows_key = "members" if kind == "guild-members" else "bossRankings"
+    merged[rows_key] = deepcopy(incoming[rows_key])
+    merged.setdefault("members", [])
+    merged.setdefault("bossRankings", [])
+    refresh_reviewed_batch(merged)
+    return merged
+
+
+def prepare_export_batch(batch: dict[str, Any], capture_date: str) -> dict[str, Any]:
+    """Apply the user-selected business date without mutating the local review."""
+    exported = deepcopy(batch)
+    exported["captureDate"] = capture_date
+    refresh_reviewed_batch(exported)
+    return exported
+
+
+def remove_reviewed_scope(
+    batch_path: Path,
+    corrections_path: Path,
+    capture_date: str,
+    kind: str,
+) -> dict[str, bool]:
+    """Invalidate only the scope whose screenshots are being replaced."""
+    if not batch_path.exists():
+        return {"batch": False, "corrections": False}
+    batch = _load_batch(batch_path, capture_date)
+    category = "members" if kind == "guild-members" else "bosses"
+    rows_key = "members" if category == "members" else "bossRankings"
+    batch["sourceImages"] = [
+        image for image in batch.get("sourceImages", [])
+        if isinstance(image, dict) and image.get("kind") != kind
+    ]
+    batch[rows_key] = []
+    if not batch["sourceImages"]:
+        return clear_reviewed_data(batch_path, corrections_path, capture_date)
+    refresh_reviewed_batch(batch)
+    _atomic_json_write(batch_path, batch)
+
+    corrections_changed = False
+    if corrections_path.exists():
+        log = load_review_log(corrections_path, capture_date)
+        retained = [entry for entry in log["entries"] if entry.get("category") != category]
+        corrections_changed = len(retained) != len(log["entries"])
+        log["entries"] = retained
+        _atomic_json_write(corrections_path, log)
+    return {"batch": True, "corrections": corrections_changed}
 
 
 def load_review_log(path: Path, capture_date: str) -> dict[str, Any]:
@@ -129,8 +201,8 @@ def delete_batch_row(
         for image in batch.get("sourceImages", [])
         if isinstance(image, dict)
     }
-    if source_kinds != {expected_kind}:
-        raise ReviewError(f"cannot add {category} rows to this single-source batch")
+    if expected_kind not in source_kinds:
+        raise ReviewError(f"cannot delete {category} rows from a batch without that source")
     rows = batch.get(rows_key)
     if not isinstance(rows, list) or row_index < 0 or row_index >= len(rows):
         raise ReviewError("the selected OCR row no longer exists")
@@ -138,16 +210,6 @@ def delete_batch_row(
     if not isinstance(row, dict):
         raise ReviewError("the selected OCR row is invalid")
 
-    reviewed_rows_before = sum(
-        len(value)
-        for key in ("members", "bossRankings")
-        if isinstance((value := batch.get(key)), list)
-    )
-    quality = batch.setdefault("quality", {})
-    quality["reviewedExpectedRows"] = max(
-        0,
-        int(quality.get("reviewedExpectedRows") or reviewed_rows_before) - 1,
-    )
     deleted = rows.pop(row_index)
     _decrement_detected_rows(batch, category, deleted)
     refresh_reviewed_batch(batch)
@@ -222,28 +284,35 @@ def refresh_reviewed_batch(batch: dict[str, Any]) -> None:
     complete = sum(_member_complete(row) for row in members) + sum(_boss_complete(row) for row in bosses)
     completeness = complete / len(rows) if rows else 0
     quality = batch.setdefault("quality", {})
-    reviewed_expected = quality.get("reviewedExpectedRows")
-    if not isinstance(reviewed_expected, int) or reviewed_expected <= 0:
-        detected_rows = sum(
-            max(0, int(image.get("detectedRows") or 0))
-            for image in batch.get("sourceImages", [])
-            if isinstance(image, dict)
-        )
-        captured_rows = sum(
-            1
-            for row in rows
-            if isinstance(row, dict) and row.get("source") != "manual review"
-        )
-        previous_coverage = float(quality.get("coverage") or 0)
-        inferred_expected = (
-            round(captured_rows / previous_coverage)
-            if captured_rows and 0 < previous_coverage <= 1
-            else 0
-        )
-        reviewed_expected = max(detected_rows, inferred_expected, captured_rows)
-        if reviewed_expected <= 0 and rows:
-            reviewed_expected = len(rows)
-        quality["reviewedExpectedRows"] = reviewed_expected
+    member_expected = sum(
+        max(0, int(image.get("detectedRows") or 0))
+        for image in batch.get("sourceImages", [])
+        if isinstance(image, dict) and image.get("kind") == "guild-members"
+    )
+    if member_expected <= 0 and members:
+        member_expected = len(members)
+
+    boss_ranks = [
+        row.get("rank")
+        for row in bosses
+        if isinstance(row, dict)
+        and isinstance(row.get("rank"), int)
+        and not isinstance(row.get("rank"), bool)
+        and row["rank"] > 0
+    ]
+    # Boss screenshots intentionally overlap while scrolling. The highest rank,
+    # not the sum of every detected rectangle, is the expected participant count.
+    boss_expected = max([len(bosses), *boss_ranks], default=0)
+    if boss_expected <= 0 and any(
+        isinstance(image, dict) and image.get("kind") == "guild-boss"
+        for image in batch.get("sourceImages", [])
+    ):
+        boss_expected = 1
+
+    reviewed_expected = member_expected + boss_expected
+    quality["memberExpectedRows"] = member_expected
+    quality["bossExpectedRows"] = boss_expected
+    quality["reviewedExpectedRows"] = reviewed_expected
     coverage = (
         min(1, len(rows) / reviewed_expected)
         if isinstance(reviewed_expected, int) and reviewed_expected > 0

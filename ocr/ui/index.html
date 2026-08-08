@@ -4,7 +4,7 @@
     <div>
       <p class="eyebrow">LOCAL WORKSTATION</p>
       <h1>Archero OCR Console</h1>
-      <p>Build one capture session, correct the extracted values, then choose where its reviewed JSON is published.</p>
+      <p>Review Guild members and Guild boss in sequence, then export both together in one atomic batch.</p>
     </div>
     <div class="service-state">
       <span id="service-dot"></span>
@@ -15,12 +15,16 @@
 
   <section class="session-bar">
     <nav class="stepper" aria-label="OCR workflow">
-      <button type="button" class="step-link active" data-go-step="1"><span>1</span>Captures</button>
-      <button type="button" class="step-link" data-go-step="2"><span>2</span>Extraction</button>
-      <button type="button" class="step-link" data-go-step="3"><span>3</span>Review</button>
-      <button type="button" class="step-link" data-go-step="4"><span>4</span>Destination</button>
+      <button type="button" class="step-link active" data-go-step="1"><span>1</span>Members</button>
+      <button type="button" class="step-link" data-go-step="2"><span>2</span>Review members</button>
+      <button type="button" class="step-link" data-go-step="3"><span>3</span>Boss</button>
+      <button type="button" class="step-link" data-go-step="4"><span>4</span>Review boss</button>
+      <button type="button" class="step-link" data-go-step="5"><span>5</span>Destination</button>
     </nav>
-    <button id="refresh" type="button" class="button secondary">Refresh</button>
+    <div class="session-actions">
+      <button id="reset-session" class="button secondary destructive" type="button">Clear Members…</button>
+      <button id="refresh" type="button" class="button secondary">Refresh</button>
+    </div>
   </section>
 
   <div id="message" role="status" aria-live="polite"></div>
@@ -29,27 +33,25 @@
     <article class="panel">
       <div class="panel-heading">
         <div>
-          <span class="step">STEP 01</span>
-          <h2>Choose one data source</h2>
+          <span id="capture-step-label" class="step">STEP 01 · MEMBERS</span>
+          <h2 id="capture-title">Add Guild member screenshots</h2>
         </div>
         <span id="upload-count" class="counter">No files selected</span>
       </div>
       <div class="upload-controls">
-        <label>
-          Data source
-          <select id="upload-kind">
-            <option value="guild-members">Guild members</option>
-            <option value="guild-boss">Guild boss</option>
-          </select>
-        </label>
+        <div class="scope-card">
+          <span>Current source</span>
+          <strong id="capture-scope">Guild members</strong>
+          <small id="capture-order-help">Complete this review before moving to Guild boss.</small>
+          <input id="upload-kind" type="hidden" value="guild-members">
+        </div>
         <label class="drop-zone">
           <input id="upload-files" type="file" accept="image/png" multiple>
           <strong>Select PNG screenshots</strong>
           <span>Only the files selected now belong to this extraction session.</span>
         </label>
         <div class="upload-actions">
-          <button id="reset-session" class="button secondary destructive" type="button">Reset current source</button>
-          <button id="upload" class="button primary" type="button" disabled>Upload and continue</button>
+          <button id="upload" class="button primary" type="button" disabled>Upload screenshots</button>
         </div>
       </div>
       <div id="upload-selection" class="file-selection">
@@ -62,14 +64,14 @@
     <article class="panel extract-panel">
       <div class="panel-heading">
         <div>
-          <span class="step">STEP 02</span>
-          <h2>Extract locally with Tesseract</h2>
+          <span id="extract-step-label" class="step">STEP 01 · LOCAL EXTRACTION</span>
+          <h2 id="extract-title">Extract Guild members locally</h2>
         </div>
         <span id="quality-badge" class="badge neutral">No batch</span>
       </div>
       <div class="extract-summary">
         <span id="extract-kind" class="badge neutral">No source selected</span>
-        <strong id="extract-count">Upload screenshots in Step 1</strong>
+        <strong id="extract-count">Upload Guild member screenshots above</strong>
       </div>
       <p id="scan-help" class="muted">Validate this single source to start local OCR. No destination is contacted.</p>
       <button id="scan" class="button primary" type="button" disabled>Validate and extract</button>
@@ -117,8 +119,8 @@
       <article class="panel review-panel">
         <div class="panel-heading">
           <div>
-            <span class="step">STEP 03</span>
-            <h2>Review and correct extracted data</h2>
+            <span id="review-step-label" class="step">STEP 02 · REVIEW MEMBERS</span>
+            <h2 id="review-title">Review and correct Guild members</h2>
           </div>
           <code id="batch-key">No reviewed batch</code>
         </div>
@@ -126,6 +128,8 @@
           <span>Reviewing</span>
           <strong id="review-scope-label">No source extracted</strong>
           <span id="review-count" class="counter">0 rows</span>
+          <button id="review-members" class="button secondary compact" type="button">Members</button>
+          <button id="review-boss" class="button secondary compact" type="button">Boss</button>
           <button id="add-row" class="button secondary compact" type="button">Add manual row</button>
         </div>
         <section id="missing-members" class="missing-members" hidden>
@@ -159,11 +163,30 @@
   </section>
 
   <section class="wizard-panel" data-step-panel="4">
+    <article class="panel roster-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="step">PLAYER IDS</span>
+          <h2>Local roster cache</h2>
+        </div>
+        <span id="roster-cache-state" class="badge neutral">Not synchronized</span>
+      </div>
+      <p id="roster-cache-summary" class="muted">Local extraction uses the bundled fallback until you explicitly synchronize IDs.</p>
+      <div class="roster-sync-controls">
+        <label>
+          Link the local ID cache to
+          <select id="roster-source"></select>
+        </label>
+        <button id="sync-roster" class="button secondary" type="button">Synchronize IDs</button>
+      </div>
+      <small class="muted">The IDs stay cached locally. Synchronization only reads the configured application and never publishes OCR data.</small>
+    </article>
+
     <div class="grid two">
       <article class="panel destination-panel">
         <div class="panel-heading">
           <div>
-            <span class="step">STEP 04</span>
+            <span class="step">STEP 05</span>
             <h2>Choose destination</h2>
           </div>
           <span id="target-state" class="badge neutral">Local only</span>
@@ -179,13 +202,63 @@
           <select id="target"></select>
         </label>
         <p id="target-summary" class="muted">Select a destination to see its status.</p>
+        <div class="target-actions">
+          <button id="add-target" class="button secondary compact" type="button">Add destination</button>
+          <button id="edit-target" class="button secondary compact" type="button">Edit</button>
+          <button id="delete-target" class="button secondary compact destructive" type="button">Delete</button>
+        </div>
+
+        <dialog id="target-dialog" class="modal-dialog">
+        <form id="target-form" class="target-form" autocomplete="off">
+          <div class="panel-heading compact-heading">
+            <strong id="target-form-title">Add destination</strong>
+            <button id="cancel-target" class="button secondary compact" type="button">Cancel</button>
+          </div>
+          <label>
+            Name
+            <input id="target-label" type="text" maxlength="80" required placeholder="Production">
+          </label>
+          <label>
+            Internal identifier
+            <input id="target-key" type="text" maxlength="32" pattern="[a-z][a-z0-9-]{0,31}" required placeholder="production">
+            <small>Generated from the name and stored only on this PC.</small>
+          </label>
+          <label>
+            Application URL
+            <input id="target-url" type="url" required placeholder="https://archero.example.com">
+          </label>
+          <label>
+            Ingestion key
+            <input id="target-token" type="password" minlength="16" placeholder="Leave blank to keep the current key">
+            <small>The key is stored locally and is never returned to the browser.</small>
+          </label>
+          <details>
+            <summary>Advanced Cloudflare Access options</summary>
+            <div class="advanced-fields">
+              <label>
+                Client ID
+                <input id="target-cf-id" type="password" autocomplete="new-password">
+              </label>
+              <label>
+                Client secret
+                <input id="target-cf-secret" type="password" autocomplete="new-password">
+              </label>
+              <label class="inline-check">
+                <input id="target-cf-clear" type="checkbox">
+                Remove the existing Cloudflare Access credentials
+              </label>
+            </div>
+          </details>
+          <button id="save-target" class="button primary" type="submit">Save destination</button>
+        </form>
+        </dialog>
       </article>
 
       <article class="panel publish-card">
         <div>
           <span class="step">FINAL ACTION</span>
-          <h2>Clear or publish reviewed JSON</h2>
-          <p class="muted">Publish validates the corrected batch remotely and never reruns Tesseract.</p>
+          <h2>Clear or export reviewed JSON</h2>
+          <p class="muted">Export sends Members and Boss together after a remote validation. Tesseract is never rerun.</p>
           <strong id="publish-scope">No source ready</strong>
         </div>
         <div class="preflight-row">
@@ -193,23 +266,25 @@
           <span id="preflight-state" class="badge neutral">Not checked</span>
         </div>
         <p id="preflight-help" class="muted">Check connectivity, authentication and batch validity before sending.</p>
-        <label>
-          Publication confirmation
-          <input id="confirmation" type="text" autocomplete="off">
-          <small id="confirmation-help"></small>
-        </label>
         <div class="publish-actions">
           <button id="clear" class="button secondary destructive" type="button">Clear extracted data</button>
-          <button id="publish" class="button danger" type="button" disabled>Publish reviewed batch</button>
+          <button id="publish" class="button danger" type="button" disabled>Export reviewed batch</button>
         </div>
       </article>
     </div>
   </section>
 
-  <footer class="wizard-actions">
-    <button id="previous-step" class="button secondary" type="button">Previous</button>
-    <span id="step-position">Step 1 of 4</span>
-    <button id="next-step" class="button primary" type="button">Next</button>
-  </footer>
+  <dialog id="export-dialog" class="modal-dialog">
+    <form method="dialog" class="confirmation-dialog">
+      <span class="step">FINAL CONFIRMATION</span>
+      <h2>Confirm export</h2>
+      <p id="export-confirmation-summary"></p>
+      <p class="muted">The Members and Boss data will be imported together. No partial state will be exposed.</p>
+      <div class="modal-actions">
+        <button id="cancel-export" class="button secondary" value="cancel">Cancel</button>
+        <button id="confirm-export" class="button danger" value="confirm">Confirm export</button>
+      </div>
+    </form>
+  </dialog>
 </main>
 <script src="/assets/app.js" defer></script>

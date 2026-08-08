@@ -3,7 +3,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from observer.ocr.review import ReviewError, add_batch_row, apply_batch_edit, clear_reviewed_data, delete_batch_row
+from observer.ocr.review import (
+    ReviewError,
+    add_batch_row,
+    apply_batch_edit,
+    clear_reviewed_data,
+    delete_batch_row,
+    merge_reviewed_scope,
+    prepare_export_batch,
+    refresh_reviewed_batch,
+    remove_reviewed_scope,
+)
 
 
 def sample_batch() -> dict:
@@ -39,6 +49,87 @@ def sample_batch() -> dict:
 
 
 class OcrReviewTests(unittest.TestCase):
+    def test_boss_capture_overlap_does_not_require_a_fake_participant(self) -> None:
+        batch = sample_batch()
+        batch["members"] = []
+        batch["sourceImages"] = [
+            {"kind": "guild-boss", "sourceName": "boss-1.png", "detectedRows": 8},
+            {"kind": "guild-boss", "sourceName": "boss-2.png", "detectedRows": 5},
+        ]
+        batch["bossRankings"] = [
+            {"rank": rank, "name": f"Boss {rank}", "damage": rank, "damageText": str(rank)}
+            for rank in range(1, 13)
+        ]
+
+        refresh_reviewed_batch(batch)
+
+        self.assertEqual(batch["quality"]["bossExpectedRows"], 12)
+        self.assertEqual(batch["quality"]["coverage"], 1)
+        self.assertEqual(batch["quality"]["status"], "pass")
+
+    def test_missing_boss_rank_remains_blocking_without_a_fixed_total(self) -> None:
+        batch = sample_batch()
+        batch["members"] = []
+        batch["sourceImages"] = [{"kind": "guild-boss", "sourceName": "boss.png", "detectedRows": 3}]
+        batch["bossRankings"] = [
+            {"rank": 1, "name": "One", "damage": 1, "damageText": "1"},
+            {"rank": 3, "name": "Three", "damage": 3, "damageText": "3"},
+        ]
+
+        refresh_reviewed_batch(batch)
+
+        self.assertEqual(batch["quality"]["bossExpectedRows"], 3)
+        self.assertEqual(batch["quality"]["coverage"], 0.666667)
+        self.assertEqual(batch["quality"]["status"], "review")
+
+    def test_export_date_is_applied_without_mutating_local_review(self) -> None:
+        local = sample_batch()
+        original_key = local["idempotencyKey"]
+
+        exported = prepare_export_batch(local, "2026-08-08")
+
+        self.assertEqual(local["captureDate"], "2026-07-29")
+        self.assertEqual(local["idempotencyKey"], original_key)
+        self.assertEqual(exported["captureDate"], "2026-08-08")
+        self.assertTrue(exported["idempotencyKey"].startswith("2026-08-08:"))
+        self.assertNotEqual(exported["idempotencyKey"], original_key)
+
+    def test_merges_member_and_boss_scopes_into_one_batch(self) -> None:
+        members = sample_batch()
+        members["sourceImages"] = [{"kind": "guild-members", "sourceName": "members.png", "detectedRows": 1}]
+        bosses = sample_batch()
+        bosses["sourceImages"] = [{"kind": "guild-boss", "sourceName": "boss.png", "detectedRows": 1}]
+        bosses["members"] = []
+        bosses["bossRankings"] = [{
+            "rank": 1, "name": "Alice", "damage": 100, "damageText": "100", "source": "boss.png",
+        }]
+
+        merged = merge_reviewed_scope(members, bosses)
+
+        self.assertEqual({image["kind"] for image in merged["sourceImages"]}, {"guild-members", "guild-boss"})
+        self.assertEqual(len(merged["members"]), 1)
+        self.assertEqual(len(merged["bossRankings"]), 1)
+
+    def test_replacing_boss_scope_preserves_reviewed_members(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_path = root / "batch.json"
+            corrections_path = root / "corrections.json"
+            batch = sample_batch()
+            batch["sourceImages"] = [
+                {"kind": "guild-members", "sourceName": "members.png", "detectedRows": 1},
+                {"kind": "guild-boss", "sourceName": "boss.png", "detectedRows": 1},
+            ]
+            batch["bossRankings"] = [{"rank": 1, "name": "Alice", "damage": 100, "damageText": "100", "source": "boss.png"}]
+            batch_path.write_text(json.dumps(batch), encoding="utf-8")
+
+            remove_reviewed_scope(batch_path, corrections_path, "2026-07-29", "guild-boss")
+            stored = json.loads(batch_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(stored["members"]), 1)
+        self.assertEqual(stored["bossRankings"], [])
+        self.assertEqual([image["kind"] for image in stored["sourceImages"]], ["guild-members"])
+
     def test_edit_updates_batch_audit_quality_and_idempotency(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             batch_path = Path(directory) / "2026-07-29.json"

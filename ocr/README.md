@@ -15,21 +15,30 @@ Copy-Item ocr/.env.example ocr/.env
 Copy-Item ocr/targets.example.json ocr/targets.json
 ```
 
-Edit `ocr/targets.json` with separate pre-production and production ingestion
-keys. If Cloudflare Access protects the hostname, also configure its service
-token ID and secret. Both real files are ignored by Git.
+The initial file contains only `Local test (offline)`. Start the UI, then use
+`Add destination` to save a name, application URL and dedicated ingestion key.
+Cloudflare Access credentials remain available under advanced options when a
+deployment actually requires them. Both real files are ignored by Git.
 
-The selector contains three isolated environments:
+The selector starts with one protected local environment and accepts any number
+of private remote destinations:
 
 - `local`: runs Tesseract, creates the outbox JSON and displays it for review
   without any network request; publication is disabled;
-- `app-test`: publishes to the disposable application test environment;
-- `preprod`: fetches the remote roster, validates remotely, then publishes only
-  after `PUBLISH PREPROD`;
-- `prod`: uses separate production credentials and requires `PUBLISH PROD`.
+- remote destinations use the identifier generated from their name in the
+  confirmation phrase, such as `PUBLISH PROD`;
+- each remote destination has its own URL and ingestion key.
 
-The committed `.example.com` hostnames are placeholders. Replace them in the
-ignored `ocr/targets.json`; the UI reports them as unconfigured until then.
+Destination secrets and the synchronized roster cache remain in the private
+local configuration storage. The API never returns secret values to the UI.
+
+## Player ID synchronization
+
+The OCR workstation never connects directly to PostgreSQL. Use `Synchronize
+IDs` to explicitly read the active roster from a configured application over
+its authenticated HTTPS API. The resulting player IDs, names and power hints
+are cached locally and can be reused by `Local test` while offline. OCR
+extraction never performs a hidden remote request.
 
 ## Lifecycle from WSL
 
@@ -55,9 +64,9 @@ without deleting captures, reviewed JSON, or Docker images.
 4. Every changed cell is written to
    `data/outbox/corrections/YYYY-MM-DD.json` with its before/after values. The
    corrected batch and idempotency key are updated atomically.
-5. Choose `preprod` or `prod`, type the environment-specific confirmation, and
-   publish. The backend validates the corrected JSON before its database
-   transaction.
+5. Choose a configured remote destination, type its environment-specific
+   confirmation, and publish. The backend validates the corrected JSON before
+   its database transaction.
 
 `Clear extracted data` removes only the outbox JSON and its correction history
 for the selected date. Uploaded screenshots are preserved so extraction can be

@@ -48,26 +48,23 @@ Copy-Item ocr/.env.example ocr/.env
 Copy-Item ocr/targets.example.json ocr/targets.json
 ```
 
-Dans `ocr/targets.json`, configurer séparément `preprod` et `prod` :
+La cible `Local test (offline)` fonctionne immédiatement sans réseau : elle
+extrait les captures, écrit le JSON dans `data/outbox` et permet sa revue, mais
+son bouton Publish reste désactivé.
 
-La cible `local` fonctionne immédiatement sans réseau : elle extrait les
-captures, écrit le JSON dans `data/outbox` et permet sa revue, mais son bouton
-Publish reste désactivé. Les cibles `preprod` et `prod` utilisent chacune leur
-propre URL et leur propre clé d'ingestion.
+Dans l'étape `Destination` de l'interface, utiliser `Add destination` pour
+enregistrer un nom, l'URL de l'application et sa clé d'ingestion. L'identifiant
+interne est généré depuis le nom. Les champs Cloudflare Access restent dans les
+options avancées et ne sont nécessaires que si une politique Service Auth
+protège les routes d'ingestion.
 
-```json
-{
-  "preprod": {
-    "label": "Pre-production",
-    "url": "https://preprod.archero.example.com",
-    "ingestionToken": "cle-ingestion-preprod",
-    "cfAccessClientId": "service-token-id",
-    "cfAccessClientSecret": "service-token-secret"
-  }
-}
-```
+Utiliser ensuite `Synchronize IDs` pour récupérer explicitement le roster via
+`GET /api/v1/imports/roster`. Les IDs sont mis en cache sur le PC et peuvent
+être réutilisés hors ligne. Une extraction locale ne déclenche jamais cet appel
+à distance implicitement.
 
-Les vrais fichiers sont ignorés par Git.
+Les destinations, leurs secrets et le cache du roster restent locaux et sont
+ignorés par Git.
 
 ## 3. Démarrer et arrêter
 

@@ -4,18 +4,25 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
 from observer.ocr.local_app import (
     LocalOcrError,
+    LocalOcrHandler,
     configured_target_public,
     day_payload,
+    delete_remote_target,
+    load_roster_cache,
     load_targets,
     merge_reviewed_roster,
     move_capture_to_trash,
+    save_roster_cache,
     selected_capture_paths,
     store_uploaded_images,
+    upsert_remote_target,
     update_remote_target,
 )
 from observer.pipeline.guild_member_ocr import RosterEntry
@@ -61,6 +68,7 @@ class LocalOcrAppTests(unittest.TestCase):
             path = Path(directory) / "targets.json"
             path.write_text(
                 json.dumps({
+                    "local": {"label": "Local test", "mode": "local"},
                     "preprod": {
                         "label": "Pre-production",
                         "url": "https://preprod.guild.internal",
@@ -99,6 +107,7 @@ class LocalOcrAppTests(unittest.TestCase):
             path = Path(directory) / "targets.json"
             path.write_text(
                 json.dumps({
+                    "local": {"label": "Local test", "mode": "local"},
                     "preprod": {
                         "url": "https://preprod.archero.example.com",
                         "ingestionToken": "replace-this-placeholder-token",
@@ -110,6 +119,22 @@ class LocalOcrAppTests(unittest.TestCase):
             targets = load_targets(path)
 
         self.assertFalse(targets["preprod"]["configured"])
+
+    def test_requires_the_protected_local_test_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.json"
+            path.write_text(
+                json.dumps({
+                    "prod": {
+                        "label": "Production",
+                        "url": "https://archero.example.net",
+                        "ingestionToken": "a" * 32,
+                    }
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(LocalOcrError, "protected local test"):
+                load_targets(path)
 
     def test_updates_a_private_lan_destination_without_exposing_its_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -141,6 +166,118 @@ class LocalOcrAppTests(unittest.TestCase):
         self.assertTrue(updated["configured"])
         self.assertEqual(stored["preprod"]["url"], "http://192.168.1.50:5181")
         self.assertNotIn("ingestionToken", public[1])
+
+    def test_creates_updates_and_deletes_a_named_remote_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.json"
+            path.write_text(json.dumps({"local": {"label": "Local test", "mode": "local"}}), encoding="utf-8")
+            targets = load_targets(path)
+
+            created = upsert_remote_target(
+                path,
+                targets,
+                key="my-prod",
+                label="My production",
+                url="https://archero.example.net",
+                ingestion_token="a" * 32,
+            )
+            updated = upsert_remote_target(
+                path,
+                targets,
+                key="my-prod",
+                label="Home server",
+                url="http://192.168.1.50:5181",
+                ingestion_token="",
+            )
+
+            self.assertTrue(created["configured"])
+            self.assertEqual(updated["label"], "Home server")
+            self.assertEqual(updated["ingestionToken"], "a" * 32)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+            with self.assertRaisesRegex(LocalOcrError, "already uses"):
+                upsert_remote_target(
+                    path,
+                    targets,
+                    key="my-prod",
+                    label="Duplicate",
+                    url="https://duplicate.example.net",
+                    ingestion_token="b" * 32,
+                    create_only=True,
+                )
+
+            delete_remote_target(path, targets, key="my-prod")
+            self.assertNotIn("my-prod", json.loads(path.read_text(encoding="utf-8")))
+
+    def test_local_destination_cannot_be_changed_or_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.json"
+            path.write_text(json.dumps({"local": {"label": "Local test", "mode": "local"}}), encoding="utf-8")
+            targets = load_targets(path)
+
+            with self.assertRaisesRegex(LocalOcrError, "cannot be changed"):
+                upsert_remote_target(
+                    path,
+                    targets,
+                    key="local",
+                    label="Changed",
+                    url="https://archero.example.net",
+                    ingestion_token="a" * 32,
+                )
+            with self.assertRaisesRegex(LocalOcrError, "cannot be deleted"):
+                delete_remote_target(path, targets, key="local")
+
+    def test_roster_cache_is_private_and_round_trips_without_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "roster-cache.json"
+            roster = [
+                RosterEntry(player_id="119965772", name="Papixl", power_hint=834600),
+                RosterEntry(player_id="119982936", name="Pignouf", power_hint=None),
+            ]
+
+            status = save_roster_cache(path, roster, key="prod", label="Production")
+            loaded, metadata = load_roster_cache(path)
+
+            self.assertEqual(status["count"], 2)
+            self.assertEqual([(entry.player_id, entry.name) for entry in loaded], [
+                ("119965772", "Papixl"),
+                ("119982936", "Pignouf"),
+            ])
+            self.assertEqual(metadata["source"], {"key": "prod", "label": "Production"})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("token", path.read_text(encoding="utf-8").lower())
+
+    def test_missing_roster_cache_is_reported_without_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            roster, metadata = load_roster_cache(Path(directory) / "roster-cache.json")
+
+        self.assertEqual(roster, [])
+        self.assertFalse(metadata["configured"])
+
+    def test_local_scan_uses_cache_without_contacting_a_remote_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "roster-cache.json"
+            outbox = root / "outbox"
+            outbox.mkdir()
+            save_roster_cache(
+                cache,
+                [RosterEntry(player_id="119965772", name="Papixl", power_hint=834600)],
+                key="prod",
+                label="Production",
+            )
+            handler = object.__new__(LocalOcrHandler)
+            handler.server = SimpleNamespace(
+                roster_cache_path=cache,
+                outbox_root=outbox,
+                local_roster_path=root / "unused.js",
+            )
+
+            with patch("observer.ocr.local_app.fetch_roster", side_effect=AssertionError("unexpected network call")):
+                roster, source = handler._scan_roster()
+
+        self.assertEqual(roster[0].player_id, "119965772")
+        self.assertEqual(source["type"], "local-cache")
 
     def test_stores_uploaded_png_in_the_selected_capture_day(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -288,3 +425,4 @@ class LocalOcrAppTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    save_roster_cache,

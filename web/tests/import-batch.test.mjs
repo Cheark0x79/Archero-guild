@@ -38,6 +38,29 @@ test("accepts a complete publishable OCR batch", () => {
   assert.equal(result.publishable, true);
 });
 
+test("accepts members and boss as one atomic publishable batch", () => {
+  const batch = validBatch();
+  batch.sourceImages.push({
+    kind: "guild-boss",
+    sha256: "b".repeat(64),
+    width: 1440,
+    height: 2560,
+    detectedRows: 1,
+  });
+  batch.bossRankings.push({
+    rank: 1,
+    name: "Alice",
+    damageText: "2.5M",
+    damage: 2_500_000,
+    source: "boss.png podium 1",
+  });
+
+  const result = validateImportBatch(batch, { requirePublishable: true });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.publishable, true);
+});
+
 test("rejects duplicate identities and invalid quality", () => {
   const batch = validBatch();
   batch.members.push({ ...batch.members[0] });

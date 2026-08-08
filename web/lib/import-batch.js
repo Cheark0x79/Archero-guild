@@ -68,17 +68,24 @@ export function validateImportBatch(batch, { requirePublishable = false } = {}) 
   const sourceKinds = new Set(
     Array.isArray(batch.sourceImages) ? batch.sourceImages.map((image) => image?.kind) : [],
   );
-  const scope = sourceKinds.size === 1 ? [...sourceKinds][0] : null;
-  const hasScopeRows = scope === "guild-members"
-    ? batch.members.length > 0
-    : scope === "guild-boss" ? batch.bossRankings.length > 0 : false;
+  const hasMembers = sourceKinds.has("guild-members") && Array.isArray(batch.members) && batch.members.length > 0;
+  const hasBosses = sourceKinds.has("guild-boss") && Array.isArray(batch.bossRankings) && batch.bossRankings.length > 0;
+  const hasAllScopeRows = sourceKinds.size > 0
+    && (!sourceKinds.has("guild-members") || hasMembers)
+    && (!sourceKinds.has("guild-boss") || hasBosses);
+  const bossesComplete = !sourceKinds.has("guild-boss")
+    || (Array.isArray(batch.bossRankings) && batch.bossRankings.every((row) =>
+      Number.isSafeInteger(row?.rank)
+      && typeof row?.name === "string" && row.name.trim()
+      && Number.isSafeInteger(row?.damage)
+      && typeof row?.damageText === "string" && row.damageText.trim()));
   const publishable =
     errors.length === 0
     && quality?.coverage === 1
-    && hasScopeRows
-    && (scope !== "guild-boss" || quality?.completeness === 1);
+    && hasAllScopeRows
+    && bossesComplete;
   if (requirePublishable && !publishable) {
-    errors.push("quality gate requires one complete capture scope with 100% coverage; missing member metrics are allowed");
+    errors.push("quality gate requires every captured scope with 100% coverage and complete boss rows; missing member metrics are allowed");
   }
   return { valid: errors.length === 0, publishable, errors };
 }

@@ -84,7 +84,14 @@ def publish_batch(
     )
     validation_data = validation.get("data", {})
     if not validation_data.get("publishable"):
-        raise PublishError("production validation refused the OCR batch")
+        errors = validation_data.get("errors")
+        if isinstance(errors, list) and errors:
+            detail = "; ".join(str(error) for error in errors[:5])
+            raise PublishError(f"destination validation refused the OCR batch: {detail}")
+        raise PublishError(
+            "destination accepted the OCR schema but marked the batch non-publishable; "
+            "the destination may need the combined Members + Boss import update"
+        )
     if validate_only:
         return {"validated": True, "published": False, "validation": validation_data}
     effective_import_timeout = import_timeout if import_timeout is not None else max(timeout, 120)

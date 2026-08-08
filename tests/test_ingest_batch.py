@@ -61,6 +61,21 @@ def valid_batch():
 
 
 class IngestBatchTests(unittest.TestCase):
+    def test_accepts_combined_member_and_boss_batch(self):
+        _validate_batch(valid_batch())
+
+    def test_keeps_legacy_single_scope_batches_compatible(self):
+        member_batch = valid_batch()
+        member_batch["sourceImages"] = [member_batch["sourceImages"][0]]
+        member_batch["bossRankings"] = []
+
+        boss_batch = valid_batch()
+        boss_batch["sourceImages"] = [boss_batch["sourceImages"][1]]
+        boss_batch["members"] = []
+
+        _validate_batch(member_batch)
+        _validate_batch(boss_batch)
+
     def test_converts_contract_to_existing_persistence_types(self):
         batch = valid_batch()
         report, roster, members, bosses = _convert_batch(batch)

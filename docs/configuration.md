@@ -73,15 +73,18 @@ Makefile and does not belong in an environment example.
 | `ARCHERO_OCR_UI_PORT` | Optional, default `5190` | Loopback review UI port |
 | `ARCHERO_CAPTURE_ROOT` | Optional | Host capture directory mounted at `/captures` |
 | `ARCHERO_OUTBOX_ROOT` | Optional | Host reviewed-batch directory mounted at `/outbox` |
-| `ARCHERO_OCR_TARGETS_FILE` | Required path | Private target JSON mounted read-only into the container |
+| `ARCHERO_OCR_TARGETS_FILE` | Required path | Private target JSON writable only by the local OCR service |
+| `ARCHERO_OCR_ROSTER_CACHE` | Optional path | Private cache of player IDs explicitly synchronized from a destination; defaults next to the target file |
 | `ARCHERO_TARGET_URL` | Conditional CLI value | Legacy CLI profile destination; the UI uses `targets.json` |
 | `ARCHERO_INGESTION_TOKEN` | Conditional CLI secret | Legacy CLI profile ingestion token |
 | `CF_ACCESS_CLIENT_ID` | Conditional secret identifier | Cloudflare service token ID for CLI publication |
 | `CF_ACCESS_CLIENT_SECRET` | Conditional secret | Cloudflare service token secret for CLI publication |
 
-Pre-production and production targets must use different ingestion and
-Cloudflare credentials. Keep them in `ocr/targets.json`, not `ocr/.env`, when
-using the review UI.
+Create remote destinations from the loopback-only review UI. Every environment
+must use a dedicated ingestion key. Cloudflare Access credentials are optional
+advanced values and are unnecessary when the application ingestion API is
+directly reachable. Keep target secrets in the ignored private OCR storage, not
+in `ocr/.env` or Git.
 
 ## Internal and test-only settings
 

@@ -13,9 +13,11 @@ services:
       ARCHERO_SCREENSHOTS_ROOT: /captures
       ARCHERO_OUTBOX_ROOT: /outbox
       ARCHERO_OCR_TARGETS_FILE: /run/secrets/targets.json
+      ARCHERO_OCR_ROSTER_CACHE: /outbox/roster-cache.json
       ARCHERO_OCR_LOCAL_ROSTER: /app/web/sample-data.js
       ARCHERO_OCR_UI_HOST: 0.0.0.0
       ARCHERO_OCR_UI_PORT: 5190
+      ARCHERO_OCR_PUBLIC_PORT: ${ARCHERO_OCR_UI_PORT:-5190}
       TZ: Europe/Paris
     ports:
       - "127.0.0.1:${ARCHERO_OCR_UI_PORT:-5190}:5190"
