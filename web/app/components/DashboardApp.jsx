@@ -19,6 +19,7 @@ import {
   sortMembers,
 } from "../../metrics.js";
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
+import { bossDefinitionForDate, bossDefinitionForSnapshot } from "../../lib/boss-identity.js";
 import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
@@ -205,6 +206,7 @@ const routeMeta = {
   boss: ["Boss", "Guild boss damage comparison, daily rankings, and records."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
   admin: ["Admin", "Operational tools and local rules."],
+  test: ["Test", "Synthetic fixtures and isolated environment controls."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
   activity: ["Activity", "Roster events, absences, and warnings."],
@@ -340,6 +342,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         {!dataLoading && activeRoute === "boss" && <BossView />}
         {!dataLoading && activeRoute === "data" && <DataView />}
         {!dataLoading && activeRoute === "admin" && <AdminView dataVersion={dataVersion} />}
+        {!dataLoading && activeRoute === "test" && <TestEnvironmentView />}
         {!dataLoading && activeRoute === "member" && selectedMember && (
           <MemberDetail
             member={selectedMember}
@@ -378,6 +381,7 @@ function DataView() {
   const [busyAction, setBusyAction] = useState(null);
   const [importDate, setImportDate] = useState(todayLabel());
   const [messages, setMessages] = useState([]);
+  const [bossAudit, setBossAudit] = useState({ loading: true, audit: null, dataAvailable: false, error: null });
   const [adbStatus, setAdbStatus] = useState({ checking: true, connected: false, devices: [], error: null });
   const [captureDialog, setCaptureDialog] = useState(null);
   const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
@@ -387,6 +391,7 @@ function DataView() {
   const importRunning = importJob && ["queued", "running"].includes(importJob.status);
 
   useEffect(() => {
+    refreshBossAudit();
     refreshAdbStatus();
     refreshImportJobStatus();
   }, []);
@@ -415,6 +420,18 @@ function DataView() {
         devices: [],
         error: error instanceof Error ? error.message : "ADB status unavailable",
       });
+    }
+  }
+
+  async function refreshBossAudit() {
+    setBossAudit((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const response = await fetch("/api/data/boss-history-audit", { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.audit) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      setBossAudit({ loading: false, audit: payload.audit, dataAvailable: payload.dataAvailable !== false, error: null });
+    } catch (error) {
+      setBossAudit({ loading: false, audit: null, dataAvailable: false, error: error instanceof Error ? error.message : "Boss history audit unavailable" });
     }
   }
 
@@ -562,6 +579,51 @@ function DataView() {
 
   return (
     <div className="data-page">
+      <section className="panel data-status-panel">
+        <PanelHeading
+          title="Boss history audit"
+          subtitle="Read-only verification of result dates, exported boss identities, and personal records."
+          action={
+            <button className="secondary-button compact-action" type="button" onClick={refreshBossAudit} disabled={bossAudit.loading}>
+              {bossAudit.loading ? "Checking..." : "Refresh"}
+            </button>
+          }
+        />
+        {bossAudit.error ? <p className="muted">Audit unavailable: {bossAudit.error}</p> : null}
+        {bossAudit.audit ? (
+          <>
+            <div className="data-status-row">
+              <StatusPill
+                label={!bossAudit.dataAvailable ? "No live data" : bossAudit.audit.summary.issues === 0 ? "Aligned" : `${bossAudit.audit.summary.issues} issue${bossAudit.audit.summary.issues === 1 ? "" : "s"}`}
+                severity={bossAudit.dataAvailable && bossAudit.audit.summary.issues === 0 ? "positive" : "warning"}
+              />
+              <span className="muted">
+                {!bossAudit.dataAvailable ? "Rotation available, but no database export could be audited." : `${bossAudit.audit.summary.daysChecked} days · ${bossAudit.audit.summary.rowsChecked} results · ${bossAudit.audit.summary.personalBestsAffected} PB affected`}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Day</th><th>Expected boss</th><th>Exported boss</th><th>Impact</th><th>Suggested date</th></tr></thead>
+                <tbody>
+                  {bossAudit.audit.issues.length ? bossAudit.audit.issues.map((issue, index) => (
+                    <tr key={`${issue.type}-${issue.date ?? "unknown"}-${index}`}>
+                      <td>{issue.date ?? "Invalid date"}</td>
+                      <td>{issue.expectedBoss?.name ?? "Unknown"}</td>
+                      <td>{issue.actualBoss?.name ?? issue.bossKeys?.join(", ") ?? "Missing"}</td>
+                      <td>{bossAuditIssueLabel(issue)}</td>
+                      <td>{issue.suggestedPreviousDate ?? "—"}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan="5">No date/boss inconsistency detected in the current export.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted">Rotation: {bossAudit.audit.rotation.map((boss) => `${boss.dayLabel} ${boss.name}`).join(" · ")}</p>
+          </>
+        ) : null}
+      </section>
+
       <section className={`panel data-status-panel ${adbStatus.connected ? "connected" : "disconnected"}`}>
         <PanelHeading
           title="ADB"
@@ -689,6 +751,17 @@ function DataView() {
       ) : null}
     </div>
   );
+}
+
+function bossAuditIssueLabel(issue) {
+  const impact = `${issue.rowsAffected ?? 0} result${issue.rowsAffected === 1 ? "" : "s"}, ${issue.personalBestsAffected ?? 0} PB`;
+  return {
+    weekday_mismatch: `Boss does not match weekday · ${impact}`,
+    missing_explicit_boss: `Legacy export without boss identity · ${impact}`,
+    unknown_boss: `Unknown exported boss · ${impact}`,
+    multiple_bosses_for_date: `Several bosses share this date · ${impact}`,
+    invalid_date: `Invalid result date · ${impact}`,
+  }[issue.type] ?? impact;
 }
 
 function DataActionButton({ title, detail, disabled, onClick }) {
@@ -830,6 +903,86 @@ function AdminView({ dataVersion }) {
         </section>
       </div>
     </div>
+  );
+}
+
+function TestEnvironmentView() {
+  return (
+    <div className="admin-management">
+      <TestDataPanel />
+    </div>
+  );
+}
+
+function TestDataPanel() {
+  const [state, setState] = useState({ operation: "", error: "", success: "" });
+
+  async function loadTestData() {
+    const confirmed = window.confirm(
+      "Load deterministic synthetic members and boss history into this isolated test database? Existing real data will never be overwritten.",
+    );
+    if (!confirmed) return;
+    setState({ operation: "load", error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/test-data", {
+        method: "POST",
+        headers: dataActionHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) throw new Error(payload.error ?? "Unable to load synthetic test data.");
+      setState({
+        operation: "",
+        error: "",
+        success: `${payload.members} fictional members and ${payload.days} days loaded. Refreshing the Web views…`,
+      });
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      setState({ operation: "", error: error instanceof Error ? error.message : "Unable to load synthetic test data.", success: "" });
+    }
+  }
+
+  async function clearTestData() {
+    const confirmed = window.confirm(
+      "Clear every synthetic member, history day, and boss result from this isolated test database? This cannot clear a database containing non-synthetic data.",
+    );
+    if (!confirmed) return;
+    setState({ operation: "clear", error: "", success: "" });
+    try {
+      const response = await fetch("/api/data/test-data", {
+        method: "DELETE",
+        headers: dataActionHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) throw new Error(payload.error ?? "Unable to clear synthetic test data.");
+      setState({
+        operation: "",
+        error: "",
+        success: `${payload.cleared?.members ?? 0} fictional members cleared. Refreshing the Web views…`,
+      });
+      window.setTimeout(() => window.location.reload(), 700);
+    } catch (error) {
+      setState({ operation: "", error: error instanceof Error ? error.message : "Unable to clear synthetic test data.", success: "" });
+    }
+  }
+
+  return (
+    <section className="panel test-data-panel" aria-labelledby="test-data-title">
+      <div>
+        <span className="environment-badge">Test environment</span>
+        <h2 id="test-data-title">Synthetic database</h2>
+        <p>Load fictional members, daily metrics, and boss rankings without contacting OCR or using production data.</p>
+      </div>
+      <div className="test-data-actions">
+        <button className="primary-button" type="button" disabled={Boolean(state.operation)} onClick={loadTestData}>
+          {state.operation === "load" ? "Loading test data…" : "Load synthetic test data"}
+        </button>
+        <button className="secondary-button test-data-clear" type="button" disabled={Boolean(state.operation)} onClick={clearTestData}>
+          {state.operation === "clear" ? "Clearing test data…" : "Clear synthetic data"}
+        </button>
+        {state.error ? <span className="form-error" role="alert">{state.error}</span> : null}
+        {state.success ? <span className="form-success" role="status">{state.success}</span> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1461,7 +1614,7 @@ function BossView() {
   const [bossSection, setBossSection] = useState("weekly");
   const selectedBossKey = bossFilter === "all" ? null : bossFilter;
   const selectedBoss = selectedBossKey ? bossForKey(selectedBossKey) : null;
-  const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossForDate(date).key === selectedBossKey) : bossData.dates;
+  const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates;
   const selectedSeries = bossData.players
     .filter((player) => selectedPlayers.has(player.playerId))
     .map((player) => ({ ...player, points: selectedBossKey ? player.points.filter((point) => point.bossKey === selectedBossKey) : player.points }))
@@ -3149,10 +3302,11 @@ function buildBossDashboardData() {
   const rosterNames = new Map(guildRoster.filter((entry) => isCurrentPlayerId(entry.playerId)).map((entry) => [entry.playerId, entry.name]));
   const playersById = new Map();
   const latestDate = dates.at(-1) ?? currentIsoDate();
-  const activeBoss = bossForDate(latestDate);
+  const bossesByDate = new Map((dailyBossRawSnapshots ?? []).map((day) => [day.date, bossForSnapshot(day)]));
+  const activeBoss = bossesByDate.get(latestDate) ?? bossForDate(latestDate);
 
   for (const day of dailyBossRawSnapshots ?? []) {
-    const boss = bossForDate(day.date);
+    const boss = bossForSnapshot(day);
     for (const row of day.rows ?? []) {
       if (!isCurrentPlayerId(row.playerId) || typeof row.bossDamageToday !== "number") continue;
       const current = playersById.get(row.playerId) ?? {
@@ -3207,6 +3361,7 @@ function buildBossDashboardData() {
     dates,
     latestDate,
     activeBoss,
+    bossesByDate,
     players,
     dailyRankings: bossDailyRankings(players),
     bestDayRecords: bossBestDayRecords(players),
@@ -3223,14 +3378,11 @@ function bossForKey(key) {
 }
 
 function bossForDate(date) {
-  const weekday = weekdayFromIsoDate(date);
-  return BOSS_ROTATION.find((boss) => boss.weekday === weekday) ?? BOSS_ROTATION[0];
+  return bossDefinitionForDate(date, BOSS_ROTATION) ?? BOSS_ROTATION[0];
 }
 
-function weekdayFromIsoDate(date) {
-  const [year, month, day] = String(date).split("-").map(Number);
-  if (!year || !month || !day) return new Date().getDay();
-  return new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
+function bossForSnapshot(snapshot) {
+  return bossDefinitionForSnapshot(snapshot, BOSS_ROTATION) ?? BOSS_ROTATION[0];
 }
 
 function bossBestPointsByBoss(points) {
@@ -3271,7 +3423,7 @@ function bossDailyRankings(players) {
     .sort(([left], [right]) => right.localeCompare(left))
     .map(([date, rows]) => ({
       date,
-      boss: bossForDate(date),
+      boss: bossForKey(rows[0]?.bossKey),
       rows: rows.sort((left, right) => right.damage - left.damage || left.name.localeCompare(right.name)),
     }));
 }
@@ -3304,7 +3456,7 @@ function memberBossPersonalBests(member) {
 
   const bestByBoss = new Map();
   for (const day of Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : []) {
-    const boss = bossForDate(day.date);
+    const boss = bossForSnapshot(day);
     for (const row of day.rows ?? []) {
       if (row.playerId !== member.playerId || typeof row.bossDamageToday !== "number") continue;
       const previous = bestByBoss.get(boss.key);

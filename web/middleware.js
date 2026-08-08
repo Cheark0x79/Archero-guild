@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import {
-  ADMIN_ROLE,
   applicationUrl,
   AUTH_COOKIE_NAME,
-  isAdminPath,
   isLocalOcrPath,
   isPublicPath,
+  roleCanAccessPath,
   roleForSessionToken,
 } from "./lib/auth.js";
 
@@ -33,11 +32,11 @@ export function middleware(request) {
     return response;
   }
 
-  if (authenticated && isAdminPath(pathname) && role !== ADMIN_ROLE) {
+  if (authenticated && !roleCanAccessPath(pathname, role)) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ ok: false, error: "administrator access required" }, { status: 403 });
     }
-    return NextResponse.redirect(applicationUrl("/dashboard", request.url));
+    return NextResponse.redirect(applicationUrl("/access-denied", request.url));
   }
 
   if (authenticated) return NextResponse.next();

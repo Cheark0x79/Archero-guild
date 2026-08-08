@@ -20,19 +20,20 @@ import {
   previousMemberSnapshots,
   rules,
 } from "../sample-data.js";
+import { DEMO_PRIMARY_PLAYER_ID } from "../lib/demo-data.js";
 
 const environment = { ARCHERO_SHARE_LINK_SECRET: "share-test-secret-that-is-longer-than-thirty-two-bytes" };
 process.env.ARCHERO_SHARE_LINK_SECRET ??= environment.ARCHERO_SHARE_LINK_SECRET;
 const now = new Date("2026-08-03T10:00:00.000Z");
 
 test("member share codes are compact, signed, reusable, and time limited", () => {
-  const code = createMemberShareCode("119982936", { environment, now, expiresInHours: 2 });
+  const code = createMemberShareCode(DEMO_PRIMARY_PLAYER_ID, { environment, now, expiresInHours: 2 });
   const firstGrant = verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T10:30:00.000Z") });
   const secondGrant = verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T11:30:00.000Z") });
   assert.ok(code.length <= 60);
   assert.equal(code.includes("."), false);
-  assert.equal(firstGrant.playerId, "119982936");
-  assert.equal(secondGrant.playerId, "119982936");
+  assert.equal(firstGrant.playerId, DEMO_PRIMARY_PLAYER_ID);
+  assert.equal(secondGrant.playerId, DEMO_PRIMARY_PLAYER_ID);
   assert.equal(firstGrant.expiresAt.toISOString(), "2026-08-03T12:00:00.000Z");
   assert.equal(verifyMemberShareCode(`${code.slice(0, -1)}x`, { environment, now }), null);
   assert.equal(verifyMemberShareCode(code, { environment, now: new Date("2026-08-03T12:00:00.000Z") }), null);
@@ -40,11 +41,11 @@ test("member share codes are compact, signed, reusable, and time limited", () =>
 });
 
 test("member share tokens are scoped, signed, reusable, and time limited", () => {
-  const token = createMemberShareToken("119982936", { environment, now, expiresInHours: 2 });
+  const token = createMemberShareToken(DEMO_PRIMARY_PLAYER_ID, { environment, now, expiresInHours: 2 });
   const firstGrant = verifyMemberShareToken(token, { environment, now: new Date("2026-08-03T10:30:00.000Z") });
   const secondGrant = verifyMemberShareToken(token, { environment, now: new Date("2026-08-03T11:30:00.000Z") });
-  assert.equal(firstGrant.playerId, "119982936");
-  assert.equal(secondGrant.playerId, "119982936");
+  assert.equal(firstGrant.playerId, DEMO_PRIMARY_PLAYER_ID);
+  assert.equal(secondGrant.playerId, DEMO_PRIMARY_PLAYER_ID);
   assert.equal(firstGrant.expiresAt.toISOString(), "2026-08-03T12:00:00.000Z");
   assert.equal(verifyMemberShareToken(`${token}x`, { environment, now }), null);
   assert.equal(verifyMemberShareToken(token, { environment, now: new Date("2026-08-03T12:00:00.000Z") }), null);
@@ -56,7 +57,7 @@ test("share link expiry and cookie names are strictly validated", () => {
   assert.equal(normalizeShareHours(1), 1);
   assert.throws(() => normalizeShareHours(25), /between 1 and 24/);
   assert.throws(() => createMemberShareToken("not-an-id", { environment, now }), /playerId/);
-  assert.equal(shareCookieName("119982936"), "archero_share_119982936");
+  assert.equal(shareCookieName(DEMO_PRIMARY_PLAYER_ID), `archero_share_${DEMO_PRIMARY_PLAYER_ID}`);
 });
 
 test("shared member data contains charts and boss ranks without warnings or private administration", () => {
@@ -68,11 +69,11 @@ test("shared member data contains charts and boss ranks without warnings or priv
     dailyRawSnapshots,
     dailyBossRawSnapshots,
     rules,
-    memberAdminRecords: { 119982936: { notes: [{ note: "private" }] } },
+    memberAdminRecords: { [DEMO_PRIMARY_PLAYER_ID]: { notes: [{ note: "private" }] } },
     warningActions: { secret: { status: "ignored" } },
-  }, "119982936", "https://archero.example.com");
+  }, DEMO_PRIMARY_PLAYER_ID, "https://archero.example.com");
 
-  assert.equal(profile.member.playerId, "119982936");
+  assert.equal(profile.member.playerId, DEMO_PRIMARY_PLAYER_ID);
   assert.ok(profile.powerHistory.length > 0);
   assert.equal(typeof profile.powerWeekDelta, "number");
   assert.ok(profile.bossDamageHistory.length > 0);

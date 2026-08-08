@@ -50,6 +50,25 @@ docker compose up -d postgres
 The local database listens on `127.0.0.1:55440` by default. It is never filled
 with demonstration members when database mode is enabled.
 
+### Synthetic Web fixtures
+
+The local Web example enables deterministic synthetic fixtures even when an
+isolated launcher injects a PostgreSQL URL. The fixture contains 40 fictional
+identities, 21 member days, 21 boss days, and the complete seven-boss rotation.
+It never reads or transforms a production export.
+
+Set `ARCHERO_DEMO_SCENARIO` in the local environment to one of:
+
+- `baseline`: complete, internally consistent data;
+- `audit-anomalies`: controlled missing and mismatched boss identities;
+- `record-variants`: equal scores and personal-record variations;
+- `sparse`: missing metrics and unresolved fictional identities.
+
+`ARCHERO_DEMO_SEED` reproduces a variant and `ARCHERO_DEMO_ANCHOR_DATE` moves
+the generated 21-day window. Explicit demo mode is accepted only for an HTTP
+loopback origin and is refused whenever `ARCHERO_REQUIRE_DATABASE=1`, as it is
+in the production Compose stack.
+
 ## Common development commands
 
 ```bash

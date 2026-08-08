@@ -5,6 +5,7 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 import observer.storage.ingest_batch as ingest_module
+from observer.storage.clear_synthetic_data import SyntheticDataClearError, clear_synthetic_data
 from observer.storage.ingest_batch import ingest_batch
 
 
@@ -160,6 +161,34 @@ class IngestBatchPostgresTests(unittest.TestCase):
             "member_metrics": 0,
             "boss_daily_results": 0,
         })
+
+    def test_clear_synthetic_data_removes_an_exclusively_synthetic_batch(self) -> None:
+        batch = integration_batch(idempotency_key="synthetic-web-admin-v1:baseline:2099-01-05")
+        batch["agentVersion"] = "synthetic-web-admin-v1-baseline"
+        batch["members"][0].update({
+            "playerId": "900000001",
+            "name": "DemoAstra01",
+            "source": "synthetic/members-2099-01-05.png row 0",
+        })
+        batch["bossRankings"][0].update({
+            "playerId": "900000001",
+            "name": "DemoAstra01",
+            "rawName": "DemoAstra01",
+            "source": "synthetic/boss-2099-01-05.png podium 1",
+        })
+        batch["sourceImages"][0]["sourceName"] = "synthetic-guild-members-20990105.png"
+        batch["sourceImages"][1]["sourceName"] = "synthetic-guild-boss-20990105.png"
+        ingest_batch(batch, TEST_DSN)
+
+        cleared = clear_synthetic_data(TEST_DSN)
+
+        self.assertEqual(cleared, {"members": 1, "days": 1, "bossResults": 1, "importBatches": 1})
+
+    def test_clear_synthetic_data_refuses_any_non_synthetic_batch(self) -> None:
+        ingest_batch(integration_batch(), TEST_DSN)
+
+        with self.assertRaisesRegex(SyntheticDataClearError, "not exclusively synthetic"):
+            clear_synthetic_data(TEST_DSN)
 
     @staticmethod
     def _truncate() -> None:

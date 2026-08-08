@@ -13,12 +13,28 @@ import {
   ocrQueue,
 } from "../../../sample-data.js";
 import { projectRoot, runObserverModule } from "../data/actions.js";
+import { bossDefinitionForSnapshot } from "../../../lib/boss-identity.js";
 import { readMemberAdminRecords } from "../../../lib/member-admin.js";
 import { readWarningActions } from "../../../lib/warning-actions.js";
 
 export async function loadDashboardData(options = {}) {
   const environment = options.environment ?? process.env;
   const includePrivateDashboardData = Object.hasOwn(options, "includeWarningActions");
+  if (environment.ARCHERO_DATA_MODE === "demo") {
+    const payload = explicitDemoModeAllowed(environment)
+      ? {
+          ok: true,
+          source: "local",
+          dataMode: "demo",
+          partial: false,
+          missingDomains: [],
+          data: localPayload(),
+        }
+      : unavailableDatabasePayload("Synthetic demonstration data is restricted to loopback test environments without strict database mode.");
+    return includePrivateDashboardData
+      ? decorateDashboardPayload(payload, options.includeWarningActions)
+      : payload;
+  }
   if (!environment.ARCHERO_DATABASE_URL && !environment.DATABASE_URL) {
     const payload = requiresDatabase(environment)
       ? unavailableDatabasePayload("PostgreSQL is required but no database URL is configured.")
@@ -78,6 +94,16 @@ export async function loadDashboardData(options = {}) {
 
 export function requiresDatabase(environment = process.env) {
   return environment.ARCHERO_REQUIRE_DATABASE === "1";
+}
+
+export function explicitDemoModeAllowed(environment = process.env) {
+  if (requiresDatabase(environment)) return false;
+  try {
+    const origin = new URL(environment.ARCHERO_PUBLIC_ORIGIN ?? "");
+    return origin.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(origin.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function invalidateDashboardDataCache() {
@@ -195,17 +221,7 @@ export function bossRankingsFromData(data) {
 
 export function bossDefinitionFromSnapshot(data, snapshot) {
   const definitions = bossDefinitionsFromData(data);
-  const explicitKey = snapshot?.boss?.key ?? snapshot?.bossKey;
-  if (explicitKey) {
-    const stored = definitions.find((boss) => boss.key === explicitKey);
-    return stored ?? {
-      key: explicitKey,
-      weekday: snapshot?.boss?.weekday ?? null,
-      dayLabel: snapshot?.boss?.dayLabel ?? null,
-      name: snapshot?.boss?.name ?? explicitKey,
-    };
-  }
-  return bossForDate(snapshot?.date, definitions);
+  return bossDefinitionForSnapshot(snapshot, definitions);
 }
 
 const BOSS_ROTATION = [
@@ -226,12 +242,6 @@ function bossDefinitionsFromData(data) {
   return Array.isArray(data.bossDefinitions) && data.bossDefinitions.length > 0
     ? data.bossDefinitions
     : BOSS_ROTATION;
-}
-
-function bossForDate(date, definitions = BOSS_ROTATION) {
-  const [year, month, day] = String(date).split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
-  return definitions.find((boss) => boss.weekday === weekday) ?? definitions[0] ?? BOSS_ROTATION[0];
 }
 
 function weekStart(date) {

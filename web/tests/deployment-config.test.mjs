@@ -25,6 +25,10 @@ test("release automation versions the image and preserves database deployment", 
   assert.match(compose, /APP_VERSION: \$\{ARCHERO_IMAGE_TAG:-local\}/);
   assert.match(compose, /ARCHERO_USER_PASSWORD: \$\{ARCHERO_USER_PASSWORD:\?Set ARCHERO_USER_PASSWORD\}/);
   assert.match(compose, /ARCHERO_USER_SESSION_TOKEN: \$\{ARCHERO_USER_SESSION_TOKEN:\?Set ARCHERO_USER_SESSION_TOKEN\}/);
+  assert.match(compose, /TEST_DATA_ADMIN: "0"/);
+  assert.match(compose, /DEPLOYMENT_ENV: "production"/);
+  assert.match(compose, /ARCHERO_DEPLOYMENT_ENV: production/);
+  assert.doesNotMatch(compose, /ARCHERO_ENABLE_TEST_DATA_ADMIN/);
   assert.match(compose, /mem_limit: 2g/);
   assert.match(compose, /pids_limit: 256/);
   assert.match(compose, /cap_drop:\s*\n\s*- ALL/);

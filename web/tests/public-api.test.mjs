@@ -71,13 +71,13 @@ test("API metadata reports the latest imported game day", () => {
   };
   assert.equal(
     apiLastImportDate({ data: importedData }),
-    "2026-07-23T00:00:00.000Z",
+    "2026-07-22T00:00:00.000Z",
   );
   assert.equal(
     apiLastImportDate({ data: { captures: { lastImportedAt: "2026-07-22T10:05:00Z" } } }),
-    "2026-07-23T00:00:00.000Z",
+    "2026-07-22T00:00:00.000Z",
   );
-  assert.equal(apiLastImportDate({ importDate: "2026-12-31" }), "2027-01-01T00:00:00.000Z");
+  assert.equal(apiLastImportDate({ importDate: "2026-12-31" }), "2026-12-31T00:00:00.000Z");
   assert.equal(apiLastImportDate({}), null);
 });
 

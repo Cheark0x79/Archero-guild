@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   dashboardPayloadFromDatabaseExport,
+  explicitDemoModeAllowed,
   invalidateDashboardDataCache,
   loadDashboardData,
   mergeWithLocalFallback,
@@ -85,6 +86,48 @@ test("production database mode never exposes bundled data without a database URL
   assert.equal(requiresDatabase({ ARCHERO_REQUIRE_DATABASE: "1" }), true);
   assert.equal(payload.dataMode, "unavailable");
   assert.deepEqual(payload.data.guildRoster, []);
+});
+
+test("explicit demo mode can override a local database only on loopback", async () => {
+  let exportCalls = 0;
+  const payload = await loadDashboardData({
+    environment: {
+      ARCHERO_DATA_MODE: "demo",
+      ARCHERO_DATABASE_URL: "postgresql://unused",
+      ARCHERO_PUBLIC_ORIGIN: "http://127.0.0.1:15447",
+    },
+    runExport: async () => {
+      exportCalls += 1;
+      return { ok: false };
+    },
+  });
+
+  assert.equal(explicitDemoModeAllowed({ ARCHERO_PUBLIC_ORIGIN: "http://localhost:5181" }), true);
+  assert.equal(payload.dataMode, "demo");
+  assert.equal(payload.source, "local");
+  assert.equal(payload.data.guildRoster.length, 40);
+  assert.equal(exportCalls, 0);
+});
+
+test("explicit demo mode fails closed for production and strict database environments", async () => {
+  const remote = await loadDashboardData({
+    environment: {
+      ARCHERO_DATA_MODE: "demo",
+      ARCHERO_PUBLIC_ORIGIN: "https://archero.example.com",
+    },
+  });
+  const strict = await loadDashboardData({
+    environment: {
+      ARCHERO_DATA_MODE: "demo",
+      ARCHERO_PUBLIC_ORIGIN: "http://127.0.0.1:5181",
+      ARCHERO_REQUIRE_DATABASE: "1",
+    },
+  });
+
+  assert.equal(remote.dataMode, "unavailable");
+  assert.equal(strict.dataMode, "unavailable");
+  assert.deepEqual(remote.data.guildRoster, []);
+  assert.deepEqual(strict.data.guildRoster, []);
 });
 
 test("officer warning actions are only included for administrators", () => {
