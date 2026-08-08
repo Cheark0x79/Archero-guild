@@ -109,6 +109,7 @@ function setBusy(busy) {
     "upload", "scan", "refresh", "clear", "preflight", "add-row",
     "reset-session", "reference-previous", "reference-next",
     "sync-roster", "add-target", "edit-target", "delete-target", "save-target",
+    "load-demo", "refresh-history",
   ].forEach((id) => { $(id).disabled = busy; });
   document.querySelectorAll("[data-edit-field]").forEach((control) => { control.disabled = busy; });
   document.querySelectorAll(".delete-row, .add-missing-member").forEach((control) => { control.disabled = busy; });
@@ -131,14 +132,14 @@ async function loadStatus() {
     $("service-dot").classList.add("online");
     $("service-label").textContent = payload.busy ? "OCR busy" : "OCR ready";
     $("agent-version").textContent = `Agent ${payload.agentVersion}`;
-    const visibleTargets = payload.targets.filter((target) => target.mode === "local" || target.configured);
+    const visibleTargets = payload.targets.filter((target) => target.mode !== "remote" || target.configured);
     const previous = $("target").value;
     $("target").replaceChildren(...visibleTargets.map((target) => {
       const option = document.createElement("option");
       option.value = target.key;
       const destination = target.mode === "local"
         ? "clear/review only"
-        : target.url;
+        : target.mode === "simulation" ? "no network" : target.url;
       option.textContent = `${target.label} · ${destination}`;
       return option;
     }));
@@ -167,6 +168,32 @@ async function loadDay() {
     else clearBatchView();
   } catch (error) {
     message(error.message, true);
+  }
+}
+
+async function loadDemoBatch() {
+  if (state.batch && !window.confirm("Replace the current browser review with an isolated demonstration batch? Real OCR files will not be changed.")) return;
+  setBusy(true);
+  message("Loading deterministic Members + Boss demonstration data…");
+  try {
+    const payload = await request("/api/demo", {
+      method: "POST",
+      body: JSON.stringify({ date: activeSessionDate() }),
+    });
+    state.batch = payload.batch;
+    state.corrections = { entries: [] };
+    state.images = [];
+    state.table = "members";
+    $("target").value = "simulation";
+    setCaptureDate(activeSessionDate());
+    resetPreflight();
+    renderBatch();
+    goToStep(2);
+    message("Demo loaded. You can review, check, confirm and simulate the export without OCR or network access.");
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -379,6 +406,7 @@ function clearBatchView() {
   if (!state.images.length) state.referenceImages = [];
   renderReferenceOptions();
   renderCorrections();
+  updateSimulationMode();
   updateTargetControls();
   renderWorkflowProgress();
 }
@@ -418,7 +446,7 @@ function renderBatch() {
   $("review-scope-label").textContent = state.table === "bosses" ? "Guild boss" : "Guild members";
   $("review-members").disabled = state.busy || !(batch.members || []).length;
   $("review-boss").disabled = state.busy || !(batch.bossRankings || []).length;
-  state.referenceImages = (batch.sourceImages || []).map((image) => ({
+  state.referenceImages = batch.simulation ? [] : (batch.sourceImages || []).map((image) => ({
     kind: image.kind,
     name: image.sourceName,
     url: captureImageUrl(activeSessionDate(), image.kind, image.sourceName),
@@ -426,13 +454,14 @@ function renderBatch() {
   renderReferenceOptions();
   renderTable();
   renderCorrections();
+  updateSimulationMode();
   renderExtractionSelection();
   updateTargetControls();
   renderWorkflowProgress();
 }
 
 async function loadMissingMembers() {
-  if (!state.batch || state.table !== "members" || !(state.batch.members || []).length) {
+  if (!state.batch || state.batch.simulation || state.table !== "members" || !(state.batch.members || []).length) {
     $("missing-members").hidden = true;
     $("missing-members-list").replaceChildren();
     return;
@@ -480,6 +509,7 @@ async function addReviewedRow(initial = {}) {
       method: "POST",
       body: JSON.stringify({
         date: activeSessionDate(),
+        simulation: state.batch?.simulation === true,
         category,
         initial,
       }),
@@ -585,6 +615,7 @@ async function deleteReviewedRow(category, rowIndex, row) {
       method: "POST",
       body: JSON.stringify({
         date: activeSessionDate(),
+        simulation: state.batch?.simulation === true,
         category,
         rowIndex,
       }),
@@ -595,7 +626,7 @@ async function deleteReviewedRow(category, rowIndex, row) {
     message(`OCR row "${name}" rejected. It will not be published.`);
   } catch (error) {
     message(error.message, true);
-    await loadBatch().catch(() => {});
+    if (!state.batch?.simulation) await loadBatch().catch(() => {});
   } finally {
     setBusy(false);
   }
@@ -630,6 +661,7 @@ async function saveEdit(category, rowIndex, field, value) {
       method: "POST",
       body: JSON.stringify({
         date: activeSessionDate(),
+        simulation: state.batch?.simulation === true,
         category,
         rowIndex,
         field,
@@ -642,7 +674,7 @@ async function saveEdit(category, rowIndex, field, value) {
     message(`Correction saved: ${field}.`);
   } catch (error) {
     message(error.message, true);
-    await loadBatch().catch(() => {});
+    if (!state.batch?.simulation) await loadBatch().catch(() => {});
   } finally {
     setBusy(false);
   }
@@ -702,7 +734,7 @@ async function clearExtractedData() {
   try {
     await request("/api/clear", {
       method: "POST",
-      body: JSON.stringify({ date: captureDate, confirmation: `CLEAR ${captureDate}` }),
+      body: JSON.stringify({ date: captureDate, simulation: state.batch?.simulation === true, confirmation: `CLEAR ${captureDate}` }),
     });
     clearBatchView();
     message(`Extracted data for ${captureDate} cleared. Screenshots were kept.`);
@@ -790,7 +822,7 @@ function renderPublishSuccess() {
 
 async function loadImportHistory({ quiet = false } = {}) {
   const target = selectedTarget();
-  if (!target || target.mode !== "remote" || !target.configured) {
+  if (!target || !["remote", "simulation"].includes(target.mode) || !target.configured) {
     state.importHistory = [];
     renderImportHistory();
     if (!quiet) message("Choose a configured remote destination to view its history.", true);
@@ -811,7 +843,7 @@ async function loadImportHistory({ quiet = false } = {}) {
 function renderImportHistory() {
   const target = selectedTarget();
   const list = $("import-history");
-  if (!target || target.mode !== "remote" || !target.configured) {
+  if (!target || !["remote", "simulation"].includes(target.mode) || !target.configured) {
     $("history-help").textContent = "Choose a configured remote destination, then refresh. Nothing is sent.";
     list.replaceChildren();
     return;
@@ -860,14 +892,16 @@ function resetPreflight() {
 
 async function checkDestination() {
   const target = selectedTarget();
-  if (!target || target.mode !== "remote" || !target.configured || !state.batch) {
+  if (!target || !["remote", "simulation"].includes(target.mode) || !target.configured || !state.batch) {
     message("Choose a configured remote destination and a reviewed batch first.", true);
     return;
   }
   resetPreflight();
   setBusy(true);
   $("preflight-state").textContent = "Checking…";
-  $("preflight-help").textContent = "Contacting the destination without importing data…";
+  $("preflight-help").textContent = target.mode === "simulation"
+    ? "Checking the batch locally without any network request…"
+    : "Contacting the destination without importing data…";
   message(`Checking ${target.label} before publication…`);
   try {
     await request("/api/preflight", {
@@ -882,7 +916,9 @@ async function checkDestination() {
     renderWorkflowProgress();
     $("preflight-state").textContent = "Ready to send";
     $("preflight-state").className = "badge pass";
-    $("preflight-help").textContent = "Connectivity, authentication and batch validation succeeded. No data was imported.";
+    $("preflight-help").textContent = target.mode === "simulation"
+      ? "Local simulation validation succeeded. No network request was made."
+      : "Connectivity, authentication and batch validation succeeded. No data was imported.";
     message(`${target.label} check passed. You can now open the export confirmation.`);
   } catch (error) {
     resetPreflight();
@@ -909,6 +945,17 @@ function scopeLabel(scope) {
 
 function selectedTarget() {
   return state.status?.targets?.find((target) => target.key === $("target").value);
+}
+
+function updateSimulationMode() {
+  const active = state.batch?.simulation === true;
+  $("simulation-banner").hidden = !active;
+  [...$("target").options].forEach((option) => {
+    option.disabled = active && option.value !== "simulation";
+  });
+  if (active && $("target").value !== "simulation") $("target").value = "simulation";
+  $("load-demo").textContent = active ? "Reload demo batch" : "Load demo batch";
+  updateTargetEditor();
 }
 
 function remoteTargets() {
@@ -943,15 +990,18 @@ function updateTargetEditor() {
   const target = selectedTarget();
   if (!target) return;
   const local = target.mode === "local";
-  $("target-state").textContent = local ? "Local only" : target.configured ? "Ready" : "Needs configuration";
+  const simulation = target.mode === "simulation";
+  $("target-state").textContent = local ? "Local only" : simulation ? "No network" : target.configured ? "Ready" : "Needs configuration";
   $("target-state").className = `badge ${target.configured ? "pass" : "neutral"}`;
   $("target-summary").textContent = local
     ? "Local test keeps the reviewed JSON on this PC and never sends data."
+    : simulation
+      ? "Simulation reproduces validation, confirmation, success and history entirely on this PC."
     : target.configured
       ? `Configured endpoint: ${target.url}`
       : "This destination is not configured.";
-  $("edit-target").disabled = state.busy || local;
-  $("delete-target").disabled = state.busy || local;
+  $("edit-target").disabled = state.busy || local || simulation;
+  $("delete-target").disabled = state.busy || local || simulation;
   $("add-target").disabled = state.busy;
 }
 
@@ -1021,7 +1071,7 @@ async function saveTarget(event) {
 
 async function deleteTarget() {
   const target = selectedTarget();
-  if (!target || target.mode === "local") return;
+  if (!target || target.mode !== "remote") return;
   if (!window.confirm(`Delete the local destination “${target.label}”? OCR batches and captures are kept.`)) return;
   setBusy(true);
   try {
@@ -1066,6 +1116,14 @@ function updateTargetControls() {
     $("preflight-state").textContent = "Not required";
     $("preflight-state").className = "badge neutral";
     $("preflight-help").textContent = "Local test does not send data.";
+    $("publish").disabled = true;
+    return;
+  }
+  if (target.mode === "simulation" && !state.batch?.simulation) {
+    $("preflight").disabled = true;
+    $("preflight-state").textContent = "Load demo first";
+    $("preflight-state").className = "badge review";
+    $("preflight-help").textContent = "Load the isolated demonstration batch before starting a simulation.";
     $("publish").disabled = true;
     return;
   }
@@ -1280,6 +1338,7 @@ $("reference-image").addEventListener("change", renderReferenceImage);
 $("reference-previous").addEventListener("click", () => moveReferenceImage(-1));
 $("reference-next").addEventListener("click", () => moveReferenceImage(1));
 $("upload").addEventListener("click", uploadImages);
+$("load-demo").addEventListener("click", loadDemoBatch);
 $("reset-session").addEventListener("click", resetCaptureSession);
 $("scan").addEventListener("click", runScan);
 $("clear").addEventListener("click", clearExtractedData);

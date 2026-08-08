@@ -12,6 +12,7 @@ from PIL import Image
 from observer.ocr.local_app import (
     LocalOcrError,
     LocalOcrHandler,
+    build_demo_batch,
     configured_target_public,
     day_payload,
     delete_remote_target,
@@ -21,6 +22,9 @@ from observer.ocr.local_app import (
     move_capture_to_trash,
     save_roster_cache,
     selected_capture_paths,
+    simulation_history,
+    simulation_publish,
+    _validate_simulation_batch,
     store_uploaded_images,
     upsert_remote_target,
     update_remote_target,
@@ -35,6 +39,39 @@ def png_data(width: int = 20, height: int = 30) -> bytes:
 
 
 class LocalOcrAppTests(unittest.TestCase):
+    def test_demo_batch_is_complete_deterministic_and_anonymized(self) -> None:
+        first = build_demo_batch("2026-08-08", "test")
+        second = build_demo_batch("2026-08-08", "test")
+
+        self.assertTrue(first["simulation"])
+        self.assertEqual(first["idempotencyKey"], second["idempotencyKey"])
+        self.assertEqual(first["quality"]["coverage"], 1)
+        self.assertEqual(len(first["members"]), 4)
+        self.assertEqual(len(first["bossRankings"]), 4)
+        self.assertTrue(all(row["playerId"].startswith("demo-") for row in first["members"]))
+
+    def test_simulation_publish_replays_and_exposes_sanitized_local_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch = build_demo_batch("2026-08-08", "test")
+
+            first = simulation_publish(root, batch)
+            replay = simulation_publish(root, batch)
+            history = simulation_history(root)
+
+        self.assertFalse(first["replayed"])
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(history[0]["id"], "SIM-0001")
+        self.assertNotIn("idempotencyKey", history[0])
+
+    def test_simulation_rejects_an_incomplete_or_non_demo_batch(self) -> None:
+        with self.assertRaises(LocalOcrError):
+            _validate_simulation_batch({"simulation": False})
+        batch = build_demo_batch("2026-08-08", "test")
+        batch["bossRankings"][0]["damage"] = None
+        with self.assertRaisesRegex(LocalOcrError, "Boss review"):
+            _validate_simulation_batch(batch)
+
     def test_reviewed_member_ids_are_reused_by_later_extractions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             outbox = Path(directory)
@@ -101,6 +138,8 @@ class LocalOcrAppTests(unittest.TestCase):
         self.assertEqual(targets["local"]["url"], "")
         self.assertTrue(targets["local"]["configured"])
         self.assertFalse(public[0]["publishable"])
+        self.assertEqual(public[1]["mode"], "simulation")
+        self.assertTrue(public[1]["publishable"])
 
     def test_placeholder_remote_target_is_reported_as_unconfigured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -165,7 +204,8 @@ class LocalOcrAppTests(unittest.TestCase):
 
         self.assertTrue(updated["configured"])
         self.assertEqual(stored["preprod"]["url"], "http://192.168.1.50:5181")
-        self.assertNotIn("ingestionToken", public[1])
+        preprod = next(target for target in public if target["key"] == "preprod")
+        self.assertNotIn("ingestionToken", preprod)
 
     def test_creates_updates_and_deletes_a_named_remote_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

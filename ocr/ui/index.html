@@ -22,9 +22,15 @@
       <button type="button" class="step-link" data-go-step="5"><span>5</span>Destination</button>
     </nav>
     <div class="session-actions">
+      <button id="load-demo" class="button simulation-button" type="button">Load demo batch</button>
       <button id="reset-session" class="button secondary destructive" type="button">Clear Members…</button>
       <button id="refresh" type="button" class="button secondary">Refresh</button>
     </div>
+  </section>
+
+  <section id="simulation-banner" class="simulation-banner" hidden role="status">
+    <strong>SIMULATION MODE</strong>
+    <span>No OCR is running and no data can be sent over the network.</span>
   </section>
 
   <div id="message" role="status" aria-live="polite"></div>

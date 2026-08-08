@@ -87,8 +87,17 @@ test("local session date is independent from the final export date", () => {
 });
 
 test("only local and configured destinations are shown", () => {
-  assert.match(appSource, /target\.mode === "local" \|\| target\.configured/);
+  assert.match(appSource, /target\.mode !== "remote" \|\| target\.configured/);
   assert.match(htmlSource, /id="reset-session"[^>]*>Clear Members/);
   assert.match(htmlSource, /Link the local ID cache to/);
   assert.doesNotMatch(appSource, /configuration required/);
+});
+
+test("local simulation exercises export interactions without OCR or network", () => {
+  assert.match(htmlSource, /id="load-demo"/);
+  assert.match(htmlSource, /id="simulation-banner"/);
+  assert.match(htmlSource, /No OCR is running and no data can be sent over the network/);
+  assert.match(appSource, /request\("\/api\/demo"/);
+  assert.match(appSource, /option\.disabled = active && option\.value !== "simulation"/);
+  assert.match(appSource, /Checking the batch locally without any network request/);
 });

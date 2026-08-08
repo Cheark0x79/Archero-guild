@@ -109,6 +109,19 @@ without deleting captures, reviewed JSON, or Docker images.
 for the selected date. Uploaded screenshots are preserved so extraction can be
 run again.
 
+## Local simulation
+
+Use `Load demo batch` to test reviews, date selection, preflight, final
+confirmation, success feedback, idempotent replay and import history without
+running Tesseract or contacting any destination. The deterministic identities
+are fictional and use `demo-*` player IDs.
+
+Simulation batches and corrections live under `data/outbox/.simulation/`, and
+their history stays in the local OCR volume. While a demonstration batch is
+active, every network destination is disabled in the selector and the server
+rejects attempts to simulate a real OCR batch. A persistent orange banner
+identifies the mode.
+
 ## Direct LAN destination
 
 Cloudflare is not required when the OCR workstation can reach the application

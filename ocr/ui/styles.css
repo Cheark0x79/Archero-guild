@@ -153,6 +153,10 @@ th { position: sticky; z-index: 1; top: 0; background: var(--surface-soft); colo
 .advanced-fields { display: grid; gap: 10px; padding: 0 11px 11px; }
 .inline-check { display: flex; grid: none; align-items: center; gap: 8px; }
 .inline-check input { width: 17px; min-height: 17px; margin: 0; padding: 0; }
+.simulation-button { border-color: #d17a00; background: #fff3d6; color: #7a4300; }
+.simulation-banner { display: flex; align-items: center; gap: 12px; margin: 12px 0; padding: 12px 16px; border: 2px solid #d17a00; border-radius: 10px; background: #fff3d6; color: #663800; }
+.simulation-banner[hidden] { display: none; }
+.simulation-banner strong { letter-spacing: .06em; }
 .publish-card h2 { margin: 2px 0 0; }
 .publish-card p { margin: 6px 0 10px; }
 .publish-card #publish-scope { display: inline-block; margin-top: 4px; color: var(--primary-dark); }

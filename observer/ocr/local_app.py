@@ -53,6 +53,7 @@ CAPTURE_KINDS = {
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 JOB_LOCK = threading.Lock()
 LOCAL_TARGET_KEY = "local"
+SIMULATION_TARGET_KEY = "simulation"
 TARGET_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 MAX_ROSTER_CACHE_ENTRIES = 500
 
@@ -440,7 +441,7 @@ def move_capture_to_trash(
 
 
 def configured_target_public(targets: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
+    configured = [
         {
             "key": key,
             "label": target["label"],
@@ -453,6 +454,145 @@ def configured_target_public(targets: dict[str, dict[str, Any]]) -> list[dict[st
         }
         for key, target in targets.items()
     ]
+    configured.insert(1, {
+        "key": SIMULATION_TARGET_KEY,
+        "label": "Local simulation",
+        "url": "",
+        "mode": "simulation",
+        "configured": True,
+        "publishable": True,
+        "hasToken": False,
+        "cloudflareAccess": False,
+    })
+    return configured
+
+
+def build_demo_batch(capture_date: str, agent_version: str) -> dict[str, Any]:
+    _validate_date(capture_date)
+    members = [
+        ("demo-001", "Astra", "leader", 2_450_000, 1250, 3, 0),
+        ("demo-002", "Boreal", "officer", 1_980_000, 980, 2, 1),
+        ("demo-003", "Cypher", "elder", 1_520_000, 740, 2, 2),
+        ("demo-004", "Dahlia", "member", 1_110_000, 510, 1, 3),
+    ]
+    bosses = [
+        (1, "Astra", "2.45B", 2_450_000_000),
+        (2, "Boreal", "1.98B", 1_980_000_000),
+        (3, "Cypher", "1.52B", 1_520_000_000),
+        (4, "Dahlia", "910M", 910_000_000),
+    ]
+    batch = {
+        "schemaVersion": 1,
+        "captureDate": capture_date,
+        "generatedAt": f"{capture_date}T12:00:00+02:00",
+        "agentVersion": f"{agent_version}-simulation",
+        "idempotencyKey": "",
+        "simulation": True,
+        "sourceImages": [
+            {"kind": "guild-members", "sha256": "1" * 64, "width": 1080, "height": 1920, "detectedRows": len(members), "sourceName": "demo-members.png"},
+            {"kind": "guild-boss", "sha256": "2" * 64, "width": 1080, "height": 1920, "detectedRows": len(bosses), "sourceName": "demo-boss.png"},
+        ],
+        "members": [
+            {
+                "playerId": player_id, "name": name, "rawName": name, "role": role,
+                "power": power, "powerText": _compact_demo(power), "contribution7d": donation,
+                "bossAttacks": attacks, "lastActivityDays": inactive, "activityText": f"{inactive} d",
+                "roleText": role.title(), "rawActivity": f"{inactive} d", "rawRole": role,
+                "source": "demo-members.png", "matchScore": 1,
+            }
+            for player_id, name, role, power, donation, attacks, inactive in members
+        ],
+        "bossRankings": [
+            {
+                "playerId": f"demo-{rank:03d}", "name": name, "rawName": name, "rank": rank,
+                "damageText": damage_text, "damage": damage, "area": "podium" if rank <= 3 else "list",
+                "rowIndex": rank - 1, "source": "demo-boss.png",
+            }
+            for rank, name, damage_text, damage in bosses
+        ],
+        "quality": {},
+    }
+    refresh_reviewed_batch(batch)
+    return batch
+
+
+def _compact_demo(value: int) -> str:
+    return f"{value / 1_000_000:.2f}M".rstrip("0").rstrip(".")
+
+
+def simulation_publish(outbox_root: Path, batch: dict[str, Any]) -> dict[str, Any]:
+    _validate_simulation_batch(batch)
+    history_path = outbox_root / "simulation-history.json"
+    try:
+        history = json.loads(history_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        history = []
+    if not isinstance(history, list):
+        history = []
+    existing = next((item for item in history if item.get("idempotencyKey") == batch["idempotencyKey"]), None)
+    if existing:
+        return {**existing["public"], "replayed": True}
+    import_id = f"SIM-{len(history) + 1:04d}"
+    public = {
+        "id": import_id,
+        "status": "published",
+        "replayed": False,
+        "result": {
+            "captureDate": batch["captureDate"],
+            "members": len(batch.get("members", [])),
+            "bossRankings": len(batch.get("bossRankings", [])),
+        },
+    }
+    history.insert(0, {
+        "idempotencyKey": batch["idempotencyKey"],
+        "public": public,
+        "createdAt": datetime.now(UTC).isoformat(),
+    })
+    _write_private_json(history_path, history[:50])
+    return public
+
+
+def simulation_history(outbox_root: Path, *, limit: int = 10) -> list[dict[str, Any]]:
+    try:
+        history = json.loads((outbox_root / "simulation-history.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    if not isinstance(history, list):
+        return []
+    return [
+        {
+            "id": item["public"]["id"],
+            "captureDate": item["public"]["result"]["captureDate"],
+            "status": item["public"]["status"],
+            "members": item["public"]["result"]["members"],
+            "bossRankings": item["public"]["result"]["bossRankings"],
+            "createdAt": item.get("createdAt"),
+            "publishedAt": item.get("createdAt"),
+        }
+        for item in history[:limit]
+        if isinstance(item, dict) and isinstance(item.get("public"), dict)
+    ]
+
+
+def _validate_simulation_batch(batch: object) -> None:
+    if not isinstance(batch, dict) or batch.get("simulation") is not True:
+        raise LocalOcrError("simulation can only use a demonstration batch")
+    members = batch.get("members")
+    bosses = batch.get("bossRankings")
+    if batch.get("quality", {}).get("coverage") != 1 or not isinstance(members, list) or not members:
+        raise LocalOcrError("the demonstration member review is incomplete")
+    player_ids = [row.get("playerId") for row in members if isinstance(row, dict) and row.get("playerId")]
+    if len(player_ids) != len(set(player_ids)) or any(not str(row.get("name") or "").strip() for row in members if isinstance(row, dict)):
+        raise LocalOcrError("the demonstration member review contains unresolved identities")
+    if not isinstance(bosses, list) or not bosses or any(
+        not isinstance(row, dict)
+        or not isinstance(row.get("rank"), int)
+        or not str(row.get("name") or "").strip()
+        or not isinstance(row.get("damage"), int)
+        or not str(row.get("damageText") or "").strip()
+        for row in bosses
+    ):
+        raise LocalOcrError("the demonstration Boss review is incomplete")
 
 
 def update_remote_target(
@@ -545,6 +685,9 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/import-history":
                 target_key = self._query_value(parsed, "target")
+                if target_key == SIMULATION_TARGET_KEY:
+                    self._send_json({"ok": True, "history": simulation_history(self.app.outbox_root)})
+                    return
                 target = self.app.targets.get(target_key)
                 if target is None or target["mode"] != "remote" or not target["configured"]:
                     raise LocalOcrError("select a configured remote destination")
@@ -570,6 +713,9 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if self.path == "/api/upload":
                 self._upload_capture_session(payload)
+                return
+            if self.path == "/api/demo":
+                self._load_demo_batch(payload)
                 return
             if self.path == "/api/scan":
                 self._run_ocr_action(payload, publish=False)
@@ -678,6 +824,23 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             "reviewedDataInvalidated": removed,
         }, HTTPStatus.CREATED)
 
+    def _load_demo_batch(self, payload: dict[str, Any]) -> None:
+        capture_date = str(payload.get("date") or "")
+        _validate_date(capture_date)
+        if not JOB_LOCK.acquire(blocking=False):
+            self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            batch = build_demo_batch(capture_date, self.app.agent_version)
+            _write_private_json(self._batch_path(capture_date, simulation=True), batch)
+            _write_private_json(
+                self._corrections_path(capture_date, simulation=True),
+                {"schemaVersion": 1, "captureDate": capture_date, "updatedAt": None, "entries": []},
+            )
+        finally:
+            JOB_LOCK.release()
+        self._send_json({"ok": True, "batch": batch}, HTTPStatus.CREATED)
+
     def _reset_capture_session(self, payload: dict[str, Any]) -> None:
         capture_date = str(payload.get("date") or "")
         kind = str(payload.get("kind") or "")
@@ -710,6 +873,36 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
         _validate_date(capture_date)
         _validate_date(session_date)
         target = self.app.targets.get(target_key)
+        if publish and target_key == SIMULATION_TARGET_KEY:
+            if payload.get("confirmation") != "PUBLISH SIMULATION":
+                raise LocalOcrError("invalid simulation confirmation")
+            batch_path = self._batch_path(session_date, simulation=True)
+            try:
+                local_batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise LocalOcrError("no reviewed OCR batch exists for this local session") from exc
+            _validate_simulation_batch(local_batch)
+            batch = prepare_export_batch(local_batch, capture_date)
+            if not JOB_LOCK.acquire(blocking=False):
+                self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+                return
+            try:
+                imported = simulation_publish(self.app.outbox_root, batch)
+            finally:
+                JOB_LOCK.release()
+            self._send_json({
+                "ok": True,
+                "result": {
+                    "captureDate": capture_date,
+                    "sessionDate": session_date,
+                    "quality": batch["quality"],
+                    "validated": True,
+                    "published": True,
+                    "simulation": True,
+                    "import": imported,
+                },
+            })
+            return
         if target is None:
             raise LocalOcrError("select a configured target")
         if target["mode"] == "remote" and not target["configured"]:
@@ -904,6 +1097,18 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
         target_key = str(payload.get("target") or "")
         _validate_date(capture_date)
         _validate_date(session_date)
+        if target_key == SIMULATION_TARGET_KEY:
+            batch_path = self._batch_path(session_date, simulation=True)
+            if not batch_path.exists():
+                raise LocalOcrError("no reviewed OCR batch exists for this date")
+            batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            _validate_simulation_batch(batch)
+            self._send_json({
+                "ok": True,
+                "readiness": {"reachable": True, "database": False, "simulation": True},
+                "result": {"validated": True, "published": False, "simulation": True},
+            })
+            return
         target = self.app.targets.get(target_key)
         if target is None or target["mode"] != "remote" or not target["configured"]:
             raise LocalOcrError("select a configured remote destination")
@@ -974,9 +1179,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
         try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
             batch, corrections = apply_batch_edit(
-                self.app.outbox_root / f"{capture_date}.json",
-                self._corrections_path(capture_date),
+                batch_path,
+                corrections_path,
                 capture_date=capture_date,
                 category=str(payload.get("category") or ""),
                 row_index=row_index,
@@ -998,9 +1204,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
         try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
             batch, corrections = delete_batch_row(
-                self.app.outbox_root / f"{capture_date}.json",
-                self._corrections_path(capture_date),
+                batch_path,
+                corrections_path,
                 capture_date=capture_date,
                 category=str(payload.get("category") or ""),
                 row_index=row_index,
@@ -1016,9 +1223,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
         try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
             batch, corrections = add_batch_row(
-                self.app.outbox_root / f"{capture_date}.json",
-                self._corrections_path(capture_date),
+                batch_path,
+                corrections_path,
                 capture_date=capture_date,
                 category=str(payload.get("category") or ""),
                 initial=payload.get("initial") if isinstance(payload.get("initial"), dict) else {},
@@ -1036,17 +1244,30 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
             return
         try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
             removed = clear_reviewed_data(
-                self.app.outbox_root / f"{capture_date}.json",
-                self._corrections_path(capture_date),
+                batch_path,
+                corrections_path,
                 capture_date,
             )
         finally:
             JOB_LOCK.release()
         self._send_json({"ok": True, "removed": removed})
 
-    def _corrections_path(self, capture_date: str) -> Path:
-        return self.app.outbox_root / "corrections" / f"{capture_date}.json"
+    def _batch_path(self, capture_date: str, *, simulation: bool = False) -> Path:
+        root = self.app.outbox_root / ".simulation" if simulation else self.app.outbox_root
+        return root / f"{capture_date}.json"
+
+    def _corrections_path(self, capture_date: str, *, simulation: bool = False) -> Path:
+        root = self.app.outbox_root / ".simulation" if simulation else self.app.outbox_root
+        return root / "corrections" / f"{capture_date}.json"
+
+    def _review_paths(self, payload: dict[str, Any], capture_date: str) -> tuple[Path, Path]:
+        simulation = payload.get("simulation") is True
+        return (
+            self._batch_path(capture_date, simulation=simulation),
+            self._corrections_path(capture_date, simulation=simulation),
+        )
 
     def _send_capture_image(self, parsed: urllib.parse.ParseResult) -> None:
         capture_date = self._query_value(parsed, "date")
