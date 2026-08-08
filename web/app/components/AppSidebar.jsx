@@ -3,22 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-export const publicNavItems = [
-  ["dashboard", "Dashboard", "/dashboard"],
-  ["members", "Members", "/members"],
-  ["boss", "Boss", "/boss"],
-  ["rankings", "Records", "/records"],
-  ["activity", "Activity", "/activity"],
-  ["api-docs", "API Docs", "/api-docs"],
-];
-
-const adminNavItems = [
-  ["admin", "Admin", "/admin"],
-  ...(process.env.NEXT_PUBLIC_LOCAL_OCR_ENABLED === "1"
-    ? [["data", "Data", "/admin/data"]]
-    : []),
-  ["settings", "Rules", "/admin/rules"],
-];
+import { navigationItemsForRole, sessionRoleLabel } from "../../lib/navigation.js";
 
 export default function AppSidebar({
   activeRoute,
@@ -27,6 +12,10 @@ export default function AppSidebar({
   checkpointValue = "API v1",
 }) {
   const navRoute = activeRoute === "member" ? "members" : activeRoute;
+  const navigation = navigationItemsForRole(sessionRole, {
+    localOcrEnabled: process.env.NEXT_PUBLIC_LOCAL_OCR_ENABLED === "1",
+  });
+  const roleLabel = sessionRoleLabel(sessionRole);
 
   return (
     <aside className="sidebar" aria-label="Primary navigation">
@@ -38,21 +27,27 @@ export default function AppSidebar({
         </div>
       </div>
       <nav className="nav-list" aria-label="Pages">
-        {publicNavItems.map(([key, label, href]) => (
+        {navigation.primary.map(([key, label, href]) => (
           <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
             {label}
           </Link>
         ))}
       </nav>
-      {sessionRole === "admin" ? (
+      {navigation.admin.length > 0 ? (
         <nav className="nav-list admin-nav-list" aria-label="Admin pages">
           <span>Admin</span>
-          {adminNavItems.map(([key, label, href]) => (
+          {navigation.admin.map(([key, label, href]) => (
             <Link key={key} href={href} data-route={key} className={navRoute === key ? "active" : ""}>
               {label}
             </Link>
           ))}
         </nav>
+      ) : null}
+      {roleLabel ? (
+        <div className="session-role" aria-label={`Signed in as ${roleLabel}`}>
+          <span>Signed in as</span>
+          <strong>{roleLabel}</strong>
+        </div>
       ) : null}
       <LogoutButton />
       <div className="sidebar-note">

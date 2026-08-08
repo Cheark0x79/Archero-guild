@@ -1,6 +1,9 @@
 export const AUTH_COOKIE_NAME = "archero_session";
 export const USER_ROLE = "user";
 export const ADMIN_ROLE = "admin";
+export const PUBLIC_ACCESS = "public";
+export const AUTHENTICATED_ACCESS = "authenticated";
+export const ADMIN_ACCESS = "admin";
 
 const PUBLIC_PATHS = new Set([
   "/login",
@@ -30,6 +33,19 @@ export function isAdminPath(pathname) {
     || pathname === "/api/warning-actions"
     || pathname === "/api/data"
     || pathname.startsWith("/api/data/");
+}
+
+export function accessLevelForPath(pathname) {
+  if (isPublicPath(pathname)) return PUBLIC_ACCESS;
+  if (isAdminPath(pathname)) return ADMIN_ACCESS;
+  return AUTHENTICATED_ACCESS;
+}
+
+export function roleCanAccessPath(pathname, role) {
+  const accessLevel = accessLevelForPath(pathname);
+  if (accessLevel === PUBLIC_ACCESS) return true;
+  if (!role) return false;
+  return accessLevel !== ADMIN_ACCESS || role === ADMIN_ROLE;
 }
 
 export function isLocalOcrPath(pathname) {

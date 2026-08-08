@@ -108,6 +108,25 @@ button {
   font-weight: 800;
 }
 
+.session-role {
+  display: grid;
+  gap: 2px;
+  border: 1px solid oklch(37% 0.04 250);
+  border-radius: 8px;
+  background: oklch(26% 0.035 250);
+  padding: 10px 12px;
+}
+
+.session-role span {
+  color: oklch(76% 0.025 250);
+  font-size: 11px;
+}
+
+.session-role strong {
+  color: white;
+  font-size: 13px;
+}
+
 .nav-list a {
   border-radius: 8px;
   color: oklch(86% 0.018 250);
@@ -170,6 +189,35 @@ button {
   margin-top: 8px;
   color: oklch(72% 0.018 250);
   font-size: 11px;
+}
+
+.access-denied-panel {
+  display: grid;
+  max-width: 720px;
+  gap: 22px;
+}
+
+.access-denied-panel h2 {
+  margin: 6px 0;
+}
+
+.access-denied-panel .eyebrow {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.access-denied-panel p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.access-denied-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .main {
