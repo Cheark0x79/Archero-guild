@@ -45,6 +45,10 @@ operator account (`chmod 600` on Linux).
 | `ARCHERO_DATA_CACHE_TTL_MS` | Optional, default `15000` | Successful database export cache duration, maximum 300000 ms |
 | `ARCHERO_DATA_ERROR_CACHE_TTL_MS` | Optional, default `2000` | Failed export cache duration, maximum 300000 ms |
 | `ARCHERO_API_RATE_LIMIT_PER_MINUTE` | Optional, default `120` | Per-principal API limit; `0` disables it |
+| `ARCHERO_DATA_MODE` | Local test only | Set to `demo` to force synthetic fixtures on a loopback origin; refused by strict database mode |
+| `ARCHERO_DEMO_SEED` | Local test only | Stable seed used to reproduce the same fictional identities and metrics |
+| `ARCHERO_DEMO_ANCHOR_DATE` | Local test only | Final fixture date in `YYYY-MM-DD` format; twenty preceding days are generated |
+| `ARCHERO_DEMO_SCENARIO` | Local test only | Synthetic variant: `baseline`, `audit-anomalies`, `record-variants`, or `sparse` |
 
 Comment out both database URL variables to use explicit demonstration mode.
 Database mode never falls back to demonstration data.

@@ -20,6 +20,21 @@ import { readWarningActions } from "../../../lib/warning-actions.js";
 export async function loadDashboardData(options = {}) {
   const environment = options.environment ?? process.env;
   const includePrivateDashboardData = Object.hasOwn(options, "includeWarningActions");
+  if (environment.ARCHERO_DATA_MODE === "demo") {
+    const payload = explicitDemoModeAllowed(environment)
+      ? {
+          ok: true,
+          source: "local",
+          dataMode: "demo",
+          partial: false,
+          missingDomains: [],
+          data: localPayload(),
+        }
+      : unavailableDatabasePayload("Synthetic demonstration data is restricted to loopback test environments without strict database mode.");
+    return includePrivateDashboardData
+      ? decorateDashboardPayload(payload, options.includeWarningActions)
+      : payload;
+  }
   if (!environment.ARCHERO_DATABASE_URL && !environment.DATABASE_URL) {
     const payload = requiresDatabase(environment)
       ? unavailableDatabasePayload("PostgreSQL is required but no database URL is configured.")
@@ -79,6 +94,16 @@ export async function loadDashboardData(options = {}) {
 
 export function requiresDatabase(environment = process.env) {
   return environment.ARCHERO_REQUIRE_DATABASE === "1";
+}
+
+export function explicitDemoModeAllowed(environment = process.env) {
+  if (requiresDatabase(environment)) return false;
+  try {
+    const origin = new URL(environment.ARCHERO_PUBLIC_ORIGIN ?? "");
+    return origin.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(origin.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function invalidateDashboardDataCache() {
