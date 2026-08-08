@@ -31,6 +31,43 @@ of private remote destinations:
 
 Destination secrets and the synchronized roster cache remain in the private
 local configuration storage. The API never returns secret values to the UI.
+The Destination screen can explicitly refresh the ten most recent imports.
+This history contains only dates, status, counts and import identifiers; raw
+OCR payloads, screenshots and idempotency keys are never returned.
+
+## Generalization evaluation
+
+Keep evaluation screenshots outside Git so tuning examples and unseen test
+captures remain separate. Create a private JSON manifest with `version: 1` and
+a `cases` array. Each case supplies `id`, `kind`, `image`, `expectedRows`, and
+optionally `roster`, `includePodium`, `identityField`, and `fields`. Run:
+
+```bash
+python -m observer.ocr.evaluate /private/eval/manifest.json --output /private/eval/report.json
+```
+
+The report records image dimensions, OCR quality, matched/missing/unexpected
+rows, row recall, and exact accuracy for every requested field. Never tune the
+OCR on the same private captures used for the final evaluation report.
+
+## Guild overview statistics
+
+The import contract and PostgreSQL history accept optional daily guild-level
+statistics: name, ID, level, members/capacity, total power, donation value,
+rank and XP progress. `observer.pipeline.guild_stats.parse_guild_stats_text`
+parses labeled OCR text without confusing guild capacity with Boss
+participants. Screenshot-specific cropping is intentionally not enabled in the
+UI until at least one representative Guild overview capture can be calibrated
+and evaluated; raw screenshots remain local and outside Git.
+
+The conservative full-screen extractor can already be exercised privately:
+
+```bash
+python -m observer.pipeline.guild_stats /private/guild-overview.png
+```
+
+It always reports missing required fields and keeps the result in review until
+the representative capture has validated the layout.
 
 ## Player ID synchronization
 

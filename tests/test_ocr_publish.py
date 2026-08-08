@@ -7,6 +7,7 @@ from observer.ocr.publish import (
     _validated_target,
     check_target,
     cloudflare_access_headers,
+    fetch_import_history,
     publish_batch,
 )
 
@@ -137,6 +138,14 @@ class OcrPublishTests(unittest.TestCase):
         with patch("observer.ocr.publish.urllib.request.urlopen", return_value=response):
             with self.assertRaisesRegex(PublishError, "PostgreSQL database is unavailable"):
                 check_target("http://127.0.0.1:5182", "secret")
+
+    def test_reads_sanitized_import_history(self) -> None:
+        response = FakeResponse({"data": [{"id": 12, "captureDate": "2026-08-07"}]})
+        with patch("observer.ocr.publish.urllib.request.urlopen", return_value=response) as open_url:
+            history = fetch_import_history("http://127.0.0.1:5182", "secret", limit=5)
+
+        self.assertEqual(history[0]["id"], 12)
+        self.assertIn("/api/v1/imports/history?limit=5", open_url.call_args.args[0].full_url)
 
 
 if __name__ == "__main__":

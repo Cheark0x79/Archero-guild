@@ -93,3 +93,25 @@ test("accepts missing member metrics while keeping the row reviewable", () => {
   assert.equal(result.valid, true);
   assert.equal(result.publishable, true);
 });
+
+test("accepts optional guild statistics and rejects impossible capacity", () => {
+  const batch = validBatch();
+  batch.guildStats = {
+    guildName: "Les Archers",
+    guildId: "FR-2048",
+    level: 12,
+    memberCount: 38,
+    memberCapacity: 40,
+    totalPower: 52_400_000,
+    donationsValue: null,
+    rank: 73,
+    xpCurrent: 1_200_000,
+    xpRequired: 2_000_000,
+  };
+  assert.equal(validateImportBatch(batch, { requirePublishable: true }).valid, true);
+
+  batch.guildStats.memberCount = 41;
+  const invalid = validateImportBatch(batch, { requirePublishable: true });
+  assert.equal(invalid.valid, false);
+  assert.match(invalid.errors.join(" "), /cannot exceed memberCapacity/);
+});

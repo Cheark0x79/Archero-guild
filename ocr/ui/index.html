@@ -272,6 +272,29 @@
         </div>
       </article>
     </div>
+
+    <section id="publish-success" class="panel success-panel" hidden aria-live="polite">
+      <div class="panel-heading">
+        <div>
+          <span class="step">EXPORT COMPLETE</span>
+          <h2 id="publish-success-title">Batch published</h2>
+        </div>
+        <span id="publish-success-state" class="badge pass">Published</span>
+      </div>
+      <div id="publish-success-details" class="import-summary"></div>
+    </section>
+
+    <section class="panel history-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="step">REMOTE AUDIT</span>
+          <h2>Recent imports</h2>
+        </div>
+        <button id="refresh-history" class="button secondary compact" type="button">Refresh history</button>
+      </div>
+      <p id="history-help" class="muted">Choose a configured remote destination, then refresh. Nothing is sent.</p>
+      <div id="import-history" class="history-list"></div>
+    </section>
   </section>
 
   <dialog id="export-dialog" class="modal-dialog">
@@ -279,10 +302,15 @@
       <span class="step">FINAL CONFIRMATION</span>
       <h2>Confirm export</h2>
       <p id="export-confirmation-summary"></p>
+      <div id="export-confirmation-details" class="confirmation-details"></div>
       <p class="muted">The Members and Boss data will be imported together. No partial state will be exposed.</p>
+      <label class="inline-check confirmation-check">
+        <input id="confirm-export-date" type="checkbox">
+        <span id="confirm-export-date-label">I confirm this data date.</span>
+      </label>
       <div class="modal-actions">
         <button id="cancel-export" class="button secondary" value="cancel">Cancel</button>
-        <button id="confirm-export" class="button danger" value="confirm">Confirm export</button>
+        <button id="confirm-export" class="button danger" value="confirm" disabled>Confirm export</button>
       </div>
     </form>
   </dialog>

@@ -67,6 +67,8 @@ def ingest_batch(batch: dict[str, Any], dsn: str) -> dict[str, Any]:
             extracted_metrics=metrics,
             daily_boss_rankings={batch["captureDate"]: boss_rankings},
         )
+        if batch.get("guildStats"):
+            _persist_guild_stats(connection, batch["captureDate"], batch["guildStats"])
         result = {
             "captureDate": batch["captureDate"],
             "members": len(metrics),
@@ -108,6 +110,58 @@ def _ensure_remote_table(cursor) -> None:
         ON remote_import_batches (capture_date DESC, created_at DESC)
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS guild_stat_snapshots (
+            capture_date DATE PRIMARY KEY,
+            guild_name TEXT,
+            guild_id TEXT,
+            guild_level INTEGER,
+            member_count INTEGER,
+            member_capacity INTEGER,
+            total_power BIGINT,
+            donations_value BIGINT,
+            guild_rank INTEGER,
+            xp_current BIGINT,
+            xp_required BIGINT,
+            raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
+def _persist_guild_stats(connection, capture_date: str, stats: dict[str, Any]) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO guild_stat_snapshots (
+                capture_date, guild_name, guild_id, guild_level, member_count,
+                member_capacity, total_power, donations_value, guild_rank,
+                xp_current, xp_required, raw_payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (capture_date) DO UPDATE SET
+                guild_name = EXCLUDED.guild_name,
+                guild_id = EXCLUDED.guild_id,
+                guild_level = EXCLUDED.guild_level,
+                member_count = EXCLUDED.member_count,
+                member_capacity = EXCLUDED.member_capacity,
+                total_power = EXCLUDED.total_power,
+                donations_value = EXCLUDED.donations_value,
+                guild_rank = EXCLUDED.guild_rank,
+                xp_current = EXCLUDED.xp_current,
+                xp_required = EXCLUDED.xp_required,
+                raw_payload = EXCLUDED.raw_payload,
+                updated_at = now()
+            """,
+            (
+                capture_date, stats.get("guildName"), stats.get("guildId"), stats.get("level"),
+                stats.get("memberCount"), stats.get("memberCapacity"), stats.get("totalPower"),
+                stats.get("donationsValue"), stats.get("rank"), stats.get("xpCurrent"),
+                stats.get("xpRequired"), _json(stats),
+            ),
+        )
 
 
 def _convert_batch(
@@ -226,6 +280,23 @@ def _validate_batch(batch: dict[str, Any]) -> None:
         )
     ):
         raise BatchIngestionError("quality gate requires complete boss rows")
+    if batch.get("guildStats") is not None:
+        _validate_guild_stats(batch["guildStats"])
+
+
+def _validate_guild_stats(stats: object) -> None:
+    if not isinstance(stats, dict):
+        raise BatchIngestionError("guildStats must be an object")
+    for field in (
+        "level", "memberCount", "memberCapacity", "totalPower", "donationsValue",
+        "rank", "xpCurrent", "xpRequired",
+    ):
+        value = stats.get(field)
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            raise BatchIngestionError(f"guildStats.{field} must be a non-negative integer or null")
+    if stats.get("memberCount") is not None and stats.get("memberCapacity") is not None:
+        if stats["memberCount"] > stats["memberCapacity"]:
+            raise BatchIngestionError("guildStats.memberCount cannot exceed memberCapacity")
 
 
 def _json(value: object) -> str:

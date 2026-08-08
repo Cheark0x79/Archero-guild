@@ -105,6 +105,68 @@ def publish_batch(
     return {"validated": True, "published": True, "import": published.get("data", {})}
 
 
+def fetch_import_history(
+    target: str,
+    token: str,
+    *,
+    limit: int = 10,
+    timeout: float = 15,
+    access_client_id: str | None = None,
+    access_client_secret: str | None = None,
+) -> list[dict[str, Any]]:
+    if not 1 <= limit <= 50:
+        raise PublishError("history limit must be between 1 and 50")
+    base_url = _validated_target(target)
+    result = _get_json(
+        f"{base_url}/api/v1/imports/history?limit={limit}",
+        token=token,
+        timeout=timeout,
+        extra_headers=cloudflare_access_headers(access_client_id, access_client_secret),
+    )
+    history = result.get("data")
+    if not isinstance(history, list) or any(not isinstance(item, dict) for item in history):
+        raise PublishError("destination returned an invalid import history")
+    return history
+
+
+def _get_json(
+    url: str,
+    *,
+    token: str,
+    timeout: float,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": "archero-ocr-agent/1",
+            **(extra_headers or {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_body = response.read(2 * 1024 * 1024 + 1)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(4096).decode("utf-8", errors="replace")
+        raise PublishError(f"{url} returned HTTP {exc.code}: {detail}") from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        if isinstance(exc, TimeoutError):
+            raise PublishError(f"{url} timed out after {timeout:g} seconds") from exc
+        raise PublishError(f"could not reach {url}: {exc.reason}") from exc
+    if len(response_body) > 2 * 1024 * 1024:
+        raise PublishError("destination history response is too large")
+    try:
+        result = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PublishError("destination history returned invalid JSON") from exc
+    if not isinstance(result, dict):
+        raise PublishError("destination history returned an invalid response")
+    return result
+
+
 def _post_json(
     url: str,
     payload: dict[str, Any],

@@ -22,6 +22,7 @@ from observer.ocr.publish import (
     _validated_target,
     check_target,
     cloudflare_access_headers,
+    fetch_import_history,
     publish_batch,
 )
 from observer.ocr.remote import RemoteOcrError, fetch_roster, run_day
@@ -541,6 +542,20 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/missing-members":
                 self._send_missing_members(parsed)
+                return
+            if parsed.path == "/api/import-history":
+                target_key = self._query_value(parsed, "target")
+                target = self.app.targets.get(target_key)
+                if target is None or target["mode"] != "remote" or not target["configured"]:
+                    raise LocalOcrError("select a configured remote destination")
+                history = fetch_import_history(
+                    target["url"],
+                    target["ingestionToken"],
+                    limit=10,
+                    access_client_id=target["cfAccessClientId"],
+                    access_client_secret=target["cfAccessClientSecret"],
+                )
+                self._send_json({"ok": True, "history": history})
                 return
             if parsed.path == "/api/image":
                 self._send_capture_image(parsed)

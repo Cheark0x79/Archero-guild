@@ -10,6 +10,8 @@ const state = {
   preflight: null,
   editingTargetKey: null,
   sessionDate: null,
+  importHistory: [],
+  lastImport: null,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -729,13 +731,114 @@ async function publishBatch() {
       }),
     });
     const label = scopeLabel(batchScope(state.batch));
-    message(payload.result.import?.replayed ? `${label} batch was already present on the target.` : `${label} exported successfully in one transaction.`);
+    const imported = payload.result.import || {};
+    const result = imported.result || {};
+    state.lastImport = {
+      id: imported.id,
+      status: imported.status,
+      replayed: imported.replayed === true,
+      captureDate: payload.result.captureDate,
+      targetLabel: selectedTarget()?.label || $("target").value,
+      members: Number(result.members ?? state.batch?.members?.length ?? 0),
+      bossRankings: Number(result.bossRankings ?? state.batch?.bossRankings?.length ?? 0),
+    };
+    renderPublishSuccess();
+    message(imported.replayed ? `${label} batch was already present on the target.` : `${label} exported successfully in one transaction.`);
     resetPreflight();
+    await loadImportHistory({ quiet: true });
   } catch (error) {
     message(error.message, true);
   } finally {
     setBusy(false);
   }
+}
+
+function importFacts(item) {
+  return [
+    ["Data date", formatFrenchDate(item.captureDate)],
+    ["Members", String(item.members ?? 0)],
+    ["Boss rankings", String(item.bossRankings ?? 0)],
+  ];
+}
+
+function renderFactGrid(container, facts) {
+  container.replaceChildren(...facts.map(([label, value]) => {
+    const item = document.createElement("div");
+    const term = document.createElement("small");
+    const detail = document.createElement("strong");
+    term.textContent = label;
+    detail.textContent = value;
+    item.append(term, detail);
+    return item;
+  }));
+}
+
+function renderPublishSuccess() {
+  const panel = $("publish-success");
+  const item = state.lastImport;
+  panel.hidden = !item;
+  if (!item) return;
+  $("publish-success-title").textContent = item.replayed
+    ? `Already imported on ${item.targetLabel}`
+    : `Published to ${item.targetLabel}`;
+  $("publish-success-state").textContent = item.replayed ? "Already present" : "Published";
+  renderFactGrid($("publish-success-details"), [
+    ...importFacts(item),
+    ["Import", item.id ? `#${item.id}` : item.status || "confirmed"],
+  ]);
+}
+
+async function loadImportHistory({ quiet = false } = {}) {
+  const target = selectedTarget();
+  if (!target || target.mode !== "remote" || !target.configured) {
+    state.importHistory = [];
+    renderImportHistory();
+    if (!quiet) message("Choose a configured remote destination to view its history.", true);
+    return;
+  }
+  $("history-help").textContent = `Loading ${target.label} history…`;
+  try {
+    const payload = await request(`/api/import-history?target=${encodeURIComponent(target.key)}`);
+    state.importHistory = payload.history;
+    renderImportHistory();
+    if (!quiet) message(`${target.label} import history refreshed. No data was sent.`);
+  } catch (error) {
+    $("history-help").textContent = error.message;
+    if (!quiet) message(error.message, true);
+  }
+}
+
+function renderImportHistory() {
+  const target = selectedTarget();
+  const list = $("import-history");
+  if (!target || target.mode !== "remote" || !target.configured) {
+    $("history-help").textContent = "Choose a configured remote destination, then refresh. Nothing is sent.";
+    list.replaceChildren();
+    return;
+  }
+  $("history-help").textContent = state.importHistory.length
+    ? `Last ${state.importHistory.length} imports reported by ${target.label}.`
+    : `No import is recorded on ${target.label}.`;
+  list.replaceChildren(...state.importHistory.map((entry) => {
+    const item = document.createElement("article");
+    item.className = "history-item";
+    const heading = document.createElement("div");
+    const title = document.createElement("strong");
+    const status = document.createElement("span");
+    title.textContent = formatFrenchDate(entry.captureDate);
+    status.className = `badge ${entry.status === "published" ? "pass" : "review"}`;
+    status.textContent = entry.status;
+    heading.append(title, status);
+    const details = document.createElement("div");
+    details.className = "import-summary compact-summary";
+    renderFactGrid(details, [
+      ["Members", String(entry.members ?? 0)],
+      ["Boss rankings", String(entry.bossRankings ?? 0)],
+      ["Import", `#${entry.id}`],
+    ]);
+    item.append(heading, details);
+    return item;
+  }));
 }
 
 function preflightKey() {
@@ -1159,6 +1262,8 @@ $("upload-files").addEventListener("change", renderUploadSelection);
 $("upload-kind").addEventListener("change", renderUploadSelection);
 $("target").addEventListener("change", () => {
   resetPreflight();
+  state.importHistory = [];
+  renderImportHistory();
   updateTargetEditor();
   updateTargetControls();
 });
@@ -1180,8 +1285,22 @@ $("scan").addEventListener("click", runScan);
 $("clear").addEventListener("click", clearExtractedData);
 $("publish").addEventListener("click", () => {
   const target = selectedTarget();
-  $("export-confirmation-summary").textContent = `Export to “${target?.label || "destination"}” for ${formatFrenchDate($("capture-date").value)}?`;
+  const date = formatFrenchDate($("capture-date").value);
+  const members = state.batch?.members?.length ?? 0;
+  const bosses = state.batch?.bossRankings?.length ?? 0;
+  $("export-confirmation-summary").textContent = `Export to “${target?.label || "destination"}”?`;
+  renderFactGrid($("export-confirmation-details"), [
+    ["DATA DATE", date],
+    ["Members", String(members)],
+    ["Boss rankings", String(bosses)],
+  ]);
+  $("confirm-export-date-label").textContent = `I confirm the data date ${date}.`;
+  $("confirm-export-date").checked = false;
+  $("confirm-export").disabled = true;
   $("export-dialog").showModal();
+});
+$("confirm-export-date").addEventListener("change", () => {
+  $("confirm-export").disabled = !$("confirm-export-date").checked;
 });
 $("confirm-export").addEventListener("click", async (event) => {
   event.preventDefault();
@@ -1189,6 +1308,7 @@ $("confirm-export").addEventListener("click", async (event) => {
   await publishBatch();
 });
 $("preflight").addEventListener("click", checkDestination);
+$("refresh-history").addEventListener("click", () => loadImportHistory());
 $("add-row").addEventListener("click", () => addReviewedRow());
 $("review-members").addEventListener("click", () => {
   state.table = "members";

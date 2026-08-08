@@ -54,6 +54,7 @@ export function validateImportBatch(batch, { requirePublishable = false } = {}) 
   ) {
     errors.push("boss screenshots detected rows but bossRankings is empty");
   }
+  if (batch.guildStats != null) validateGuildStats(batch.guildStats, errors);
 
   const quality = batch.quality;
   if (!quality || typeof quality !== "object") {
@@ -88,6 +89,22 @@ export function validateImportBatch(batch, { requirePublishable = false } = {}) 
     errors.push("quality gate requires every captured scope with 100% coverage and complete boss rows; missing member metrics are allowed");
   }
   return { valid: errors.length === 0, publishable, errors };
+}
+
+function validateGuildStats(stats, errors) {
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) {
+    errors.push("guildStats must be an object");
+    return;
+  }
+  for (const field of ["level", "memberCount", "memberCapacity", "totalPower", "donationsValue", "rank", "xpCurrent", "xpRequired"]) {
+    if (!nullableNonNegativeInteger(stats[field])) errors.push(`guildStats.${field} is invalid`);
+  }
+  for (const field of ["guildName", "guildId"]) {
+    if (stats[field] != null && !isBoundedString(stats[field], 1, 128)) errors.push(`guildStats.${field} is invalid`);
+  }
+  if (Number.isSafeInteger(stats.memberCount) && Number.isSafeInteger(stats.memberCapacity) && stats.memberCount > stats.memberCapacity) {
+    errors.push("guildStats.memberCount cannot exceed memberCapacity");
+  }
 }
 
 function validateSourceImage(image, index, errors) {

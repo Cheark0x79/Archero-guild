@@ -131,6 +131,23 @@ CREATE TABLE IF NOT EXISTS remote_import_batches (
 CREATE INDEX IF NOT EXISTS remote_import_batches_capture_date_idx
     ON remote_import_batches (capture_date DESC, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS guild_stat_snapshots (
+    capture_date      DATE PRIMARY KEY,
+    guild_name        TEXT,
+    guild_id          TEXT,
+    guild_level       INTEGER,
+    member_count      INTEGER,
+    member_capacity   INTEGER,
+    total_power       BIGINT,
+    donations_value   BIGINT,
+    guild_rank        INTEGER,
+    xp_current        BIGINT,
+    xp_required       BIGINT,
+    raw_payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS guild_snapshots (
     id                BIGSERIAL PRIMARY KEY,
     batch_id          BIGINT REFERENCES capture_batches(id) ON DELETE SET NULL,

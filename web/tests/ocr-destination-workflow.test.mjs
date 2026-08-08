@@ -59,6 +59,11 @@ test("export uses a confirmation dialog and no typed phrase", () => {
   assert.doesNotMatch(htmlSource, /id="confirmation"/);
   assert.doesNotMatch(htmlSource, /id="previous-step"|id="next-step"/);
   assert.match(appSource, /Members and Boss together/);
+  assert.match(htmlSource, /id="confirm-export-date"/);
+  assert.match(appSource, /I confirm the data date/);
+  assert.match(htmlSource, /id="publish-success"/);
+  assert.match(htmlSource, /id="refresh-history"/);
+  assert.match(appSource, /\/api\/import-history\?target=/);
 });
 
 test("onboarding guides both local reviews before the destination", () => {

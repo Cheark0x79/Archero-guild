@@ -20,6 +20,7 @@ test("every data-backed public API route propagates source provenance", async ()
   const nonDataRoutes = new Set([
     path.join("health", "route.js"),
     path.join("imports", "route.js"),
+    path.join("imports", "history", "route.js"),
     path.join("imports", "validate", "route.js"),
   ]);
   const dataRoutes = routes.filter((file) => !nonDataRoutes.has(path.relative(apiRoot, file)));
