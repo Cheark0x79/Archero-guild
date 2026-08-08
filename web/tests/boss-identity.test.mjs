@@ -15,7 +15,14 @@ test("an exported boss identity wins over weekday inference", () => {
   assert.equal(bossDefinitionForSnapshot(snapshot, definitions).key, "medusa");
 });
 
-test("a shared personal best keeps the exported boss, record date, and damage aligned", () => {
+test("a shared personal best keeps the exported boss, record date, and damage aligned", (context) => {
+  const previousShareSecret = process.env.ARCHERO_SHARE_LINK_SECRET;
+  process.env.ARCHERO_SHARE_LINK_SECRET = "boss-identity-test-share-secret-longer-than-thirty-two-bytes";
+  context.after(() => {
+    if (previousShareSecret === undefined) delete process.env.ARCHERO_SHARE_LINK_SECRET;
+    else process.env.ARCHERO_SHARE_LINK_SECRET = previousShareSecret;
+  });
+
   const data = {
     rules: {},
     bossDefinitions: definitions,
