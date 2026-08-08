@@ -46,6 +46,19 @@ test("roster synchronization is explicit and reports no publication", () => {
   assert.match(appSource, /No OCR batch was published/);
 });
 
+test("a confirmed guild departure does not create a fake OCR row", () => {
+  assert.match(appSource, /request\("\/api\/missing-member-decision"/);
+  assert.match(appSource, /Confirm departure/);
+  assert.match(appSource, /does not block export/);
+  assert.match(appSource, /Still a member: add row/);
+});
+
+test("coverage feedback identifies missing Boss ranks instead of blaming Members", () => {
+  assert.match(appSource, /function missingBossRanks/);
+  assert.match(appSource, /Boss rank.*missing/);
+  assert.doesNotMatch(appSource, /Members coverage is/);
+});
+
 test("boss review never asks for a player ID", () => {
   const bossColumnsStart = appSource.indexOf("const BOSS_COLUMNS = [");
   const bossColumnsEnd = appSource.indexOf("];", bossColumnsStart);

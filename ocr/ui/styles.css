@@ -124,6 +124,8 @@ input, select { min-height: 42px; border: 1px solid var(--line); border-radius: 
 .missing-member small { color: var(--muted); }
 .identity-link-controls { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; }
 .identity-link-controls select { min-width: 0; }
+.missing-member-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.departure-confirmed { border-color: #9bc9af; background: #effaf3; }
 .table-wrap { max-height: 72vh; overflow: auto; border: 1px solid var(--line); border-radius: 9px; }
 table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }

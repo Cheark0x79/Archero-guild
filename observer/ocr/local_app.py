@@ -32,10 +32,12 @@ from observer.ocr.review import (
     apply_batch_edit,
     clear_reviewed_data,
     delete_batch_row,
+    confirmed_departure_ids,
     load_review_log,
     link_member_identity,
     merge_reviewed_scope,
     prepare_export_batch,
+    record_departure_decision,
     refresh_reviewed_batch,
     remove_reviewed_scope,
 )
@@ -835,6 +837,9 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             if self.path == "/api/link-member":
                 self._link_reviewed_member(payload)
                 return
+            if self.path == "/api/missing-member-decision":
+                self._record_missing_member_decision(payload)
+                return
             if self.path == "/api/clear":
                 self._clear_reviewed_data(payload)
                 return
@@ -1384,6 +1389,40 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             "learnedAliases": learned_aliases,
         })
 
+    def _record_missing_member_decision(self, payload: dict[str, Any]) -> None:
+        capture_date = str(payload.get("date") or "")
+        _validate_date(capture_date)
+        player_id = str(payload.get("playerId") or "").strip()
+        confirmed = payload.get("confirmed") is True
+        if not JOB_LOCK.acquire(blocking=False):
+            self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
+            if payload.get("simulation") is True:
+                raise LocalOcrError("departure decisions are not available in simulation mode")
+            try:
+                batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise LocalOcrError("no reviewed OCR batch exists for this date") from exc
+            roster, _ = self._scan_roster()
+            missing, _ = reconcile_member_rows(batch, roster)
+            member = next((item for item in roster if item.player_id == player_id), None)
+            if member is None:
+                raise LocalOcrError("the selected member is no longer present in the synchronized roster")
+            if confirmed and not any(item["playerId"] == player_id for item in missing):
+                raise LocalOcrError("the selected member is already present in this OCR batch")
+            corrections = record_departure_decision(
+                corrections_path,
+                capture_date=capture_date,
+                player_id=member.player_id,
+                name=member.name,
+                confirmed=confirmed,
+            )
+        finally:
+            JOB_LOCK.release()
+        self._send_json({"ok": True, "corrections": corrections})
+
     def _identity_aliases_path(self) -> Path:
         return getattr(self.app, "identity_aliases_path", self.app.outbox_root / "identity-aliases.json")
 
@@ -1447,10 +1486,15 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             return
         roster, roster_source = self._scan_roster()
         missing, unlinked = reconcile_member_rows(batch, roster)
+        corrections = load_review_log(self._corrections_path(capture_date), capture_date)
+        confirmed_ids = confirmed_departure_ids(corrections)
+        confirmed_departures = [member for member in missing if member["playerId"] in confirmed_ids]
+        missing = [member for member in missing if member["playerId"] not in confirmed_ids]
         self._send_json({
             "ok": True,
             "members": missing,
             "unlinkedRows": unlinked,
+            "confirmedDepartures": confirmed_departures,
             "target": {"key": "local", "label": roster_source["label"]},
         })
 

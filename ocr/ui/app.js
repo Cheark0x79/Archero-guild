@@ -112,7 +112,7 @@ function setBusy(busy) {
     "load-demo", "refresh-history",
   ].forEach((id) => { $(id).disabled = busy; });
   document.querySelectorAll("[data-edit-field]").forEach((control) => { control.disabled = busy; });
-  document.querySelectorAll(".delete-row, .add-missing-member, .link-member").forEach((control) => { control.disabled = busy; });
+  document.querySelectorAll(".delete-row, .add-missing-member, .link-member, .confirm-departure, .undo-departure").forEach((control) => { control.disabled = busy; });
   renderUploadSelection();
   renderExtractionSelection();
   renderReferenceImage();
@@ -470,12 +470,19 @@ async function loadMissingMembers() {
     const payload = await request(`/api/missing-members?date=${encodeURIComponent(activeSessionDate())}`);
     const members = payload.members || [];
     const unlinkedRows = payload.unlinkedRows || [];
-    $("missing-members").hidden = members.length === 0;
-    $("missing-members-count").textContent = `${members.length} missing`;
+    const confirmedDepartures = payload.confirmedDepartures || [];
+    $("missing-members").hidden = members.length === 0 && confirmedDepartures.length === 0;
+    $("missing-members-title").textContent = members.length
+      ? "Roster differences to review"
+      : "Roster review complete";
+    $("missing-members-count").textContent = [
+      members.length ? `${members.length} to review` : "",
+      confirmedDepartures.length ? `${confirmedDepartures.length} departure${confirmedDepartures.length === 1 ? "" : "s"} confirmed` : "",
+    ].filter(Boolean).join(" · ") || "No difference";
     $("missing-members-source").textContent = payload.target
-      ? `Compared with ${payload.target.label}`
+      ? `Compared with ${payload.target.label}. A confirmed departure does not block export.`
       : "";
-    $("missing-members-list").replaceChildren(...members.map((member) => {
+    const pendingItems = members.map((member) => {
       const item = document.createElement("article");
       item.className = "missing-member";
       const identity = document.createElement("span");
@@ -505,21 +512,78 @@ async function loadMissingMembers() {
         linkControls.append(select, link);
         item.append(identity, linkControls);
       } else {
+        const actions = document.createElement("div");
+        actions.className = "missing-member-actions";
+        const departure = document.createElement("button");
+        departure.type = "button";
+        departure.className = "button primary compact confirm-departure";
+        departure.textContent = "Confirm departure";
+        departure.disabled = state.busy;
+        departure.addEventListener("click", () => setDepartureDecision(member, true));
         const add = document.createElement("button");
         add.type = "button";
         add.className = "button secondary compact add-missing-member";
-        add.textContent = "Add missing row";
+        add.textContent = "Still a member: add row";
         add.disabled = state.busy;
         add.addEventListener("click", () => addReviewedRow(member));
-        item.append(identity, add);
+        actions.append(departure, add);
+        item.append(identity, actions);
       }
       return item;
-    }));
+    });
+    const confirmedItems = confirmedDepartures.map((member) => {
+      const item = document.createElement("article");
+      item.className = "missing-member departure-confirmed";
+      const identity = document.createElement("span");
+      const name = document.createElement("strong");
+      name.textContent = member.name;
+      const status = document.createElement("small");
+      status.textContent = `${member.playerId} · Departure confirmed for this import`;
+      identity.append(name, status);
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "button secondary compact undo-departure";
+      undo.textContent = "Undo";
+      undo.disabled = state.busy;
+      undo.addEventListener("click", () => setDepartureDecision(member, false));
+      item.append(identity, undo);
+      return item;
+    });
+    $("missing-members-list").replaceChildren(...pendingItems, ...confirmedItems);
   } catch (error) {
     $("missing-members").hidden = false;
     $("missing-members-count").textContent = "Check unavailable";
     $("missing-members-source").textContent = error.message;
     $("missing-members-list").replaceChildren();
+  }
+}
+
+async function setDepartureDecision(member, confirmed) {
+  if (confirmed && !window.confirm(
+    `Confirm that ${member.name} (${member.playerId}) is no longer in the current guild? No OCR row will be added, and a complete export can mark this member as former.`,
+  )) return;
+  setBusy(true);
+  message(confirmed ? `Confirming ${member.name} as a departure…` : `Restoring ${member.name} to roster review…`);
+  try {
+    const payload = await request("/api/missing-member-decision", {
+      method: "POST",
+      body: JSON.stringify({
+        date: activeSessionDate(),
+        simulation: false,
+        playerId: member.playerId,
+        confirmed,
+      }),
+    });
+    state.corrections = payload.corrections;
+    renderCorrections();
+    await loadMissingMembers();
+    message(confirmed
+      ? `${member.name} confirmed as departed. This roster difference no longer requires a row and does not block export.`
+      : `${member.name} returned to the roster review list.`);
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -759,6 +823,8 @@ function renderCorrections() {
         ? `${entry.category} · added row`
         : entry.action === "link"
           ? `${entry.category} · linked identity`
+        : entry.action === "departure"
+          ? `${entry.category} · roster departure ${entry.confirmed ? "confirmed" : "undone"}`
       : `${entry.category} · ${entry.field}`;
     const source = document.createElement("small");
     source.textContent = entry.source || `row ${entry.rowIndex + 1}`;
@@ -1199,6 +1265,7 @@ function updateTargetControls() {
   }
   const duplicateMemberIds = duplicateValues(state.batch?.members || [], "playerId");
   const coverage = Number(state.batch?.quality?.coverage);
+  const missingBoss = missingBossRanks(state.batch?.bossRankings || []);
   const blocker = !target.configured
     ? "Configure this destination from the local destination editor."
     : !state.batch
@@ -1208,9 +1275,9 @@ function updateTargetControls() {
     : duplicateMemberIds.size
       ? `Resolve duplicate Player IDs: ${[...duplicateMemberIds].join(", ")}.`
     : Number.isFinite(coverage) && coverage < 1
-      ? state.batch.members.length < Number(state.batch.quality?.memberExpectedRows || 0)
-        ? `Members coverage is ${(coverage * 100).toFixed(1)}%. Review or add the missing guild member.`
-        : `Boss ranks contain a gap. Review the missing rank before checking the destination.`
+      ? missingBoss.length
+        ? `Boss rank${missingBoss.length === 1 ? "" : "s"} ${missingBoss.join(", ")} ${missingBoss.length === 1 ? "is" : "are"} missing. Review or add the missing Boss row before checking the destination.`
+        : `Coverage is ${(coverage * 100).toFixed(1)}%. Review the incomplete OCR rows before checking the destination.`
     : !hasPublishableBatch
       ? "A linked name is required for every row. Other missing member metrics may stay empty."
       : null;
@@ -1224,6 +1291,16 @@ function updateTargetControls() {
     $("preflight-help").textContent = "Check connectivity, authentication and batch validity before sending.";
   }
   $("publish").disabled = state.busy || !target.publishable || !hasPublishableBatch || !hasValidPreflight;
+}
+
+function missingBossRanks(rows) {
+  const ranks = rows
+    .map((row) => row?.rank)
+    .filter((rank) => Number.isInteger(rank) && rank > 0);
+  const highest = Math.max(0, ...ranks);
+  const present = new Set(ranks);
+  return Array.from({ length: highest }, (_, index) => index + 1)
+    .filter((rank) => !present.has(rank));
 }
 
 function isLocallyPublishableBatch(batch) {
