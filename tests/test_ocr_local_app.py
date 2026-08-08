@@ -17,10 +17,14 @@ from observer.ocr.local_app import (
     day_payload,
     delete_remote_target,
     load_roster_cache,
+    load_identity_aliases,
     load_targets,
     merge_reviewed_roster,
     move_capture_to_trash,
+    reconcile_member_rows,
     save_roster_cache,
+    save_identity_alias,
+    roster_with_identity_aliases,
     selected_capture_paths,
     simulation_history,
     simulation_publish,
@@ -72,7 +76,7 @@ class LocalOcrAppTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalOcrError, "Boss review"):
             _validate_simulation_batch(batch)
 
-    def test_reviewed_member_ids_are_reused_by_later_extractions(self) -> None:
+    def test_synchronized_roster_wins_over_old_reviewed_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             outbox = Path(directory)
             (outbox / "2026-07-29.json").write_text(
@@ -96,9 +100,45 @@ class LocalOcrAppTests(unittest.TestCase):
 
         self.assertEqual(
             [(entry.player_id, entry.name) for entry in merged],
-            [("119965772", "Papixl"), ("119982936", "Pignouf")],
+            [("old-id", "Papixl"), ("119982936", "Pignouf")],
         )
-        self.assertEqual(merged[0].power_hint, 834600)
+
+    def test_confirmed_ocr_alias_is_private_and_reused_by_roster(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity-aliases.json"
+            learned = save_identity_alias(
+                path,
+                observed_name="Members? Anxlety | Anxlety",
+                player_id="119982797",
+                canonical_name="Anxiety",
+            )
+            roster = roster_with_identity_aliases(
+                [RosterEntry("119982797", "Anxiety")],
+                path,
+            )
+            stored = load_identity_aliases(path)
+
+        self.assertEqual(learned, 2)
+        self.assertEqual(roster[0].aliases, ("Members? Anxlety", "Anxlety"))
+        self.assertTrue(all(item["playerId"] == "119982797" for item in stored))
+
+    def test_stale_or_missing_ids_are_offered_for_relinking(self) -> None:
+        roster = [
+            RosterEntry("current-a", "Anxiety"),
+            RosterEntry("current-b", "Papixl"),
+        ]
+        batch = {
+            "members": [
+                {"playerId": "old-a", "rawName": "Anxlety", "powerText": "1.42M"},
+                {"playerId": None, "rawName": "PapixI", "powerText": "834.60K"},
+            ]
+        }
+
+        missing, unlinked = reconcile_member_rows(batch, roster)
+
+        self.assertEqual([member["playerId"] for member in missing], ["current-a", "current-b"])
+        self.assertEqual([row["rowIndex"] for row in unlinked], [0, 1])
+        self.assertEqual(unlinked[0]["stalePlayerId"], "old-a")
 
     def test_loads_named_remote_targets_without_exposing_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

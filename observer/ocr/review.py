@@ -185,6 +185,69 @@ def apply_batch_edit(
     return batch, correction_log
 
 
+def link_member_identity(
+    batch_path: Path,
+    corrections_path: Path,
+    *,
+    capture_date: str,
+    row_index: int,
+    player_id: str,
+    canonical_name: str,
+) -> tuple[dict[str, Any], dict[str, Any], str | None]:
+    """Attach a canonical roster identity to one existing OCR metrics row."""
+    batch = _load_batch(batch_path, capture_date)
+    rows = batch.get("members")
+    if not isinstance(rows, list) or row_index < 0 or row_index >= len(rows):
+        raise ReviewError("the selected OCR row no longer exists")
+    row = rows[row_index]
+    if not isinstance(row, dict):
+        raise ReviewError("the selected OCR row is invalid")
+
+    normalized_id = str(player_id or "").strip()
+    normalized_name = str(canonical_name or "").strip()
+    if not normalized_id or not normalized_name:
+        raise ReviewError("a roster player ID and canonical name are required")
+    if any(
+        index != row_index
+        and isinstance(item, dict)
+        and str(item.get("playerId") or "").strip() == normalized_id
+        for index, item in enumerate(rows)
+    ):
+        raise ReviewError(f"player ID {normalized_id} is already used by another reviewed row")
+
+    observed_name = str(row.get("rawName") or row.get("name") or "").strip() or None
+    before = {
+        "playerId": row.get("playerId"),
+        "name": row.get("name"),
+    }
+    row["playerId"] = normalized_id
+    row["name"] = normalized_name
+    row["matchScore"] = 1
+    row["matchType"] = "manual"
+    row["matchStatus"] = "matched"
+    refresh_reviewed_batch(batch)
+
+    correction_log = load_review_log(corrections_path, capture_date)
+    timestamp = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
+    correction_log["updatedAt"] = timestamp
+    correction_log["entries"].append(
+        {
+            "at": timestamp,
+            "action": "link",
+            "category": "members",
+            "rowIndex": row_index,
+            "source": row.get("source"),
+            "field": "identity",
+            "before": before,
+            "after": {"playerId": normalized_id, "name": normalized_name},
+            "observedName": observed_name,
+        }
+    )
+    _atomic_json_write(batch_path, batch)
+    _atomic_json_write(corrections_path, correction_log)
+    return batch, correction_log, observed_name
+
+
 def delete_batch_row(
     batch_path: Path,
     corrections_path: Path,

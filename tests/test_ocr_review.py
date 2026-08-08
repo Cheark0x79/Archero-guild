@@ -9,6 +9,7 @@ from observer.ocr.review import (
     apply_batch_edit,
     clear_reviewed_data,
     delete_batch_row,
+    link_member_identity,
     merge_reviewed_scope,
     prepare_export_batch,
     refresh_reviewed_batch,
@@ -341,6 +342,54 @@ class OcrReviewTests(unittest.TestCase):
                     capture_date="2026-07-29",
                     category="members",
                     initial={"playerId": "119982797", "name": "Alco123"},
+                )
+
+    def test_links_an_existing_ocr_row_without_losing_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_path = root / "2026-07-29.json"
+            corrections_path = root / "corrections" / "2026-07-29.json"
+            batch = sample_batch()
+            batch["sourceImages"] = [{"kind": "guild-members", "sourceName": "members.png", "detectedRows": 1}]
+            batch_path.write_text(json.dumps(batch), encoding="utf-8")
+
+            updated, corrections, observed = link_member_identity(
+                batch_path,
+                corrections_path,
+                capture_date="2026-07-29",
+                row_index=0,
+                player_id="119982797",
+                canonical_name="Anxiety",
+            )
+
+        row = updated["members"][0]
+        self.assertEqual(observed, "Anxlety")
+        self.assertEqual(row["playerId"], "119982797")
+        self.assertEqual(row["name"], "Anxiety")
+        self.assertEqual(row["rawName"], "Anxlety")
+        self.assertEqual(row["power"], 1_420_000)
+        self.assertEqual(row["contribution7d"], 0)
+        self.assertEqual(corrections["entries"][0]["action"], "link")
+
+    def test_rejects_linking_a_player_id_already_used_by_another_row(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            batch_path = root / "2026-07-29.json"
+            corrections_path = root / "corrections.json"
+            batch = sample_batch()
+            other = dict(batch["members"][0])
+            other.update({"playerId": "119982797", "name": "Anxiety", "rawName": "Anxiety"})
+            batch["members"].append(other)
+            batch_path.write_text(json.dumps(batch), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReviewError, "already used"):
+                link_member_identity(
+                    batch_path,
+                    corrections_path,
+                    capture_date="2026-07-29",
+                    row_index=0,
+                    player_id="119982797",
+                    canonical_name="Anxiety",
                 )
 
 

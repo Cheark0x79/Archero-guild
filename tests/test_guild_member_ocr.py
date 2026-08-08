@@ -93,6 +93,15 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertEqual(_match_roster_name(["Members+ JuneOO"], roster)[0].player_id, "1")
         self.assertEqual(_match_roster_name(["bers? jokewi"], roster)[0].player_id, "2")
 
+    def test_match_roster_name_uses_confirmed_alias_but_returns_canonical_name(self) -> None:
+        roster = [RosterEntry("119982797", "Anxiety", aliases=("Anxlety",))]
+
+        match = _match_roster_name(["Anxlety"], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "119982797")
+        self.assertEqual(match[0].name, "Anxiety")
+
     def test_matches_a_cyrillic_member_name(self) -> None:
         roster = [RosterEntry("119933547", "Алхимик")]
 

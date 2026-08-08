@@ -101,6 +101,10 @@ without deleting captures, reviewed JSON, or Docker images.
 4. Every changed cell is written to
    `data/outbox/corrections/YYYY-MM-DD.json` with its before/after values. The
    corrected batch and idempotency key are updated atomically.
+   When a detected row has no current roster identity, use `Link this row` on
+   the missing member instead of adding a duplicate. The existing power,
+   activity and contribution values stay on that row while its canonical name
+   and Player ID are attached.
 5. Choose a configured remote destination, type its environment-specific
    confirmation, and publish. The backend validates the corrected JSON before
    its database transaction.
@@ -108,6 +112,12 @@ without deleting captures, reviewed JSON, or Docker images.
 `Clear extracted data` removes only the outbox JSON and its correction history
 for the selected date. Uploaded screenshots are preserved so extraction can be
 run again.
+
+Confirmed OCR spellings are kept privately in
+`data/outbox/identity-aliases.json`. They help later scans resolve the same OCR
+variation to the synchronized canonical member. The synchronized roster always
+wins over identities found in older reviewed batches, and no alias or roster
+cache is committed to Git.
 
 ## Local simulation
 

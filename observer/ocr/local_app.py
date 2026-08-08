@@ -33,6 +33,7 @@ from observer.ocr.review import (
     clear_reviewed_data,
     delete_batch_row,
     load_review_log,
+    link_member_identity,
     merge_reviewed_scope,
     prepare_export_batch,
     refresh_reviewed_batch,
@@ -63,9 +64,11 @@ class LocalOcrError(RuntimeError):
 
 
 def merge_reviewed_roster(roster: list[RosterEntry], outbox_root: Path) -> list[RosterEntry]:
-    reviewed: list[RosterEntry] = []
-    reviewed_names: set[str] = set()
-    reviewed_pairs: set[tuple[str, str]] = set()
+    # The synchronized roster is authoritative. Historical reviews may extend
+    # an offline roster, but must never replace a current ID or canonical name.
+    merged = list(roster)
+    known_ids = {entry.player_id for entry in roster}
+    known_names = {entry.name.strip().casefold() for entry in roster}
     for batch_path in sorted(outbox_root.glob("*.json"), reverse=True):
         try:
             batch = json.loads(batch_path.read_text(encoding="utf-8"))
@@ -79,29 +82,123 @@ def merge_reviewed_roster(roster: list[RosterEntry], outbox_root: Path) -> list[
             if not player_id or not name:
                 continue
             normalized_name = name.casefold()
-            pair = (player_id, normalized_name)
-            if pair in reviewed_pairs or normalized_name in reviewed_names:
+            if player_id in known_ids or normalized_name in known_names:
                 continue
-            reviewed.append(
+            merged.append(
                 RosterEntry(
                     player_id=player_id,
                     name=name,
                     power_hint=row.get("power") if isinstance(row.get("power"), int) else None,
                 )
             )
-            reviewed_pairs.add(pair)
-            reviewed_names.add(normalized_name)
-
-    merged = list(reviewed)
-    merged_pairs = set(reviewed_pairs)
-    for entry in roster:
-        normalized_name = entry.name.strip().casefold()
-        pair = (entry.player_id, normalized_name)
-        if pair in merged_pairs or normalized_name in reviewed_names:
-            continue
-        merged.append(entry)
-        merged_pairs.add(pair)
+            known_ids.add(player_id)
+            known_names.add(normalized_name)
     return merged
+
+
+def load_identity_aliases(path: Path) -> list[dict[str, str]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LocalOcrError(f"identity alias file is invalid: {path}") from exc
+    aliases = payload.get("aliases") if isinstance(payload, dict) else None
+    if not isinstance(aliases, list):
+        raise LocalOcrError(f"identity alias file is invalid: {path}")
+    return [item for item in aliases if isinstance(item, dict)]
+
+
+def roster_with_identity_aliases(roster: list[RosterEntry], path: Path) -> list[RosterEntry]:
+    aliases_by_id: dict[str, list[str]] = {}
+    for item in load_identity_aliases(path):
+        player_id = str(item.get("playerId") or "").strip()
+        observed_name = str(item.get("observedName") or "").strip()
+        if player_id and observed_name:
+            aliases_by_id.setdefault(player_id, []).append(observed_name)
+    return [
+        RosterEntry(
+            player_id=entry.player_id,
+            name=entry.name,
+            power_hint=entry.power_hint,
+            aliases=tuple(dict.fromkeys([*entry.aliases, *aliases_by_id.get(entry.player_id, [])])),
+        )
+        for entry in roster
+    ]
+
+
+def save_identity_alias(path: Path, *, observed_name: str | None, player_id: str, canonical_name: str) -> int:
+    candidates = [part.strip() for part in str(observed_name or "").split("|")]
+    canonical_key = _identity_name_key(canonical_name)
+    candidates = [
+        candidate for candidate in candidates
+        if len(_identity_name_key(candidate)) >= 3 and _identity_name_key(candidate) != canonical_key
+    ]
+    if not candidates:
+        return 0
+    aliases = load_identity_aliases(path)
+    changed = 0
+    timestamp = datetime.now(UTC).isoformat()
+    for candidate in dict.fromkeys(candidates):
+        normalized = _identity_name_key(candidate)
+        conflicting = next(
+            (
+                item for item in aliases
+                if item.get("normalizedName") == normalized and item.get("playerId") != player_id
+            ),
+            None,
+        )
+        if conflicting is not None:
+            raise LocalOcrError(f'OCR alias "{candidate}" is already linked to another member')
+        existing = next((item for item in aliases if item.get("normalizedName") == normalized), None)
+        if existing is not None:
+            existing.update({"observedName": candidate, "canonicalName": canonical_name, "updatedAt": timestamp})
+            continue
+        aliases.append({
+            "observedName": candidate,
+            "normalizedName": normalized,
+            "playerId": player_id,
+            "canonicalName": canonical_name,
+            "updatedAt": timestamp,
+        })
+        changed += 1
+    _write_private_json(path, {"schemaVersion": 1, "updatedAt": timestamp, "aliases": aliases})
+    return changed
+
+
+def _identity_name_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", value.casefold())
+
+
+def reconcile_member_rows(
+    batch: dict[str, Any],
+    roster: list[RosterEntry],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    roster_ids = {member.player_id for member in roster}
+    rows = batch.get("members") if isinstance(batch.get("members"), list) else []
+    present_ids = {
+        str(row.get("playerId"))
+        for row in rows
+        if isinstance(row, dict) and row.get("playerId") in roster_ids
+    }
+    missing = [
+        {"playerId": member.player_id, "name": member.name, "power": member.power_hint}
+        for member in roster
+        if member.player_id not in present_ids
+    ]
+    unlinked = [
+        {
+            "rowIndex": row_index,
+            "rawName": row.get("rawName"),
+            "name": row.get("name"),
+            "powerText": row.get("powerText"),
+            "source": row.get("source"),
+            "stalePlayerId": row.get("playerId") if row.get("playerId") else None,
+        }
+        for row_index, row in enumerate(rows)
+        if isinstance(row, dict) and row.get("playerId") not in roster_ids
+    ]
+    return missing, unlinked
 
 
 def load_targets(path: Path) -> dict[str, dict[str, Any]]:
@@ -735,6 +832,9 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             if self.path == "/api/add-row":
                 self._add_reviewed_row(payload)
                 return
+            if self.path == "/api/link-member":
+                self._link_reviewed_member(payload)
+                return
             if self.path == "/api/clear":
                 self._clear_reviewed_data(payload)
                 return
@@ -1039,7 +1139,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                     key=target_key,
                     label=target["label"],
                 )
-                merged = merge_reviewed_roster(roster, self.app.outbox_root)
+                merged = roster_with_identity_aliases(
+                    merge_reviewed_roster(roster, self.app.outbox_root),
+                    self._identity_aliases_path(),
+                )
                 return merged, {
                     "type": "database",
                     "target": target_key,
@@ -1048,7 +1151,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 }
         roster, cache = load_roster_cache(self.app.roster_cache_path)
         if roster:
-            merged = merge_reviewed_roster(roster, self.app.outbox_root)
+            merged = roster_with_identity_aliases(
+                merge_reviewed_roster(roster, self.app.outbox_root),
+                self._identity_aliases_path(),
+            )
             return merged, {
                 "type": "local-cache",
                 "label": cache["source"]["label"] or "local roster cache",
@@ -1058,7 +1164,10 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
         roster = read_roster_entries(self.app.local_roster_path)
         if not roster:
             raise LocalOcrError(f"OCR roster is empty: {self.app.local_roster_path}")
-        merged = merge_reviewed_roster(roster, self.app.outbox_root)
+        merged = roster_with_identity_aliases(
+            merge_reviewed_roster(roster, self.app.outbox_root),
+            self._identity_aliases_path(),
+        )
         return merged, {
             "type": "local-fallback",
             "label": "local fallback roster",
@@ -1235,6 +1344,49 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             JOB_LOCK.release()
         self._send_json({"ok": True, "batch": batch, "corrections": corrections})
 
+    def _link_reviewed_member(self, payload: dict[str, Any]) -> None:
+        capture_date = str(payload.get("date") or "")
+        _validate_date(capture_date)
+        try:
+            row_index = int(payload.get("rowIndex"))
+        except (TypeError, ValueError) as exc:
+            raise LocalOcrError("rowIndex must be an integer") from exc
+        player_id = str(payload.get("playerId") or "").strip()
+        if not JOB_LOCK.acquire(blocking=False):
+            self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            roster, _ = self._scan_roster()
+            member = next((entry for entry in roster if entry.player_id == player_id), None)
+            if member is None:
+                raise LocalOcrError("the selected member is no longer present in the synchronized roster")
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
+            batch, corrections, observed_name = link_member_identity(
+                batch_path,
+                corrections_path,
+                capture_date=capture_date,
+                row_index=row_index,
+                player_id=member.player_id,
+                canonical_name=member.name,
+            )
+            learned_aliases = save_identity_alias(
+                self._identity_aliases_path(),
+                observed_name=observed_name,
+                player_id=member.player_id,
+                canonical_name=member.name,
+            )
+        finally:
+            JOB_LOCK.release()
+        self._send_json({
+            "ok": True,
+            "batch": batch,
+            "corrections": corrections,
+            "learnedAliases": learned_aliases,
+        })
+
+    def _identity_aliases_path(self) -> Path:
+        return getattr(self.app, "identity_aliases_path", self.app.outbox_root / "identity-aliases.json")
+
     def _clear_reviewed_data(self, payload: dict[str, Any]) -> None:
         capture_date = str(payload.get("date") or "")
         _validate_date(capture_date)
@@ -1294,23 +1446,11 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "members": [], "target": None})
             return
         roster, roster_source = self._scan_roster()
-        present_ids = {
-            str(row.get("playerId"))
-            for row in batch.get("members", [])
-            if isinstance(row, dict) and row.get("playerId")
-        }
-        missing = [
-            {
-                "playerId": member.player_id,
-                "name": member.name,
-                "power": member.power_hint,
-            }
-            for member in roster
-            if member.player_id not in present_ids
-        ]
+        missing, unlinked = reconcile_member_rows(batch, roster)
         self._send_json({
             "ok": True,
             "members": missing,
+            "unlinkedRows": unlinked,
             "target": {"key": "local", "label": roster_source["label"]},
         })
 
@@ -1395,6 +1535,7 @@ class LocalOcrServer(ThreadingHTTPServer):
         self.targets = targets
         self.targets_file = targets_file
         self.roster_cache_path = roster_cache_path
+        self.identity_aliases_path = outbox_root / "identity-aliases.json"
         self.ui_root = ui_root
         self.local_roster_path = local_roster_path
         self.agent_version = agent_version

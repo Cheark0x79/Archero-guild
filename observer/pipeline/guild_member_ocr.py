@@ -18,6 +18,7 @@ class RosterEntry:
     player_id: str
     name: str
     power_hint: int | None = None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -405,14 +406,15 @@ def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple
     for raw_name in raw_names:
         for normalized in _normalized_name_candidates(raw_name):
             for entry in roster:
-                roster_name = _normalize_match_text(entry.name)
-                if not roster_name:
-                    continue
-                score = SequenceMatcher(None, roster_name, normalized).ratio()
-                if len(normalized) >= 3 and (roster_name in normalized or normalized in roster_name):
-                    score = max(score, 0.98)
-                if best is None or score > best[1]:
-                    best = (entry, score, raw_name)
+                for identity_name in (entry.name, *entry.aliases):
+                    roster_name = _normalize_match_text(identity_name)
+                    if not roster_name:
+                        continue
+                    score = SequenceMatcher(None, roster_name, normalized).ratio()
+                    if len(normalized) >= 3 and (roster_name in normalized or normalized in roster_name):
+                        score = max(score, 0.98)
+                    if best is None or score > best[1]:
+                        best = (entry, score, raw_name)
 
     if best is None or best[1] < 0.70:
         return None

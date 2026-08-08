@@ -112,7 +112,7 @@ function setBusy(busy) {
     "load-demo", "refresh-history",
   ].forEach((id) => { $(id).disabled = busy; });
   document.querySelectorAll("[data-edit-field]").forEach((control) => { control.disabled = busy; });
-  document.querySelectorAll(".delete-row, .add-missing-member").forEach((control) => { control.disabled = busy; });
+  document.querySelectorAll(".delete-row, .add-missing-member, .link-member").forEach((control) => { control.disabled = busy; });
   renderUploadSelection();
   renderExtractionSelection();
   renderReferenceImage();
@@ -469,6 +469,7 @@ async function loadMissingMembers() {
   try {
     const payload = await request(`/api/missing-members?date=${encodeURIComponent(activeSessionDate())}`);
     const members = payload.members || [];
+    const unlinkedRows = payload.unlinkedRows || [];
     $("missing-members").hidden = members.length === 0;
     $("missing-members-count").textContent = `${members.length} missing`;
     $("missing-members-source").textContent = payload.target
@@ -483,13 +484,35 @@ async function loadMissingMembers() {
       const id = document.createElement("small");
       id.textContent = member.playerId;
       identity.append(name, id);
-      const add = document.createElement("button");
-      add.type = "button";
-      add.className = "button secondary compact add-missing-member";
-      add.textContent = "Add row";
-      add.disabled = state.busy;
-      add.addEventListener("click", () => addReviewedRow(member));
-      item.append(identity, add);
+      if (unlinkedRows.length) {
+        const linkControls = document.createElement("div");
+        linkControls.className = "identity-link-controls";
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", `OCR row to link to ${member.name}`);
+        select.replaceChildren(...unlinkedRows.map((row) => {
+          const option = document.createElement("option");
+          option.value = String(row.rowIndex);
+          const staleId = row.stalePlayerId ? ` · old ID ${row.stalePlayerId}` : "";
+          option.textContent = `${row.rawName || row.name || `Row ${row.rowIndex + 1}`} · ${row.powerText || "power unknown"}${staleId}`;
+          return option;
+        }));
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "button primary compact link-member";
+        link.textContent = "Link this row";
+        link.disabled = state.busy;
+        link.addEventListener("click", () => linkReviewedMember(Number(select.value), member));
+        linkControls.append(select, link);
+        item.append(identity, linkControls);
+      } else {
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "button secondary compact add-missing-member";
+        add.textContent = "Add missing row";
+        add.disabled = state.busy;
+        add.addEventListener("click", () => addReviewedRow(member));
+        item.append(identity, add);
+      }
       return item;
     }));
   } catch (error) {
@@ -497,6 +520,42 @@ async function loadMissingMembers() {
     $("missing-members-count").textContent = "Check unavailable";
     $("missing-members-source").textContent = error.message;
     $("missing-members-list").replaceChildren();
+  }
+}
+
+async function linkReviewedMember(rowIndex, member) {
+  const row = state.batch?.members?.[rowIndex];
+  if (!row) {
+    message("The selected OCR row no longer exists.", true);
+    return;
+  }
+  const observed = row.rawName || row.name || `row ${rowIndex + 1}`;
+  if (!window.confirm(`Link OCR row "${observed}" to ${member.name} (${member.playerId})? Its extracted statistics will be kept.`)) return;
+  setBusy(true);
+  message(`Linking ${observed} to ${member.name}…`);
+  try {
+    const payload = await request("/api/link-member", {
+      method: "POST",
+      body: JSON.stringify({
+        date: activeSessionDate(),
+        simulation: false,
+        rowIndex,
+        playerId: member.playerId,
+      }),
+    });
+    state.batch = payload.batch;
+    state.corrections = payload.corrections;
+    renderBatch();
+    await loadMissingMembers();
+    const learning = payload.learnedAliases
+      ? " The OCR spelling was remembered locally for future scans."
+      : "";
+    message(`${member.name} linked without creating a duplicate.${learning}`);
+  } catch (error) {
+    message(error.message, true);
+    await loadBatch().catch(() => {});
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -698,6 +757,8 @@ function renderCorrections() {
       ? `${entry.category} · rejected row`
       : entry.action === "add"
         ? `${entry.category} · added row`
+        : entry.action === "link"
+          ? `${entry.category} · linked identity`
       : `${entry.category} · ${entry.field}`;
     const source = document.createElement("small");
     source.textContent = entry.source || `row ${entry.rowIndex + 1}`;
@@ -705,17 +766,26 @@ function renderCorrections() {
     const before = document.createElement("del");
     before.textContent = entry.action === "delete"
       ? deletedRowLabel(entry.before)
-      : entry.action === "add" ? "Not present" : displayValue(entry.before);
+      : entry.action === "add" ? "Not present"
+        : entry.action === "link" ? identityLabel(entry.before)
+          : displayValue(entry.before);
     const arrow = document.createElement("span");
     arrow.textContent = "→";
     const after = document.createElement("ins");
     after.textContent = entry.action === "delete"
       ? "Not published"
-      : entry.action === "add" ? deletedRowLabel(entry.after) : displayValue(entry.after);
+      : entry.action === "add" ? deletedRowLabel(entry.after)
+        : entry.action === "link" ? identityLabel(entry.after)
+          : displayValue(entry.after);
     change.append(before, arrow, after);
     item.append(title, source, change);
     return item;
   }));
+}
+
+function identityLabel(identity) {
+  if (!identity || typeof identity !== "object") return "Unlinked";
+  return [identity.name, identity.playerId].filter(Boolean).join(" · ") || "Unlinked";
 }
 
 function deletedRowLabel(row) {
@@ -1170,27 +1240,29 @@ function isLocallyPublishableBatch(batch) {
 }
 
 function renderReferenceOptions() {
+  const images = visibleReferenceImages();
   const previous = $("reference-image").value;
-  $("reference-image").replaceChildren(...state.referenceImages.map((image) => {
+  $("reference-image").replaceChildren(...images.map((image) => {
     const option = document.createElement("option");
     option.value = image.url;
-    option.textContent = `${image.kind === "guild-members" ? "Guild" : "Boss"} · ${image.name}`;
+    option.textContent = image.name;
     return option;
   }));
-  if (state.referenceImages.some((image) => image.url === previous)) $("reference-image").value = previous;
+  if (images.some((image) => image.url === previous)) $("reference-image").value = previous;
   renderReferenceImage();
 }
 
 function renderReferenceImage() {
-  const selectedIndex = state.referenceImages.findIndex((image) => image.url === $("reference-image").value);
-  const selected = selectedIndex >= 0 ? state.referenceImages[selectedIndex] : null;
+  const images = visibleReferenceImages();
+  const selectedIndex = images.findIndex((image) => image.url === $("reference-image").value);
+  const selected = selectedIndex >= 0 ? images[selectedIndex] : null;
   $("reference-preview").hidden = !selected;
   $("reference-empty").hidden = Boolean(selected);
   $("reference-position").textContent = selected
-    ? `${selectedIndex + 1} / ${state.referenceImages.length}`
-    : `0 / ${state.referenceImages.length}`;
+    ? `${selectedIndex + 1} / ${images.length}`
+    : `0 / ${images.length}`;
   $("reference-previous").disabled = state.busy || selectedIndex <= 0;
-  $("reference-next").disabled = state.busy || selectedIndex < 0 || selectedIndex >= state.referenceImages.length - 1;
+  $("reference-next").disabled = state.busy || selectedIndex < 0 || selectedIndex >= images.length - 1;
   if (selected) {
     $("reference-preview").src = selected.url;
     $("reference-preview").alt = `${selected.kind} ${selected.name}`;
@@ -1200,20 +1272,21 @@ function renderReferenceImage() {
 }
 
 function moveReferenceImage(offset) {
-  const current = state.referenceImages.findIndex((image) => image.url === $("reference-image").value);
-  const next = Math.max(0, Math.min(state.referenceImages.length - 1, current + offset));
+  const images = visibleReferenceImages();
+  const current = images.findIndex((image) => image.url === $("reference-image").value);
+  const next = Math.max(0, Math.min(images.length - 1, current + offset));
   if (current < 0 || next === current) return;
-  $("reference-image").value = state.referenceImages[next].url;
+  $("reference-image").value = images[next].url;
   renderReferenceImage();
 }
 
-function selectReferenceForTable() {
+function visibleReferenceImages() {
   const kind = state.table === "members" ? "guild-members" : "guild-boss";
-  const image = state.referenceImages.find((item) => item.kind === kind);
-  if (image) {
-    $("reference-image").value = image.url;
-    renderReferenceImage();
-  }
+  return state.referenceImages.filter((image) => image.kind === kind);
+}
+
+function selectReferenceForTable() {
+  renderReferenceOptions();
 }
 
 function goToStep(step) {
