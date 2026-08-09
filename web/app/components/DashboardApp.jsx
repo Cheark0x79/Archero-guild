@@ -1320,6 +1320,7 @@ function dataActionHeaders(extra = {}) {
 function Dashboard({ rules }) {
   const [donationRange, setDonationRange] = useState("1w");
   const [powerRange, setPowerRange] = useState("1w");
+  const [bossRange, setBossRange] = useState("1w");
   const summary = buildSummary(members, rules);
   const powerStats = dashboardRangeRows(buildDailyPowerStats(), powerRange);
   const medianPowerSeries = powerStats.map((day) => day.median);
@@ -1330,6 +1331,9 @@ function Dashboard({ rules }) {
     : dashboardRangeRows(weeklyDonationStats, donationRange);
   const donationSeries = donationStats.map((day) => day.total);
   const donationDates = dashboardRangeLabels(donationStats, donationRange);
+  const bossDamageStats = dashboardRangeRows(buildDailyBossDamageStats(), bossRange);
+  const bossDamageSeries = bossDamageStats.map((day) => day.total);
+  const bossDamageDates = dashboardRangeLabels(bossDamageStats, bossRange);
   const latestMemberDay = Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots.at(-1) : null;
   const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
   const bossRows = currentBossDay?.rows?.filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number") ?? [];
@@ -1408,6 +1412,17 @@ function Dashboard({ rules }) {
           value={formatOptionalCompact(medianPowerSeries.at(-1))}
           positive
           showPoints
+        />
+        <ChartPanel
+          title="Guild boss damage"
+          subtitle={bossRange === "1w" ? "Total damage recorded for each boss this week" : "Weekly guild damage trend"}
+          action={<DashboardRangeSelector value={bossRange} onChange={setBossRange} />}
+          values={bossDamageSeries}
+          xLabels={bossDamageDates}
+          label="Total boss damage"
+          value={formatOptionalBossDamage(bossDamageSeries.at(-1))}
+          showPoints
+          pointValueMode="auto"
         />
       </div>
     </>
@@ -3188,6 +3203,19 @@ function buildDailyDonationStats() {
             total: rows.reduce((sum, row) => sum + row.contribution7d, 0),
             count: rows.length,
           }
+        : null;
+    })
+    .filter(Boolean);
+}
+
+function buildDailyBossDamageStats() {
+  return (Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots : [])
+    .slice()
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .map((day) => {
+      const rows = (day.rows ?? []).filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number");
+      return rows.length > 0
+        ? { date: day.date, total: rows.reduce((sum, row) => sum + row.bossDamageToday, 0), count: rows.length }
         : null;
     })
     .filter(Boolean);
