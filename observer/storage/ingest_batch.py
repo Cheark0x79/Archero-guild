@@ -120,6 +120,9 @@ def _ensure_remote_table(cursor) -> None:
             member_count INTEGER,
             member_capacity INTEGER,
             total_power BIGINT,
+            expedition_points BIGINT,
+            expedition_name TEXT,
+            expedition_rank TEXT,
             donations_value BIGINT,
             guild_rank INTEGER,
             xp_current BIGINT,
@@ -130,6 +133,9 @@ def _ensure_remote_table(cursor) -> None:
         )
         """
     )
+    cursor.execute("ALTER TABLE guild_stat_snapshots ADD COLUMN IF NOT EXISTS expedition_points BIGINT")
+    cursor.execute("ALTER TABLE guild_stat_snapshots ADD COLUMN IF NOT EXISTS expedition_name TEXT")
+    cursor.execute("ALTER TABLE guild_stat_snapshots ADD COLUMN IF NOT EXISTS expedition_rank TEXT")
 
 
 def _persist_guild_stats(connection, capture_date: str, stats: dict[str, Any]) -> None:
@@ -138,9 +144,9 @@ def _persist_guild_stats(connection, capture_date: str, stats: dict[str, Any]) -
             """
             INSERT INTO guild_stat_snapshots (
                 capture_date, guild_name, guild_id, guild_level, member_count,
-                member_capacity, total_power, donations_value, guild_rank,
-                xp_current, xp_required, raw_payload
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                member_capacity, total_power, expedition_points, expedition_name,
+                expedition_rank, donations_value, guild_rank, xp_current, xp_required, raw_payload
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (capture_date) DO UPDATE SET
                 guild_name = EXCLUDED.guild_name,
                 guild_id = EXCLUDED.guild_id,
@@ -148,6 +154,9 @@ def _persist_guild_stats(connection, capture_date: str, stats: dict[str, Any]) -
                 member_count = EXCLUDED.member_count,
                 member_capacity = EXCLUDED.member_capacity,
                 total_power = EXCLUDED.total_power,
+                expedition_points = EXCLUDED.expedition_points,
+                expedition_name = EXCLUDED.expedition_name,
+                expedition_rank = EXCLUDED.expedition_rank,
                 donations_value = EXCLUDED.donations_value,
                 guild_rank = EXCLUDED.guild_rank,
                 xp_current = EXCLUDED.xp_current,
@@ -158,6 +167,7 @@ def _persist_guild_stats(connection, capture_date: str, stats: dict[str, Any]) -
             (
                 capture_date, stats.get("guildName"), stats.get("guildId"), stats.get("level"),
                 stats.get("memberCount"), stats.get("memberCapacity"), stats.get("totalPower"),
+                stats.get("expeditionPoints"), stats.get("expeditionName"), stats.get("expeditionRank"),
                 stats.get("donationsValue"), stats.get("rank"), stats.get("xpCurrent"),
                 stats.get("xpRequired"), _json(stats),
             ),
@@ -288,12 +298,16 @@ def _validate_guild_stats(stats: object) -> None:
     if not isinstance(stats, dict):
         raise BatchIngestionError("guildStats must be an object")
     for field in (
-        "level", "memberCount", "memberCapacity", "totalPower", "donationsValue",
+        "level", "memberCount", "memberCapacity", "totalPower", "expeditionPoints", "donationsValue",
         "rank", "xpCurrent", "xpRequired",
     ):
         value = stats.get(field)
         if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
             raise BatchIngestionError(f"guildStats.{field} must be a non-negative integer or null")
+    for field in ("guildName", "guildId", "expeditionName", "expeditionRank"):
+        value = stats.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 128):
+            raise BatchIngestionError(f"guildStats.{field} must be a non-empty string of at most 128 characters or null")
     if stats.get("memberCount") is not None and stats.get("memberCapacity") is not None:
         if stats["memberCount"] > stats["memberCapacity"]:
             raise BatchIngestionError("guildStats.memberCount cannot exceed memberCapacity")

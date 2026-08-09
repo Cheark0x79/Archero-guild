@@ -69,6 +69,11 @@ def merge_reviewed_scope(existing: dict[str, Any] | None, incoming: dict[str, An
     ] + deepcopy(incoming["sourceImages"])
     rows_key = "members" if kind == "guild-members" else "bossRankings"
     merged[rows_key] = deepcopy(incoming[rows_key])
+    if kind == "guild-members":
+        if "guildStats" in incoming:
+            merged["guildStats"] = deepcopy(incoming["guildStats"])
+        else:
+            merged.pop("guildStats", None)
     merged.setdefault("members", [])
     merged.setdefault("bossRankings", [])
     refresh_reviewed_batch(merged)
@@ -100,6 +105,8 @@ def remove_reviewed_scope(
         if isinstance(image, dict) and image.get("kind") != kind
     ]
     batch[rows_key] = []
+    if kind == "guild-members":
+        batch.pop("guildStats", None)
     if not batch["sourceImages"]:
         return clear_reviewed_data(batch_path, corrections_path, capture_date)
     refresh_reviewed_batch(batch)

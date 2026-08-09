@@ -115,6 +115,7 @@ class OcrReviewTests(unittest.TestCase):
     def test_merges_member_and_boss_scopes_into_one_batch(self) -> None:
         members = sample_batch()
         members["sourceImages"] = [{"kind": "guild-members", "sourceName": "members.png", "detectedRows": 1}]
+        members["guildStats"] = {"guildName": "Example", "memberCount": 41, "memberCapacity": 42}
         bosses = sample_batch()
         bosses["sourceImages"] = [{"kind": "guild-boss", "sourceName": "boss.png", "detectedRows": 1}]
         bosses["members"] = []
@@ -127,6 +128,7 @@ class OcrReviewTests(unittest.TestCase):
         self.assertEqual({image["kind"] for image in merged["sourceImages"]}, {"guild-members", "guild-boss"})
         self.assertEqual(len(merged["members"]), 1)
         self.assertEqual(len(merged["bossRankings"]), 1)
+        self.assertEqual(merged["guildStats"]["guildName"], "Example")
 
     def test_replacing_boss_scope_preserves_reviewed_members(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

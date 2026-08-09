@@ -52,6 +52,8 @@ class LocalOcrAppTests(unittest.TestCase):
         self.assertEqual(first["quality"]["coverage"], 1)
         self.assertEqual(len(first["members"]), 4)
         self.assertEqual(len(first["bossRankings"]), 4)
+        self.assertEqual(first["guildStats"]["guildName"], "Demo Guild")
+        self.assertEqual(first["guildStats"]["expeditionPoints"], 825)
         self.assertTrue(all(row["playerId"].startswith("demo-") for row in first["members"]))
 
     def test_simulation_publish_replays_and_exposes_sanitized_local_history(self) -> None:

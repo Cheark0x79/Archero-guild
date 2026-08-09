@@ -17,8 +17,8 @@ class GuildStatsTests(unittest.TestCase):
             Guild Level: 12
             Members: 38 / 40
             Total Power: 52.4M
-            Donations: 12.5K
-            Guild Rank: #73
+            Expedition: Firebound Soul II
+            Expedition points: 825
             XP: 1.2M / 2M
         """)
 
@@ -26,7 +26,29 @@ class GuildStatsTests(unittest.TestCase):
         self.assertEqual(result["memberCount"], 38)
         self.assertEqual(result["memberCapacity"], 40)
         self.assertEqual(result["totalPower"], 52_400_000)
+        self.assertEqual(result["expeditionPoints"], 825)
+        self.assertEqual(result["expeditionName"], "Firebound Soul")
+        self.assertEqual(result["expeditionRank"], "II")
         self.assertEqual(result["xpRequired"], 2_000_000)
+
+    def test_parses_unlabeled_archero_header_text(self) -> None:
+        result = parse_guild_stats_text("""
+            Name Example Guild
+            ID 123456
+            Lv.7 41/42 Recruit
+            89.76M 825 Firebound Soul |
+            5600/800000
+        """)
+
+        self.assertEqual(result["guildName"], "Example Guild")
+        self.assertEqual(result["guildId"], "123456")
+        self.assertEqual(result["level"], 7)
+        self.assertEqual((result["memberCount"], result["memberCapacity"]), (41, 42))
+        self.assertEqual(result["totalPower"], 89_760_000)
+        self.assertEqual(result["expeditionPoints"], 825)
+        self.assertEqual(result["expeditionName"], "Firebound Soul")
+        self.assertEqual(result["expeditionRank"], "I")
+        self.assertEqual((result["xpCurrent"], result["xpRequired"]), (5_600, 800_000))
 
     def test_rejects_member_count_above_capacity(self) -> None:
         with self.assertRaises(BatchIngestionError):

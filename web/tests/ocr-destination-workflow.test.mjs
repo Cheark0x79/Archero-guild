@@ -66,6 +66,14 @@ test("boss review never asks for a player ID", () => {
   assert.doesNotMatch(appSource.slice(bossColumnsStart, bossColumnsEnd), /Player ID|playerId/);
 });
 
+test("Guild header statistics are shown only in the Members review", () => {
+  assert.match(htmlSource, /id="guild-overview"/);
+  assert.match(appSource, /state\.table !== "members" \|\| !stats/);
+  assert.match(appSource, /Expedition points/);
+  assert.match(appSource, /Expedition tier/);
+  assert.match(appSource, /Guild XP/);
+});
+
 test("export uses a confirmation dialog and no typed phrase", () => {
   assert.match(htmlSource, /id="export-dialog"/);
   assert.match(htmlSource, /id="confirm-export"/);

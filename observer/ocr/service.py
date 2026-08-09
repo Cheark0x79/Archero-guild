@@ -11,6 +11,7 @@ from observer.import_capture import read_roster_entries
 from observer.pipeline.guild_boss import boss_podium_regions, detect_boss_ranking_rows, extract_boss_rankings_from_screenshots
 from observer.pipeline.guild_member_ocr import extract_member_metrics_from_screenshots
 from observer.pipeline.guild_members import detect_member_rows
+from observer.pipeline.guild_stats import extract_guild_stats_from_screenshot
 from observer.pipeline.image_geometry import image_geometry_for_path, normalize_analysis_image
 
 
@@ -42,6 +43,7 @@ def scan_image(
     detection_finished = time.perf_counter()
 
     if kind == "guild-members":
+        guild_stats = extract_guild_stats_from_screenshot(image_path)
         extracted = extract_member_metrics_from_screenshots([image_path], roster)
         data_rows = [
             {
@@ -139,6 +141,7 @@ def scan_image(
             ],
         },
         "rows": data_rows,
+        "guildStats": guild_stats if kind == "guild-members" else None,
         "quality": {
             "status": "pass" if expected > 0 and coverage == 1 and completeness == 1 else "review",
             "expectedRows": expected,

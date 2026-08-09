@@ -609,6 +609,14 @@ def build_demo_batch(capture_date: str, agent_version: str) -> dict[str, Any]:
             }
             for rank, name, damage_text, damage in bosses
         ],
+        "guildStats": {
+            "guildName": "Demo Guild", "guildId": "demo-123", "level": 7,
+            "memberCount": 4, "memberCapacity": 42, "totalPower": 7_060_000,
+            "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "I",
+            "xpCurrent": 5_600, "xpRequired": 800_000,
+            "donationsValue": None, "rank": None, "rawText": "synthetic demo header",
+            "quality": {"status": "pass", "missingFields": []},
+        },
         "quality": {},
     }
     refresh_reviewed_batch(batch)

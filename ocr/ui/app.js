@@ -402,6 +402,8 @@ function clearBatchView() {
   $("review-members").disabled = true;
   $("review-boss").disabled = true;
   $("missing-members").hidden = true;
+  $("guild-overview").hidden = true;
+  $("guild-overview-values").replaceChildren();
   $("missing-members-list").replaceChildren();
   if (!state.images.length) state.referenceImages = [];
   renderReferenceOptions();
@@ -446,6 +448,7 @@ function renderBatch() {
   $("review-scope-label").textContent = state.table === "bosses" ? "Guild boss" : "Guild members";
   $("review-members").disabled = state.busy || !(batch.members || []).length;
   $("review-boss").disabled = state.busy || !(batch.bossRankings || []).length;
+  renderGuildOverview();
   state.referenceImages = batch.simulation ? [] : (batch.sourceImages || []).map((image) => ({
     kind: image.kind,
     name: image.sourceName,
@@ -458,6 +461,40 @@ function renderBatch() {
   renderExtractionSelection();
   updateTargetControls();
   renderWorkflowProgress();
+}
+
+function renderGuildOverview() {
+  const panel = $("guild-overview");
+  const stats = state.batch?.guildStats;
+  if (state.table !== "members" || !stats) {
+    panel.hidden = true;
+    $("guild-overview-values").replaceChildren();
+    return;
+  }
+  panel.hidden = false;
+  const quality = stats.quality || {};
+  $("guild-overview-quality").textContent = quality.status === "pass" ? "Complete" : "Review";
+  $("guild-overview-quality").className = `badge ${quality.status === "pass" ? "pass" : "review"}`;
+  const number = (value) => Number.isSafeInteger(value) ? value.toLocaleString("en-US") : "—";
+  const values = [
+    ["Guild", stats.guildName || "—"],
+    ["Guild ID", stats.guildId || "—"],
+    ["Level", number(stats.level)],
+    ["Members", Number.isSafeInteger(stats.memberCount) && Number.isSafeInteger(stats.memberCapacity) ? `${stats.memberCount} / ${stats.memberCapacity}` : "—"],
+    ["Total power", number(stats.totalPower)],
+    ["Expedition points", number(stats.expeditionPoints)],
+    ["Expedition tier", [stats.expeditionName, stats.expeditionRank].filter(Boolean).join(" ") || "—"],
+    ["Guild XP", Number.isSafeInteger(stats.xpCurrent) && Number.isSafeInteger(stats.xpRequired) ? `${number(stats.xpCurrent)} / ${number(stats.xpRequired)}` : "—"],
+  ];
+  $("guild-overview-values").replaceChildren(...values.map(([label, value]) => {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = value;
+    item.append(term, detail);
+    return item;
+  }));
 }
 
 async function loadMissingMembers() {
