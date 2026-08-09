@@ -499,6 +499,46 @@ h3 {
   font-size: 24px;
 }
 
+.admin-activity-view,
+.activity-member-list {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-member-list {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.activity-member-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.activity-member-list a:hover {
+  background: var(--surface-hover);
+}
+
+.activity-member-list a > span {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-member-list a > span:last-child {
+  justify-items: end;
+}
+
+.activity-member-list small {
+  color: var(--muted);
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;

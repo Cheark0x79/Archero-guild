@@ -2541,6 +2541,8 @@ function Rankings() {
 
 function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }) {
   const currentMembers = currentMembersList();
+  const [activityQuery, setActivityQuery] = useState("");
+  const [activityFilter, setActivityFilter] = useState("all");
   const automaticWarnings = currentMembers
     .flatMap((member) =>
       warningHistoryEvents(dailyHistory(member), rules, member).map((warning) => ({
@@ -2551,8 +2553,40 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
       })),
     )
     .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
+  const activityRows = currentMembers
+    .map((member) => ({ member, evaluation: evaluateMember(member, rules) }))
+    .filter(({ member, evaluation }) => {
+      const matchesQuery = normalizedMemberName(`${member.name} ${member.playerId ?? ""}`).includes(normalizedMemberName(activityQuery));
+      const matchesFilter = activityFilter === "all"
+        || (activityFilter === "watch" && evaluation.severity !== "positive")
+        || (activityFilter === "inactive" && (member.lastActivityDays ?? 0) > 0)
+        || (activityFilter === "online" && member.lastActivityDays === 0);
+      return matchesQuery && matchesFilter;
+    })
+    .sort((left, right) => (right.member.lastActivityDays ?? -1) - (left.member.lastActivityDays ?? -1));
   return (
-    <div className="dashboard-grid">
+    <div className="admin-activity-view">
+      <div className="admin-summary-grid">
+        <article className="metric-card"><span>Current members</span><strong>{currentMembers.length}</strong><small>Tracked roster</small></article>
+        <article className="metric-card"><span>Online today</span><strong>{currentMembers.filter((member) => member.lastActivityDays === 0).length}</strong><small>Latest observation</small></article>
+        <article className="metric-card"><span>Needs review</span><strong>{currentMembers.filter((member) => evaluateMember(member, rules).severity !== "positive").length}</strong><small>Automatic rules</small></article>
+      </div>
+      <section className="panel">
+        <PanelHeading title="Member activity" subtitle="Find inactive members and open their profile for context." />
+        <div className="toolbar compact-toolbar">
+          <label className="search-field"><span>Search</span><input type="search" value={activityQuery} onChange={(event) => setActivityQuery(event.target.value)} placeholder="Name or player ID" /></label>
+          <label className="select-field"><span>Status</span><select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value)}><option value="all">All</option><option value="online">Online today</option><option value="inactive">Not seen today</option><option value="watch">Needs review</option></select></label>
+        </div>
+        <div className="activity-member-list">
+          {activityRows.map(({ member, evaluation }) => (
+            <a href={`/members/${encodeURIComponent(memberKey(member))}`} key={memberKey(member)}>
+              <span><strong>{member.name}</strong><small>{roleLabel(member.role)} · last observed {member.lastSeenAt ?? "unknown"}</small></span>
+              <span><strong>{activityLabel(member.lastActivityDays, member.activityText)}</strong><StatusPill label={evaluation.status} severity={evaluation.severity} /></span>
+            </a>
+          ))}
+        </div>
+      </section>
+      <div className="dashboard-grid">
       <section className="panel">
         <PanelHeading title="Roster history" subtitle="Human review to confirm by an officer" />
         <EventList events={changes} />
@@ -2570,6 +2604,7 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
           onUpdate={updateWarningAction}
         />
       ) : null}
+      </div>
     </div>
   );
 }
