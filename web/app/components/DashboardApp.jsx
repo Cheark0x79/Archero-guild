@@ -830,6 +830,14 @@ function AdminView({ dataVersion }) {
 
   return (
     <div className="admin-management">
+      <section className="panel admin-workspace-intro">
+        <PanelHeading title="Officer workspace" subtitle="Member follow-up, guild rules, and operational tools are separated by purpose." />
+        <div className="admin-workspace-links">
+          <a href="/admin/activity"><strong>Member activity</strong><span>Review inactivity and automatic alerts</span></a>
+          <a href="/admin/rules"><strong>Guild rules</strong><span>Adjust evaluation thresholds</span></a>
+          <a href="/records"><strong>Guild records</strong><span>Open the legacy ranking view</span></a>
+        </div>
+      </section>
       <div className="admin-summary-grid">
         <article className="metric-card">
           <span>Announced absences</span>
@@ -857,7 +865,7 @@ function AdminView({ dataVersion }) {
 
       <div className="admin-member-layout">
         <section className="panel admin-member-directory">
-          <PanelHeading title="Members" subtitle="Select a person to edit private administration data." />
+          <PanelHeading title="Member administration" subtitle="Select a person to edit private officer-only data." />
           <label className="admin-member-search">
             <span>Search by name or player ID</span>
             <input
