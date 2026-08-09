@@ -209,7 +209,7 @@ const routeMeta = {
   test: ["Test", "Synthetic fixtures and isolated environment controls."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
-  activity: ["Activity", "Roster events, absences, and warnings."],
+  activity: ["Member activity", "Review roster events, absences, and warnings."],
   settings: ["Rules", "Local thresholds before backend wiring."],
 };
 
