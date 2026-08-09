@@ -1568,10 +1568,11 @@ function BossView() {
   const [comparePlayerIds, setComparePlayerIds] = useState(() => bossData.players.slice(0, 2).map((player) => player.playerId));
   const selectedBossKey = bossFilter === "all" ? null : bossFilter;
   const selectedBoss = selectedBossKey ? bossForKey(selectedBossKey) : null;
-  const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates;
+  const selectedDates = (selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates).slice(-7);
+  const selectedDateSet = new Set(selectedDates);
   const selectedSeries = bossData.players
     .filter((player) => selectedPlayers.has(player.playerId))
-    .map((player) => ({ ...player, points: selectedBossKey ? player.points.filter((point) => point.bossKey === selectedBossKey) : player.points }))
+    .map((player) => ({ ...player, points: player.points.filter((point) => selectedDateSet.has(point.date) && (!selectedBossKey || point.bossKey === selectedBossKey)) }))
     .filter((player) => player.points.length > 0);
   const selectedLabel = selectedBoss ? selectedBoss.name : "All bosses";
   const byBossRecord = bossData.bestByBossRecords.find(({ boss }) => boss.key === byBossKey)
@@ -1620,6 +1621,9 @@ function BossView() {
         </button>
         <button className={bossSection === "byBoss" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "byBoss"} onClick={() => setBossSection("byBoss")}>
           By boss
+        </button>
+        <button className={bossSection === "history" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "history"} onClick={() => setBossSection("history")}>
+          History ranking
         </button>
       </div>
 
@@ -1684,8 +1688,6 @@ function BossView() {
               ))}
             </div>
           </section>
-
-          <BossDailyRankingPanel days={selectedBossKey ? bossData.dailyRankings.filter((day) => day.boss.key === selectedBossKey) : bossData.dailyRankings} />
         </>
       ) : null}
 
@@ -1727,6 +1729,9 @@ function BossView() {
           </section>
           <BossRankingPanel title={`${byBossRecord.boss.name} scoreboard`} subtitle="Guild personal bests for the selected boss." rows={byBossRecord.rows} valueKey="damage" showDate limit={bossData.players.length} wide />
         </div>
+      ) : null}
+      {bossSection === "history" ? (
+        <BossDailyRankingPanel days={bossData.dailyRankings} />
       ) : null}
     </div>
   );
