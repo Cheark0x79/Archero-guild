@@ -144,6 +144,29 @@ class LocalOcrAppTests(unittest.TestCase):
         self.assertEqual(learned, 1)
         self.assertEqual(ignored, 0)
 
+    def test_detected_name_edit_learns_the_previous_ocr_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            aliases_path = Path(directory) / "identity-aliases.json"
+            batch = {"members": [{
+                "playerId": "123456789",
+                "name": "Canonical",
+                "rawName": "Canonical",
+            }]}
+
+            learned = learn_identity_alias_from_edit(
+                aliases_path,
+                batch=batch,
+                category="members",
+                row_index=0,
+                field="rawName",
+                observed_name="TesseractTypo",
+            )
+            stored = load_identity_aliases(aliases_path)
+
+        self.assertEqual(learned, 1)
+        self.assertEqual(stored[0]["observedName"], "TesseractTypo")
+        self.assertEqual(stored[0]["canonicalName"], "Canonical")
+
     def test_stale_or_missing_ids_are_offered_for_relinking(self) -> None:
         roster = [
             RosterEntry("current-a", "Anxiety"),

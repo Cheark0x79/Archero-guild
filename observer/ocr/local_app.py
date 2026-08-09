@@ -175,9 +175,10 @@ def learn_identity_alias_from_edit(
     category: str,
     row_index: int,
     field: str,
+    observed_name: str | None = None,
 ) -> int:
     """Remember stable identity edits, while daily metrics are always scanned again."""
-    if category != "members" or field not in {"name", "playerId"}:
+    if category != "members" or field not in {"rawName", "name", "playerId"}:
         return 0
     rows = batch.get("members")
     if not isinstance(rows, list) or row_index < 0 or row_index >= len(rows):
@@ -187,7 +188,7 @@ def learn_identity_alias_from_edit(
         return 0
     return save_identity_alias(
         path,
-        observed_name=row.get("rawName"),
+        observed_name=observed_name if observed_name is not None else row.get("rawName"),
         player_id=str(row["playerId"]),
         canonical_name=str(row["name"]),
     )
@@ -1336,12 +1337,19 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 field=str(payload.get("field") or ""),
                 value=payload.get("value"),
             )
+            latest_correction = corrections.get("entries", [])[-1] if corrections.get("entries") else {}
+            observed_name = (
+                latest_correction.get("before")
+                if latest_correction.get("field") == "rawName"
+                else None
+            )
             learned_aliases = learn_identity_alias_from_edit(
                 self._identity_aliases_path(),
                 batch=batch,
                 category=str(payload.get("category") or ""),
                 row_index=row_index,
                 field=str(payload.get("field") or ""),
+                observed_name=str(observed_name) if observed_name is not None else None,
             )
         finally:
             JOB_LOCK.release()
