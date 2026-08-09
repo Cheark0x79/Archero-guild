@@ -1430,8 +1430,6 @@ function Dashboard({ rules }) {
 }
 
 function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, setSort, rules }) {
-  const summary = buildSummary(members, rules);
-  const [showFormerMembers, setShowFormerMembers] = useState(false);
   const [exporting, setExporting] = useState(false);
   const historyDates = memberHistoryDates(members);
   const latestHistoryDate = historyDates.at(-1) ?? currentImportDate();
@@ -1442,14 +1440,8 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
   const selectedMembersDateIndex = Math.max(0, historyDates.indexOf(selectedMembersDate));
   const previousMembersDate = selectedMembersDateIndex > 0 ? historyDates[selectedMembersDateIndex - 1] : null;
   const datedMembers = members.map((member) => memberSnapshotForDate(member, selectedMembersDate));
-  const membersForView = datedMembers.filter((member) => showFormerMembers || statusFilter === "former" || !isFormerStatus(member.status));
+  const membersForView = datedMembers.filter((member) => statusFilter === "former" || !isFormerStatus(member.status));
   const visibleMembers = sortMembers(filterMembers(membersForView, rules, query, statusFilter), rules, sort);
-  const cards = [
-    ["Current guild", `${summary.currentMembers} members`, `${summary.formerMembers} former record(s)`],
-    ["Known IDs", summary.knownIds, `${summary.unresolvedIds} name(s) without ID`],
-    ["Discord", `${summary.discordLinked} members`, `${summary.discordMissing} missing / to verify`],
-    ["Verified stats", `${summary.verifiedMetrics} members`, `${summary.reviewRequired} need review`],
-  ];
 
   function toggleSort(key) {
     setSort((current) =>
@@ -1487,7 +1479,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
       <div className="toolbar">
         <label className="search-field">
           <span>Search</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="Name, Discord, or ID" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="Name or player ID" />
         </label>
         <label className="select-field">
           <span>Filter</span>
@@ -1496,13 +1488,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
               ["all", "All"],
               ["active", "Active"],
               ["watch", "Watch"],
-              ["absent", "Game absence"],
-              ["officer", "Officers"],
-              ["discord-linked", "On Discord"],
-              ["discord-missing", "Missing Discord"],
-              ["review", "Needs review"],
-              ["missing", "Missing stats"],
-              ["unresolved", "Missing ID"],
+              ["absent", "Absent"],
               ["former", "Former members"],
             ].map(([value, label]) => (
               <option key={value} value={value}>
@@ -1520,30 +1506,19 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
           onPrevious={selectPreviousMembersDate}
           onNext={selectNextMembersDate}
         />
-        <label className="toggle-field">
-          <input type="checkbox" checked={showFormerMembers} onChange={(event) => setShowFormerMembers(event.target.checked)} />
-          <span>Show former members</span>
-        </label>
         <button className="secondary-button" type="button" onClick={exportMembers} disabled={exporting || visibleMembers.length === 0}>
           {exporting ? "Exporting..." : "Export image"}
         </button>
       </div>
-      <div className="identity-metrics">
-        {cards.map(([label, value, detail]) => (
-          <article className="metric-card compact" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{detail}</small>
-          </article>
-        ))}
-      </div>
       <section className="panel table-panel">
+        <div className="table-context">
+          <strong>{visibleMembers.length} member{visibleMembers.length === 1 ? "" : "s"}</strong>
+          <span>Values in parentheses show the change from the previous captured day.</span>
+        </div>
         <div className="table-wrap">
           <table className="members-table">
             <colgroup>
-              <col className="col-player-id" />
               <col className="col-name" />
-              <col className="col-discord" />
               <col className="col-role" />
               <col className="col-absence" />
               <col className="col-donation" />
@@ -1555,9 +1530,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
             <thead>
               <tr>
                 {[
-                  ["playerId", "Player ID"],
                   ["name", "Name"],
-                  ["discord", "Discord"],
                   ["role", "Role"],
                   ["activity", "Last connection"],
                   ["donation", "Donation"],
@@ -2205,18 +2178,10 @@ function MemberRow({ member, rules }) {
       onClick={() => navigateToMember(member, router)}
     >
       <td>
-        <div className="player-cell">
-          <strong>{member.playerId ?? "Missing ID"}</strong>
-        </div>
-      </td>
-      <td>
         <a className="member-link" href={`/members/${encodeURIComponent(memberKey(member))}`} onClick={(event) => event.stopPropagation()}>
           <strong>{member.name}</strong>
           <NewMemberBadge member={member} rules={rules} />
         </a>
-      </td>
-      <td>
-        <DiscordDot member={member} />
       </td>
       <td>{roleLabel(member.role)}</td>
       <td>{activityLabel(member.lastActivityDays, member.activityText)}</td>

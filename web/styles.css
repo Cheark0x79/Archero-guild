@@ -420,6 +420,21 @@ h3 {
   background: var(--surface);
 }
 
+.table-context {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-context strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;
