@@ -435,6 +435,32 @@ h3 {
   font-size: 14px;
 }
 
+.member-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.member-facts span {
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.member-facts strong {
+  color: var(--ink);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;

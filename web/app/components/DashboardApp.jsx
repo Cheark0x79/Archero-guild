@@ -2234,7 +2234,6 @@ function MemberDetail({
         flags: [],
       }
     : rawEvaluation;
-  const currentHistory = history.find((row) => row.date === currentImportDate());
   const weeklyHistory = filterHistoryByRange(history, "1w");
   const needs = latestAutomaticWarnings.length > 0
     ? actionableWarnings.map((warning) => ({ label: warning.label, severity: warning.severity, detail: warning.detail }))
@@ -2304,7 +2303,7 @@ function MemberDetail({
         <a className="secondary-button" href="/members">
           Back to members
         </a>
-        <StatusPill label={evaluation.status} severity={evaluation.severity} />
+        {sessionRole === "admin" ? <StatusPill label={evaluation.status} severity={evaluation.severity} /> : null}
       </div>
       <div className="member-detail-grid">
         <section className="panel detail-hero">
@@ -2317,18 +2316,16 @@ function MemberDetail({
                 {member.playerId ?? "Missing ID"} · {roleLabel(member.role)}
               </p>
             </div>
-            <DiscordDot member={member} />
           </div>
           <div className="detail-metrics">
             <DetailMetric label="Power" value={formatOptionalCompact(member.power)} delta={member.powerDelta} formatter={formatCompact} />
             <DetailMetric label="Donation" value={formatOptionalNumber(member.contribution7d)} delta={member.contributionDelta} formatter={formatNumber} />
             <DetailMetric label="Boss tries" value={formatOptionalNumber(member.bossAttacks)} delta={member.bossAttacksDelta} formatter={formatNumber} />
-            <DetailMetric
-              label="Boss damage"
-              value={formatOptionalBossDamage(currentHistory?.bossDamage ?? member.bossDamageToday, currentHistory?.bossDamageText ?? member.bossDamageText)}
-            />
-            <DetailMetric label="Activity" value={activityLabel(member.lastActivityDays, member.activityText)} />
-            <DetailMetric label="Joined guild" value={member.joinedAt ?? "Not recorded"} />
+          </div>
+          <div className="member-facts" aria-label="Member information">
+            <span><strong>Role</strong>{roleLabel(member.role)}</span>
+            <span><strong>Last observed</strong>{member.lastSeenAt ?? "Not recorded"}</span>
+            <span><strong>Joined guild</strong>{member.joinedAt ?? "Not recorded"}</span>
           </div>
           {!member.playerId && sessionRole === "admin" ? (
             <form className="identity-assignment" onSubmit={assignPlayerId}>
@@ -2393,21 +2390,23 @@ function MemberDetail({
             </div>
           ) : null}
         </section>
-        <section className="panel">
-          <PanelHeading title="Needs" subtitle="Automatic checks against the current rules" />
-          <div className="need-list">
-            {needs.length === 0 ? (
-              <p className="muted">No current rule issue.</p>
-            ) : (
-              needs.map((need) => (
-                <div className="need-row" key={need.label}>
-                  <StatusPill label={need.label} severity={need.severity} />
-                  <span>{need.detail}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+        {sessionRole === "admin" ? (
+          <section className="panel">
+            <PanelHeading title="Needs" subtitle="Automatic checks against the current rules" />
+            <div className="need-list">
+              {needs.length === 0 ? (
+                <p className="muted">No current rule issue.</p>
+              ) : (
+                needs.map((need) => (
+                  <div className="need-row" key={need.label}>
+                    <StatusPill label={need.label} severity={need.severity} />
+                    <span>{need.detail}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        ) : null}
         <section className="panel">
           <PanelHeading title="Progression graph" subtitle="Power from first captured snapshot to latest" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.progression)} dataKey="power" formatter={formatPowerDetail} emptyText="No power history captured yet." />
