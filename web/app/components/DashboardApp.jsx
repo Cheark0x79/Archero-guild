@@ -1318,15 +1318,18 @@ function dataActionHeaders(extra = {}) {
 }
 
 function Dashboard({ rules }) {
-  const [donationRange, setDonationRange] = useState("1m");
+  const [donationRange, setDonationRange] = useState("1w");
+  const [powerRange, setPowerRange] = useState("1w");
   const summary = buildSummary(members, rules);
-  const powerStats = buildDailyPowerStats();
+  const powerStats = dashboardRangeRows(buildDailyPowerStats(), powerRange);
   const medianPowerSeries = powerStats.map((day) => day.median);
-  const powerDates = powerStats.map((day) => formatShortDate(day.date));
+  const powerDates = dashboardRangeLabels(powerStats, powerRange);
   const weeklyDonationStats = buildWeeklyDonationStats();
-  const donationStats = filterDatedChartRows(weeklyDonationStats, donationRange);
+  const donationStats = donationRange === "1w"
+    ? dashboardRangeRows(buildDailyDonationStats(), donationRange)
+    : dashboardRangeRows(weeklyDonationStats, donationRange);
   const donationSeries = donationStats.map((day) => day.total);
-  const donationDates = donationStats.map((day) => formatWeekLabel(day.date));
+  const donationDates = dashboardRangeLabels(donationStats, donationRange);
   const latestMemberDay = Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots.at(-1) : null;
   const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
   const bossRows = currentBossDay?.rows?.filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number") ?? [];
@@ -1386,7 +1389,7 @@ function Dashboard({ rules }) {
       <div className="dashboard-grid">
         <ChartPanel
           title="Weekly donation peak"
-          subtitle="Best captured donation total per week"
+          subtitle={donationRange === "1w" ? "Current week · Monday to Sunday" : "Weekly peak captured at the end of each week"}
           action={<DashboardRangeSelector value={donationRange} onChange={setDonationRange} />}
           values={donationSeries}
           xLabels={donationDates}
@@ -1397,8 +1400,8 @@ function Dashboard({ rules }) {
         />
         <ChartPanel
           title="Median power"
-          subtitle="Middle active member power, not max or growth"
-          badge="Median"
+          subtitle={powerRange === "1w" ? "Current week · Monday to Sunday" : "Weekly guild median, sampled for readability"}
+          action={<DashboardRangeSelector value={powerRange} onChange={setPowerRange} />}
           values={medianPowerSeries}
           xLabels={powerDates}
           label="Median power"
@@ -2934,7 +2937,7 @@ function DashboardRangeSelector({ value, onChange }) {
     <div className="range-selector" aria-label="Dashboard chart range">
       {[
         ["1w", "1W"],
-        ["1m", "30D"],
+        ["2m", "2M"],
         ["all", "All"],
       ].map(([range, label]) => (
         <button className={value === range ? "active" : ""} type="button" onClick={() => onChange(range)} key={range}>
@@ -3256,6 +3259,36 @@ function filterDatedChartRows(rows, range) {
       ? startOfWeek(new Date(latest)).getTime()
       : latest - 29 * 86_400_000;
   return rows.filter((row) => Date.parse(`${row.date}T00:00:00`) >= cutoff);
+}
+
+function dashboardRangeRows(rows, range) {
+  const ordered = [...rows].sort((left, right) => left.date.localeCompare(right.date));
+  if (ordered.length === 0) return [];
+  if (range === "1w") return filterDatedChartRows(ordered, "1w").slice(-7);
+  if (range === "2m") {
+    const latest = Date.parse(`${ordered.at(-1).date}T00:00:00Z`);
+    const recent = ordered.filter((row) => Date.parse(`${row.date}T00:00:00Z`) >= latest - 55 * 86_400_000);
+    return latestRowPerWeek(recent).slice(-8);
+  }
+  return evenlySampleRows(latestRowPerWeek(ordered), 12);
+}
+
+function latestRowPerWeek(rows) {
+  const weeks = new Map();
+  for (const row of rows) weeks.set(weekStartIso(row.date), row);
+  return [...weeks.values()];
+}
+
+function evenlySampleRows(rows, maximumPoints) {
+  if (rows.length <= maximumPoints) return rows;
+  return Array.from({ length: maximumPoints }, (_, index) => rows[Math.round(index * (rows.length - 1) / (maximumPoints - 1))]);
+}
+
+function dashboardRangeLabels(rows, range) {
+  if (range === "1w") {
+    return rows.map((row) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${row.date}T12:00:00Z`).getUTCDay()]);
+  }
+  return rows.map((row) => formatWeekLabel(row.date));
 }
 
 function buildBossDashboardData() {
