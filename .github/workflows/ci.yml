@@ -26,6 +26,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Tesseract runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-chi-sim \
+            tesseract-ocr-chi-tra \
+            tesseract-ocr-eng \
+            tesseract-ocr-rus
+          tesseract --version
+          tesseract --list-langs
       - run: pip install pillow pytesseract "psycopg[binary]"
       - run: python -m unittest discover -s tests
         env:

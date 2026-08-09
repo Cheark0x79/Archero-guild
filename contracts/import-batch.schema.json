@@ -81,6 +81,23 @@
         }
       }
     },
+    "guildStats": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "guildName": { "type": ["string", "null"], "maxLength": 128 },
+        "guildId": { "type": ["string", "null"], "maxLength": 128 },
+        "level": { "type": ["integer", "null"], "minimum": 0 },
+        "memberCount": { "type": ["integer", "null"], "minimum": 0 },
+        "memberCapacity": { "type": ["integer", "null"], "minimum": 0 },
+        "totalPower": { "type": ["integer", "null"], "minimum": 0 },
+        "expeditionPoints": { "type": ["integer", "null"], "minimum": 0 },
+        "expeditionName": { "type": ["string", "null"], "maxLength": 128 },
+        "expeditionRank": { "type": ["string", "null"], "maxLength": 128 },
+        "xpCurrent": { "type": ["integer", "null"], "minimum": 0 },
+        "xpRequired": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
     "quality": {
       "type": "object",
       "additionalProperties": true,

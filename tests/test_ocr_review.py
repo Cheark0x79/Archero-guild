@@ -8,10 +8,12 @@ from observer.ocr.review import (
     add_batch_row,
     apply_batch_edit,
     clear_reviewed_data,
+    confirmed_departure_ids,
     delete_batch_row,
     link_member_identity,
     merge_reviewed_scope,
     prepare_export_batch,
+    record_departure_decision,
     refresh_reviewed_batch,
     remove_reviewed_scope,
 )
@@ -50,6 +52,21 @@ def sample_batch() -> dict:
 
 
 class OcrReviewTests(unittest.TestCase):
+    def test_member_capture_overlap_does_not_create_false_missing_rows(self) -> None:
+        batch = sample_batch()
+        batch["members"][0].update({"playerId": "1", "name": "Anxiety"})
+        batch["sourceImages"] = [
+            {"kind": "guild-members", "sourceName": "members-1.png", "detectedRows": 5},
+            {"kind": "guild-members", "sourceName": "members-2.png", "detectedRows": 5},
+        ]
+
+        refresh_reviewed_batch(batch)
+
+        self.assertEqual(batch["quality"]["memberExpectedRows"], 1)
+        self.assertEqual(batch["quality"]["memberCoverage"], 1)
+        self.assertEqual(batch["quality"]["coverage"], 1)
+        self.assertEqual(batch["quality"]["status"], "pass")
+
     def test_boss_capture_overlap_does_not_require_a_fake_participant(self) -> None:
         batch = sample_batch()
         batch["members"] = []
@@ -98,6 +115,7 @@ class OcrReviewTests(unittest.TestCase):
     def test_merges_member_and_boss_scopes_into_one_batch(self) -> None:
         members = sample_batch()
         members["sourceImages"] = [{"kind": "guild-members", "sourceName": "members.png", "detectedRows": 1}]
+        members["guildStats"] = {"guildName": "Example", "memberCount": 41, "memberCapacity": 42}
         bosses = sample_batch()
         bosses["sourceImages"] = [{"kind": "guild-boss", "sourceName": "boss.png", "detectedRows": 1}]
         bosses["members"] = []
@@ -110,6 +128,7 @@ class OcrReviewTests(unittest.TestCase):
         self.assertEqual({image["kind"] for image in merged["sourceImages"]}, {"guild-members", "guild-boss"})
         self.assertEqual(len(merged["members"]), 1)
         self.assertEqual(len(merged["bossRankings"]), 1)
+        self.assertEqual(merged["guildStats"]["guildName"], "Example")
 
     def test_replacing_boss_scope_preserves_reviewed_members(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -391,6 +410,30 @@ class OcrReviewTests(unittest.TestCase):
                     player_id="119982797",
                     canonical_name="Anxiety",
                 )
+
+    def test_departure_decision_is_logged_and_can_be_undone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            corrections_path = Path(directory) / "corrections" / "2026-07-29.json"
+
+            confirmed = record_departure_decision(
+                corrections_path,
+                capture_date="2026-07-29",
+                player_id="119982797",
+                name="FormerPlayer",
+                confirmed=True,
+            )
+            undone = record_departure_decision(
+                corrections_path,
+                capture_date="2026-07-29",
+                player_id="119982797",
+                name="FormerPlayer",
+                confirmed=False,
+            )
+
+        self.assertEqual(confirmed_departure_ids(confirmed), {"119982797"})
+        self.assertEqual(confirmed_departure_ids(undone), set())
+        self.assertEqual([entry["confirmed"] for entry in undone["entries"]], [True, False])
+        self.assertTrue(all(entry["action"] == "departure" for entry in undone["entries"]))
 
 
 if __name__ == "__main__":

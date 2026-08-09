@@ -96,10 +96,10 @@ function validateGuildStats(stats, errors) {
     errors.push("guildStats must be an object");
     return;
   }
-  for (const field of ["level", "memberCount", "memberCapacity", "totalPower", "donationsValue", "rank", "xpCurrent", "xpRequired"]) {
+  for (const field of ["level", "memberCount", "memberCapacity", "totalPower", "expeditionPoints", "donationsValue", "rank", "xpCurrent", "xpRequired"]) {
     if (!nullableNonNegativeInteger(stats[field])) errors.push(`guildStats.${field} is invalid`);
   }
-  for (const field of ["guildName", "guildId"]) {
+  for (const field of ["guildName", "guildId", "expeditionName", "expeditionRank"]) {
     if (stats[field] != null && !isBoundedString(stats[field], 1, 128)) errors.push(`guildStats.${field} is invalid`);
   }
   if (Number.isSafeInteger(stats.memberCount) && Number.isSafeInteger(stats.memberCapacity) && stats.memberCount > stats.memberCapacity) {
