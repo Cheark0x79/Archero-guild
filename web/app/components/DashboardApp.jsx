@@ -2408,11 +2408,11 @@ function MemberDetail({
           </section>
         ) : null}
         <section className="panel">
-          <PanelHeading title="Progression graph" subtitle="Power from first captured snapshot to latest" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
+          <PanelHeading title="Power progression" subtitle="Up to seven evenly spaced captured values" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.progression)} dataKey="power" formatter={formatPowerDetail} emptyText="No power history captured yet." />
         </section>
         <section className="panel">
-          <PanelHeading title="Boss damage graph" subtitle="Guild boss damage from first captured snapshot to latest" action={<RangeSelector chart="mi" ranges={ranges} setRange={setRange} />} />
+          <PanelHeading title="Recent boss results" subtitle="Up to seven results; personal bests stay grouped by boss below" action={<RangeSelector chart="mi" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.mi)} dataKey="bossDamage" formatter={formatBossDamageText} emptyText="No boss damage captured for this member yet." />
         </section>
         <MemberBossPersonalBests member={member} />
@@ -3697,11 +3697,12 @@ function donationDelta(current, previous, currentDate, previousDate) {
 }
 
 function filterHistoryByRange(rows, range) {
-  if (range === "all" || rows.length === 0) return rows;
+  if (rows.length === 0) return [];
+  if (range === "all") return evenlySampleRows(rows, 7);
   const days = range === "1m" ? 30 : 7;
   const latest = Math.max(...rows.map((row) => Date.parse(`${row.date}T00:00:00`)));
   const cutoff = range === "1w" ? startOfWeek(new Date(latest)).getTime() : latest - (days - 1) * 86_400_000;
-  return rows.filter((row) => Date.parse(`${row.date}T00:00:00`) >= cutoff);
+  return evenlySampleRows(rows.filter((row) => Date.parse(`${row.date}T00:00:00`) >= cutoff), 7);
 }
 
 function startOfWeek(date) {
