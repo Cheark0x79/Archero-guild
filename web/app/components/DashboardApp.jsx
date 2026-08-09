@@ -1564,6 +1564,8 @@ function BossView() {
   const [selectedPlayers, setSelectedPlayers] = useState(() => bossPlayerSelection(bossData.players, 10));
   const [bossFilter, setBossFilter] = useState(() => bossData.activeBoss.key);
   const [bossSection, setBossSection] = useState("weekly");
+  const [byBossKey, setByBossKey] = useState(() => bossData.activeBoss.key);
+  const [comparePlayerIds, setComparePlayerIds] = useState(() => bossData.players.slice(0, 2).map((player) => player.playerId));
   const selectedBossKey = bossFilter === "all" ? null : bossFilter;
   const selectedBoss = selectedBossKey ? bossForKey(selectedBossKey) : null;
   const selectedDates = selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates;
@@ -1572,6 +1574,8 @@ function BossView() {
     .map((player) => ({ ...player, points: selectedBossKey ? player.points.filter((point) => point.bossKey === selectedBossKey) : player.points }))
     .filter((player) => player.points.length > 0);
   const selectedLabel = selectedBoss ? selectedBoss.name : "All bosses";
+  const byBossRecord = bossData.bestByBossRecords.find(({ boss }) => boss.key === byBossKey)
+    ?? { boss: bossForKey(byBossKey), rows: [] };
 
   function togglePlayer(playerId) {
     setSelectedPlayers((current) => {
@@ -1689,7 +1693,41 @@ function BossView() {
         <BossAllTimePanel rows={bossData.bestDayRecords} />
       ) : null}
 
-      {bossSection === "byBoss" ? <BossByBossRecordsPanel records={bossData.bestByBossRecords} limit={bossData.players.length} /> : null}
+      {bossSection === "byBoss" ? (
+        <div className="boss-by-boss-view">
+          <section className="panel boss-context-panel">
+            <PanelHeading title="Choose a boss" subtitle="One readable guild scoreboard at a time." />
+            <BossRotationStrip activeKey={byBossKey} todayKey={bossData.activeBoss.key} onSelectBoss={setByBossKey} />
+          </section>
+          <section className="panel">
+            <PanelHeading title="Compare members" subtitle={`Personal bests against ${byBossRecord.boss.name}.`} />
+            <div className="boss-member-comparison-controls">
+              {[0, 1].map((slot) => (
+                <label key={slot}>
+                  <span>Member {slot + 1}</span>
+                  <select value={comparePlayerIds[slot] ?? ""} onChange={(event) => setComparePlayerIds((current) => current.map((value, index) => index === slot ? event.target.value : value))}>
+                    {bossData.players.map((player) => <option value={player.playerId} key={player.playerId}>{player.name}</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
+            <div className="boss-member-comparison">
+              {comparePlayerIds.map((playerId) => {
+                const player = bossData.players.find((candidate) => candidate.playerId === playerId);
+                const record = byBossRecord.rows.find((row) => row.playerId === playerId);
+                return (
+                  <article key={playerId}>
+                    <span>{player?.name ?? "Member"}</span>
+                    <strong>{record ? formatBossDamageText(record.damage) : "No record"}</strong>
+                    <small>{record?.date ?? byBossRecord.boss.name}</small>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+          <BossRankingPanel title={`${byBossRecord.boss.name} scoreboard`} subtitle="Guild personal bests for the selected boss." rows={byBossRecord.rows} valueKey="damage" showDate limit={bossData.players.length} wide />
+        </div>
+      ) : null}
     </div>
   );
 }
