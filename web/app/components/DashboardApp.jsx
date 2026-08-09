@@ -278,7 +278,10 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
   const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
   const selectedMember = selectedMemberCandidate;
-  const [title, subtitle] = routeMeta[activeRoute];
+  const [routeTitle, subtitle] = routeMeta[activeRoute];
+  const title = activeRoute === "dashboard" && captures.guildName
+    ? captures.guildName
+    : routeTitle;
 
   async function updateWarningAction(event, nextAction) {
     const response = await fetch("/api/warning-actions", {
@@ -1331,51 +1334,31 @@ function Dashboard({ rules }) {
   const latestCaptureDate = latestMemberDay?.date ?? currentBossDay?.date ?? null;
   const guildCaptureRows = latestMemberDay?.rows?.length ?? 0;
   const bossCaptureRows = currentBossDay?.rows?.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)) ?? [];
-  const kickedCandidates = buildKickedCandidates(latestCaptureDate);
   const cards = [
-    ["Members", summary.members, `${summary.freeSlots} free slot(s), ${summary.formerMembers} former`],
-    ["Known IDs", summary.knownIds, `${summary.unresolvedIds} missing`],
-    ["Discord", summary.discordLinked, `${summary.discordMissing} missing / to verify`],
-    ["Verified data", `${summary.verifiedMetrics}/${summary.currentMembers}`, `${summary.reviewRequired} need review`],
-    ["Donation", formatNumber(summary.totalContribution), deltaDetail(summary.totalContributionDelta)],
-    ["Boss tries", formatNumber(summary.bossAttacks), deltaDetail(summary.bossAttacksDelta)],
-    ["Watch list", summary.watchCount, "Automatic rules"],
+    ["Guild members", summary.members, "Current roster and guild capacity"],
+    ["Free slots", summary.freeSlots, "Places available in the guild"],
+    ["Weekly donations", formatNumber(summary.totalContribution), deltaDetail(summary.totalContributionDelta)],
+    ["Boss participation", `${bossRows.length}/${summary.currentMembers}`, "Members recorded for the current boss"],
   ];
-  const watched = currentMembersList()
-    .map((member) => ({ member, evaluation: evaluateMember(member, rules) }))
-    .filter(({ member, evaluation }) => member.metricsVerified && ["warning", "danger"].includes(evaluation.severity))
-    .slice(0, 5);
 
   return (
     <>
-      <div className="dashboard-command-grid">
-        <section className="panel command-panel">
-          <PanelHeading title="Today snapshot" subtitle="Latest captured data available in the app." />
+      <div className="dashboard-command-grid guild-overview-grid">
+        <section className="panel command-panel guild-snapshot-panel">
+          <PanelHeading title="Guild snapshot" subtitle="Latest validated overview of the current guild." />
           <div className="snapshot-grid">
             <div>
               <span>Date</span>
               <strong>{latestCaptureDate ?? "No capture"}</strong>
             </div>
             <div>
-              <span>Guild captures</span>
+              <span>Members captured</span>
               <strong>{guildCaptureRows}/{summary.currentMembers}</strong>
             </div>
             <div>
               <span>Boss captures</span>
               <strong>{bossRows.length}/{bossCaptureRows.length}</strong>
             </div>
-          </div>
-        </section>
-        <section className="panel command-panel">
-          <PanelHeading
-            title="Roster status"
-            subtitle="Current member status and possible departures."
-          />
-          <div className="review-list">
-            <a href="/members">
-              <span>Kicked candidates</span>
-              <strong>{kickedCandidates.length}</strong>
-            </a>
           </div>
         </section>
       </div>
@@ -1386,9 +1369,9 @@ function Dashboard({ rules }) {
           <small>{topBoss?.name ?? "No boss damage"}</small>
         </a>
         <a className="action-tile" href="/members">
-          <span>Alerts</span>
-          <strong>{summary.watchCount}</strong>
-          <small>Members to watch</small>
+          <span>Roster</span>
+          <strong>{summary.members}</strong>
+          <small>Browse current members</small>
         </a>
       </div>
       <div className="metrics-grid">
@@ -1423,29 +1406,6 @@ function Dashboard({ rules }) {
           positive
           showPoints
         />
-        <section className="panel">
-          <PanelHeading title="Members to watch" subtitle="Game absence, low donation, or missed boss" />
-          <div className="watch-list">
-            {watched.length === 0 ? (
-              <p className="muted">No verified alerts yet.</p>
-            ) : (
-              watched.map(({ member, evaluation }) => (
-                <article className="watch-item" key={memberKey(member)}>
-                  <header>
-                    <strong>{member.name}</strong>
-                    <StatusPill label={evaluation.status} severity={evaluation.severity} />
-                  </header>
-                  <span className="muted">{evaluation.flags.join(" · ")}</span>
-                  <span className="muted">{deltaLine(member)}</span>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-        <section className="panel">
-          <PanelHeading title="Recent changes" subtitle="Captures, joins, departures, and renames" />
-          <EventList events={changes} />
-        </section>
       </div>
     </>
   );

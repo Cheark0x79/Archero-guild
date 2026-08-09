@@ -430,7 +430,7 @@ h3 {
 
 .action-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -440,6 +440,14 @@ h3 {
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.guild-overview-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.guild-snapshot-panel .snapshot-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .command-panel {
