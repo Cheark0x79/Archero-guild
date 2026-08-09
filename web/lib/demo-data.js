@@ -45,6 +45,7 @@ export function createDemoData(options = {}) {
 
   return {
     captures: {
+      guildName: "Demo Vanguard",
       lastCapturedAt: `${anchorDate}T20:30:00+02:00`,
       lastImportedAt: `${anchorDate}T20:35:00+02:00`,
       baselineJoinedAt: dates[0],

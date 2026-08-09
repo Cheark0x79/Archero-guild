@@ -292,6 +292,7 @@ const REQUIRED_RULE_KEYS = [
 function emptyPayload() {
   return {
     captures: {
+      guildName: null,
       lastCapturedAt: null,
       lastImportedAt: null,
       baselineJoinedAt: null,

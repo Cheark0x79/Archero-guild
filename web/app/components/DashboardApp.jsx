@@ -306,6 +306,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
       <AppSidebar
         activeRoute={activeRoute}
         sessionRole={sessionRole}
+        guildName={captures.guildName || "Archero Guild"}
         checkpointValue={formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}
       />
       <main className="main" data-version={dataVersion}>

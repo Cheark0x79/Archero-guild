@@ -8,6 +8,7 @@ import { navigationItemsForRole, sessionRoleLabel } from "../../lib/navigation.j
 export default function AppSidebar({
   activeRoute,
   sessionRole,
+  guildName = "Archero Guild",
   checkpointLabel = "Checkpoint",
   checkpointValue = "API v1",
 }) {
@@ -18,14 +19,21 @@ export default function AppSidebar({
       && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV),
   });
   const roleLabel = sessionRoleLabel(sessionRole);
+  const guildMonogram = guildName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "A2";
 
   return (
     <aside className="sidebar" aria-label="Primary navigation">
       <div className="brand">
-        <div className="brand-mark" aria-hidden="true">A2</div>
+        <div className="brand-mark" aria-hidden="true">{guildMonogram}</div>
         <div>
-          <strong>Archero Guild</strong>
-          <span>Guild tracking</span>
+          <strong>{guildName}</strong>
+          <span>Guild command center</span>
         </div>
       </div>
       <nav className="nav-list" aria-label="Pages">
