@@ -2619,32 +2619,40 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
 
 function RulesView({ rules, setRules }) {
   const ruleRows = [
-    ["maxInactiveDays", "Absent", "days without activity", "High alert", "number"],
-    ["minContribution7d", "Low donation", "minimum 7-day donation", "Medium alert", "number"],
-    ["minPowerGrowth14dPercent", "Low progression", "minimum 14-day power growth %", "Medium alert", "number"],
-    ["minBossTries", "Missed boss", "minimum boss tries per event day", "High alert", "number"],
-    ["newMemberGraceDays", "New member", "grace period in days", "Rule pause", "number"],
-    ["memberCapacity", "Capacity", "guild member slots", "Free slot tracking", "number"],
+    ["maxInactiveDays", "Absent", "Days without activity", "High alert"],
+    ["minContribution7d", "Low donation", "Minimum 7-day donation", "Medium alert"],
+    ["minPowerGrowth14dPercent", "Low progression", "Minimum 14-day power growth %", "Medium alert"],
+    ["minBossTries", "Missed boss", "Minimum boss tries per event day", "High alert"],
+    ["newMemberGraceDays", "New member", "Grace period in days", "Rule pause"],
+    ["memberCapacity", "Capacity", "Guild member slots", "Free slot tracking"],
   ];
   return (
-    <div className="settings-grid">
-      {ruleRows.map(([key, name, label, effect]) => (
-        <section className="panel" key={key}>
-          <label className="rule-row">
-            <strong>{name}</strong>
-            <span>{label}</span>
-            <input
-              className="rule-input"
-              type="number"
-              min="0"
-              step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
-              value={rules[key]}
-              onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
-            />
-            <span className="muted">{effect}</span>
-          </label>
-        </section>
-      ))}
+    <div className="rules-page">
+      <section className="panel rules-intro">
+        <span className="eyebrow">Evaluation policy</span>
+        <h2>Guild rules</h2>
+        <p>These thresholds explain automatic officer alerts. They do not remove members or perform actions by themselves.</p>
+      </section>
+      <div className="settings-grid">
+        {ruleRows.map(([key, name, label, effect], index) => (
+          <section className="panel rule-card" key={key}>
+            <span className="rule-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+            <label className="rule-row">
+              <strong>{name}</strong>
+              <span>{label}</span>
+              <input
+                className="rule-input"
+                type="number"
+                min="0"
+                step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
+                value={rules[key]}
+                onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
+              />
+              <span className="muted">{effect}</span>
+            </label>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

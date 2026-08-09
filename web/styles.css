@@ -566,6 +566,40 @@ h3 {
   font-size: 12px;
 }
 
+.rules-page {
+  display: grid;
+  gap: 16px;
+}
+
+.rules-intro {
+  background: linear-gradient(135deg, var(--surface), var(--accent-soft));
+}
+
+.rules-intro h2 {
+  margin: 5px 0;
+  font-size: 26px;
+}
+
+.rules-intro p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.rule-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.rule-index {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  color: var(--surface-3);
+  font-size: 34px;
+  font-weight: 900;
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;
