@@ -30,11 +30,16 @@ def extract_guild_stats_from_screenshot(image_path: Path) -> dict[str, Any]:
         tier_prepared = ImageEnhance.Contrast(ImageOps.grayscale(tier_crop)).enhance(2.2)
         tier_prepared = tier_prepared.resize((tier_prepared.width * 2, tier_prepared.height * 2))
         tier_text = pytesseract.image_to_string(tier_prepared, lang="eng", config="--psm 7").strip()
+        xp_text = _ocr_xp_bar(source, pytesseract)
     result = parse_guild_stats_text(text)
     tier_name, tier_rank = _expedition_value(_remove_badge_ocr(tier_text))
     if tier_name and tier_rank:
         result["expeditionName"] = tier_name
         result["expeditionRank"] = tier_rank
+    xp = _match(xp_text, r"(\d+)\s*/\s*(\d+)", groups=2)
+    if xp:
+        result["xpCurrent"] = int(xp[0])
+        result["xpRequired"] = int(xp[1])
     required = (
         "guildName", "guildId", "level", "memberCount", "memberCapacity",
         "totalPower", "expeditionPoints", "expeditionName", "expeditionRank",
@@ -110,6 +115,33 @@ def _remove_badge_ocr(text: str) -> str:
     """Discard the small expedition badge glyph that Tesseract reads as a short word."""
     cleaned = re.sub(r"^[^A-Za-z]+", "", text.strip())
     return re.sub(r"^[A-Za-z]{1,2}\s+(?=[A-Z])", "", cleaned)
+
+
+def _ocr_xp_bar(source: Any, pytesseract: Any) -> str:
+    """Read white XP text independently from either the green or dark progress bar."""
+    from PIL import Image
+
+    width, height = source.size
+    crop = source.convert("RGB").crop((
+        round(width * .486), round(height * .161),
+        round(width * .894), round(height * .195),
+    ))
+    mask = Image.new("L", crop.size, 255)
+    pixels = crop.load()
+    output = mask.load()
+    for y in range(crop.height):
+        for x in range(crop.width):
+            red, green, blue = pixels[x, y]
+            # White glyphs have high brightness and low saturation. Selecting
+            # them removes both the bright green fill and the dark empty bar.
+            if min(red, green, blue) > 130 and max(red, green, blue) - min(red, green, blue) < 80:
+                output[x, y] = 0
+    mask = mask.resize((mask.width * 3, mask.height * 3))
+    return pytesseract.image_to_string(
+        mask,
+        lang="eng",
+        config="--psm 7 -c tessedit_char_whitelist=0123456789/",
+    ).strip()
 
 
 def _match(text: str, pattern: str, *, groups: int = 1) -> tuple[str, ...] | None:

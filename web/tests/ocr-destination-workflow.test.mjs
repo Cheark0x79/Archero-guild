@@ -72,6 +72,17 @@ test("Guild header statistics are shown only in the Members review", () => {
   assert.match(appSource, /Expedition points/);
   assert.match(appSource, /Expedition tier/);
   assert.match(appSource, /Guild XP/);
+  assert.doesNotMatch(htmlSource, /LEARNING LOG|Correction history/);
+});
+
+test("Guild power uses the compact decimal format shown by the game", () => {
+  const start = appSource.indexOf("function formatGuildPower(");
+  const end = appSource.indexOf("\nasync function loadMissingMembers", start);
+  assert.ok(start >= 0 && end > start);
+  const formatGuildPower = Function(`${appSource.slice(start, end)}; return formatGuildPower;`)();
+
+  assert.equal(formatGuildPower(82_030_000), "82,03M");
+  assert.equal(formatGuildPower(7_000_000), "7M");
 });
 
 test("export uses a confirmation dialog and no typed phrase", () => {

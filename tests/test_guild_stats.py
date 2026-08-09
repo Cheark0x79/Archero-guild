@@ -67,6 +67,24 @@ class GuildStatsTests(unittest.TestCase):
         self.assertEqual(result["quality"]["status"], "review")
         self.assertIn("level", result["quality"]["missingFields"])
 
+    def test_screenshot_extraction_reads_xp_from_the_progress_bar_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guild.png"
+            Image.new("RGB", (1080, 1920), "green").save(path)
+            with patch(
+                "pytesseract.image_to_string",
+                side_effect=[
+                    "Name Demo Guild\nID 123456\nLv.6 40/40\n82.03M 825 Firebound Soul I",
+                    "Firebound Soul I",
+                    "372600/400000",
+                ],
+            ):
+                result = extract_guild_stats_from_screenshot(path)
+
+        self.assertEqual(result["xpCurrent"], 372_600)
+        self.assertEqual(result["xpRequired"], 400_000)
+        self.assertEqual(result["quality"]["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

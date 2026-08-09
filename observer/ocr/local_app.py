@@ -168,6 +168,31 @@ def save_identity_alias(path: Path, *, observed_name: str | None, player_id: str
     return changed
 
 
+def learn_identity_alias_from_edit(
+    path: Path,
+    *,
+    batch: dict[str, Any],
+    category: str,
+    row_index: int,
+    field: str,
+) -> int:
+    """Remember stable identity edits, while daily metrics are always scanned again."""
+    if category != "members" or field not in {"name", "playerId"}:
+        return 0
+    rows = batch.get("members")
+    if not isinstance(rows, list) or row_index < 0 or row_index >= len(rows):
+        return 0
+    row = rows[row_index]
+    if not isinstance(row, dict) or not row.get("playerId") or not row.get("name"):
+        return 0
+    return save_identity_alias(
+        path,
+        observed_name=row.get("rawName"),
+        player_id=str(row["playerId"]),
+        canonical_name=str(row["name"]),
+    )
+
+
 def _identity_name_key(value: str) -> str:
     return re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", value.casefold())
 
@@ -611,7 +636,7 @@ def build_demo_batch(capture_date: str, agent_version: str) -> dict[str, Any]:
         ],
         "guildStats": {
             "guildName": "Demo Guild", "guildId": "demo-123", "level": 7,
-            "memberCount": 4, "memberCapacity": 42, "totalPower": 7_060_000,
+            "memberCount": 4, "memberCapacity": 42, "totalPower": 82_030_000,
             "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "I",
             "xpCurrent": 5_600, "xpRequired": 800_000,
             "donationsValue": None, "rank": None, "rawText": "synthetic demo header",
@@ -1311,9 +1336,21 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 field=str(payload.get("field") or ""),
                 value=payload.get("value"),
             )
+            learned_aliases = learn_identity_alias_from_edit(
+                self._identity_aliases_path(),
+                batch=batch,
+                category=str(payload.get("category") or ""),
+                row_index=row_index,
+                field=str(payload.get("field") or ""),
+            )
         finally:
             JOB_LOCK.release()
-        self._send_json({"ok": True, "batch": batch, "corrections": corrections})
+        self._send_json({
+            "ok": True,
+            "batch": batch,
+            "corrections": corrections,
+            "learnedAliases": learned_aliases,
+        })
 
     def _delete_reviewed_row(self, payload: dict[str, Any]) -> None:
         capture_date = str(payload.get("date") or "")

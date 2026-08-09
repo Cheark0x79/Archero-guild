@@ -16,6 +16,7 @@ from observer.ocr.local_app import (
     configured_target_public,
     day_payload,
     delete_remote_target,
+    learn_identity_alias_from_edit,
     load_roster_cache,
     load_identity_aliases,
     load_targets,
@@ -123,6 +124,25 @@ class LocalOcrAppTests(unittest.TestCase):
         self.assertEqual(learned, 2)
         self.assertEqual(roster[0].aliases, ("Members? Anxlety", "Anxlety"))
         self.assertTrue(all(item["playerId"] == "119982797" for item in stored))
+
+    def test_name_edit_is_learned_but_daily_metric_edit_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            aliases_path = Path(directory) / "identity-aliases.json"
+            batch = {"members": [{
+                "playerId": "123456789",
+                "name": "Canonical",
+                "rawName": "TesseractTypo",
+            }]}
+
+            learned = learn_identity_alias_from_edit(
+                aliases_path, batch=batch, category="members", row_index=0, field="name",
+            )
+            ignored = learn_identity_alias_from_edit(
+                aliases_path, batch=batch, category="members", row_index=0, field="powerText",
+            )
+
+        self.assertEqual(learned, 1)
+        self.assertEqual(ignored, 0)
 
     def test_stale_or_missing_ids_are_offered_for_relinking(self) -> None:
         roster = [

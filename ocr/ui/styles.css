@@ -144,13 +144,6 @@ th { position: sticky; z-index: 1; top: 0; background: var(--surface-soft); colo
 .needs-review td.missing-value .cell-editor:focus { outline-color: var(--danger); }
 .cell-editor { min-width: 112px; min-height: 34px; padding: 6px 8px; font-size: .8rem; }
 .cell-editor.wide { min-width: 220px; }
-.corrections-panel { margin-top: 18px; }
-.correction-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
-.correction-item { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
-.correction-item small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-.correction-item div { display: flex; align-items: center; gap: 8px; }
-.correction-item del { color: var(--danger); }
-.correction-item ins { color: var(--positive); font-weight: 750; text-decoration: none; }
 .destination-panel, .publish-card { display: grid; align-content: start; gap: 14px; }
 .destination-panel .panel-heading { margin-bottom: 0; }
 .roster-panel { display: grid; gap: 10px; margin-bottom: 18px; }

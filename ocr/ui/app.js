@@ -407,7 +407,6 @@ function clearBatchView() {
   $("missing-members-list").replaceChildren();
   if (!state.images.length) state.referenceImages = [];
   renderReferenceOptions();
-  renderCorrections();
   updateSimulationMode();
   updateTargetControls();
   renderWorkflowProgress();
@@ -456,7 +455,6 @@ function renderBatch() {
   }));
   renderReferenceOptions();
   renderTable();
-  renderCorrections();
   updateSimulationMode();
   renderExtractionSelection();
   updateTargetControls();
@@ -481,7 +479,7 @@ function renderGuildOverview() {
     ["Guild ID", stats.guildId || "—"],
     ["Level", number(stats.level)],
     ["Members", Number.isSafeInteger(stats.memberCount) && Number.isSafeInteger(stats.memberCapacity) ? `${stats.memberCount} / ${stats.memberCapacity}` : "—"],
-    ["Total power", number(stats.totalPower)],
+    ["Total power", formatGuildPower(stats.totalPower)],
     ["Expedition points", number(stats.expeditionPoints)],
     ["Expedition tier", [stats.expeditionName, stats.expeditionRank].filter(Boolean).join(" ") || "—"],
     ["Guild XP", Number.isSafeInteger(stats.xpCurrent) && Number.isSafeInteger(stats.xpRequired) ? `${number(stats.xpCurrent)} / ${number(stats.xpRequired)}` : "—"],
@@ -495,6 +493,16 @@ function renderGuildOverview() {
     item.append(term, detail);
     return item;
   }));
+}
+
+function formatGuildPower(value) {
+  if (!Number.isSafeInteger(value)) return "—";
+  for (const [suffix, divisor] of [["T", 1e12], ["B", 1e9], ["M", 1e6], ["K", 1e3]]) {
+    if (value >= divisor) {
+      return `${(value / divisor).toLocaleString("fr-FR", { maximumFractionDigits: 2 })}${suffix}`;
+    }
+  }
+  return value.toLocaleString("fr-FR");
 }
 
 async function loadMissingMembers() {
@@ -612,7 +620,6 @@ async function setDepartureDecision(member, confirmed) {
       }),
     });
     state.corrections = payload.corrections;
-    renderCorrections();
     await loadMissingMembers();
     message(confirmed
       ? `${member.name} confirmed as departed. This roster difference no longer requires a row and does not block export.`
@@ -831,69 +838,16 @@ async function saveEdit(category, rowIndex, field, value) {
     state.batch = payload.batch;
     state.corrections = payload.corrections;
     renderBatch();
-    message(`Correction saved: ${field}.`);
+    const learning = payload.learnedAliases
+      ? " The OCR spelling was remembered locally for future scans."
+      : "";
+    message(`Correction saved in the reviewed batch and included in the next export.${learning}`);
   } catch (error) {
     message(error.message, true);
     if (!state.batch?.simulation) await loadBatch().catch(() => {});
   } finally {
     setBusy(false);
   }
-}
-
-function renderCorrections() {
-  const entries = [...(state.corrections?.entries || [])].reverse();
-  $("correction-count").textContent = `${entries.length} correction${entries.length === 1 ? "" : "s"}`;
-  if (!entries.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "No manual correction for this extraction.";
-    $("correction-list").replaceChildren(empty);
-    return;
-  }
-  $("correction-list").replaceChildren(...entries.map((entry) => {
-    const item = document.createElement("article");
-    item.className = "correction-item";
-    const title = document.createElement("strong");
-    title.textContent = entry.action === "delete"
-      ? `${entry.category} · rejected row`
-      : entry.action === "add"
-        ? `${entry.category} · added row`
-        : entry.action === "link"
-          ? `${entry.category} · linked identity`
-        : entry.action === "departure"
-          ? `${entry.category} · roster departure ${entry.confirmed ? "confirmed" : "undone"}`
-      : `${entry.category} · ${entry.field}`;
-    const source = document.createElement("small");
-    source.textContent = entry.source || `row ${entry.rowIndex + 1}`;
-    const change = document.createElement("div");
-    const before = document.createElement("del");
-    before.textContent = entry.action === "delete"
-      ? deletedRowLabel(entry.before)
-      : entry.action === "add" ? "Not present"
-        : entry.action === "link" ? identityLabel(entry.before)
-          : displayValue(entry.before);
-    const arrow = document.createElement("span");
-    arrow.textContent = "→";
-    const after = document.createElement("ins");
-    after.textContent = entry.action === "delete"
-      ? "Not published"
-      : entry.action === "add" ? deletedRowLabel(entry.after)
-        : entry.action === "link" ? identityLabel(entry.after)
-          : displayValue(entry.after);
-    change.append(before, arrow, after);
-    item.append(title, source, change);
-    return item;
-  }));
-}
-
-function identityLabel(identity) {
-  if (!identity || typeof identity !== "object") return "Unlinked";
-  return [identity.name, identity.playerId].filter(Boolean).join(" · ") || "Unlinked";
-}
-
-function deletedRowLabel(row) {
-  if (!row || typeof row !== "object") return "OCR row";
-  return row.rawName || row.name || row.source || "OCR row";
 }
 
 async function clearExtractedData() {
