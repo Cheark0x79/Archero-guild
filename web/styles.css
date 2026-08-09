@@ -600,6 +600,48 @@ h3 {
   font-weight: 900;
 }
 
+.page-skeleton,
+.skeleton-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.skeleton-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.skeleton-charts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.skeleton-row,
+.skeleton-card {
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(100deg, var(--surface-2) 25%, var(--surface) 42%, var(--surface-2) 60%);
+  background-size: 240% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-hero {
+  min-height: 150px;
+}
+
+.skeleton-charts .skeleton-card {
+  min-height: 310px;
+}
+
+.table-empty-state {
+  padding: 36px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@keyframes skeleton-shimmer {
+  to { background-position: -240% 0; }
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;
@@ -3317,7 +3359,9 @@ th.numeric {
 
   .admin-workspace-links,
   .boss-member-comparison-controls,
-  .boss-member-comparison {
+  .boss-member-comparison,
+  .skeleton-grid,
+  .skeleton-charts {
     grid-template-columns: 1fr;
   }
 

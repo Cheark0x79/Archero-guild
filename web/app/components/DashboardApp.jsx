@@ -228,7 +228,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   useEffect(() => {
     let cancelled = false;
     setDataLoading(true);
-    loadDashboardData({ force: true })
+    loadDashboardData()
       .then((payload) => {
         if (cancelled || !payload?.data) return;
         applyDashboardData(payload.data);
@@ -330,13 +330,12 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         {dataWarning ? (
           <div className="data-warning" role="status">
             <strong>Data source warning</strong>
-            <span>{dataWarning}</span>
+            <span>Current guild data is temporarily unavailable or incomplete.</span>
+            <button className="secondary-button compact-action" type="button" onClick={() => window.location.reload()}>Retry</button>
           </div>
         ) : null}
         {dataLoading ? (
-          <section className="panel">
-            <PanelHeading title="Loading current data" subtitle="Fetching the latest validated guild snapshot." />
-          </section>
+          <DashboardLoadingSkeleton />
         ) : null}
 
         {!dataLoading && activeRoute === "dashboard" && <Dashboard rules={rules} />}
@@ -1559,6 +1558,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
               {visibleMembers.map((member) => (
                 <MemberRow member={member} rules={rules} key={memberKey(member)} />
               ))}
+              {visibleMembers.length === 0 ? <tr><td colSpan="8" className="table-empty-state">No members match this view.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -2985,6 +2985,17 @@ function PanelHeading({ title, subtitle, action }) {
         <p>{subtitle}</p>
       </div>
       {action}
+    </div>
+  );
+}
+
+function DashboardLoadingSkeleton() {
+  return (
+    <div className="page-skeleton" role="status" aria-label="Loading guild data">
+      <span className="sr-only">Loading guild data…</span>
+      <div className="skeleton-row skeleton-hero" />
+      <div className="skeleton-grid">{Array.from({ length: 4 }, (_, index) => <div className="skeleton-card" key={index} />)}</div>
+      <div className="skeleton-grid skeleton-charts">{Array.from({ length: 2 }, (_, index) => <div className="skeleton-card" key={index} />)}</div>
     </div>
   );
 }
