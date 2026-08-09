@@ -23,6 +23,7 @@ def build_import_batch(
     members: list[dict[str, Any]] = []
     bosses: list[dict[str, Any]] = []
     warnings: list[str] = []
+    guild_stats: dict[str, Any] | None = None
     expected = useful = complete = 0
 
     for kind, path, result in scans:
@@ -43,6 +44,9 @@ def build_import_batch(
         )
         if kind == "guild-members":
             members.extend(_member_contract(row) for row in result["rows"])
+            candidate = result.get("guildStats")
+            if isinstance(candidate, dict) and _guild_stats_score(candidate) > _guild_stats_score(guild_stats):
+                guild_stats = candidate
         else:
             bosses.extend(_boss_contract(row) for row in result["rows"])
 
@@ -73,9 +77,24 @@ def build_import_batch(
             "warnings": list(dict.fromkeys(warnings)),
         },
     }
+    if guild_stats is not None:
+        batch["guildStats"] = guild_stats
     digest = hashlib.sha256(_canonical_json({**batch, "idempotencyKey": ""})).hexdigest()
     batch["idempotencyKey"] = f"{capture_date}:{digest}"
     return batch
+
+
+def _guild_stats_score(stats: dict[str, Any] | None) -> int:
+    if not stats:
+        return 0
+    return sum(
+        stats.get(field) is not None
+        for field in (
+            "guildName", "guildId", "level", "memberCount", "memberCapacity",
+            "totalPower", "expeditionPoints", "expeditionName", "expeditionRank",
+            "xpCurrent", "xpRequired",
+        )
+    )
 
 
 def _member_contract(row: dict[str, Any]) -> dict[str, Any]:
