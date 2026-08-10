@@ -420,6 +420,228 @@ h3 {
   background: var(--surface);
 }
 
+.table-context {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-context strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.member-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.member-facts span {
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.member-facts strong {
+  color: var(--ink);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.boss-by-boss-view,
+.boss-member-comparison-controls,
+.boss-member-comparison {
+  display: grid;
+  gap: 16px;
+}
+
+.boss-member-comparison-controls,
+.boss-member-comparison {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.boss-member-comparison-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.boss-member-comparison article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 16px;
+}
+
+.boss-member-comparison article span,
+.boss-member-comparison article small {
+  color: var(--muted);
+}
+
+.boss-member-comparison article strong {
+  font-size: 24px;
+}
+
+.admin-activity-view,
+.activity-member-list {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-member-list {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.activity-member-list a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.activity-member-list a:hover {
+  background: var(--surface-hover);
+}
+
+.activity-member-list a > span {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-member-list a > span:last-child {
+  justify-items: end;
+}
+
+.activity-member-list small {
+  color: var(--muted);
+}
+
+.admin-workspace-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-workspace-links a {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.admin-workspace-links a:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.admin-workspace-links span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rules-page {
+  display: grid;
+  gap: 16px;
+}
+
+.rules-intro {
+  background: linear-gradient(135deg, var(--surface), var(--accent-soft));
+}
+
+.rules-intro h2 {
+  margin: 5px 0;
+  font-size: 26px;
+}
+
+.rules-intro p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.rule-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.rule-index {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  color: var(--surface-3);
+  font-size: 34px;
+  font-weight: 900;
+}
+
+.page-skeleton,
+.skeleton-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.skeleton-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.skeleton-charts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.skeleton-row,
+.skeleton-card {
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(100deg, var(--surface-2) 25%, var(--surface) 42%, var(--surface-2) 60%);
+  background-size: 240% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-hero {
+  min-height: 150px;
+}
+
+.skeleton-charts .skeleton-card {
+  min-height: 310px;
+}
+
+.table-empty-state {
+  padding: 36px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@keyframes skeleton-shimmer {
+  to { background-position: -240% 0; }
+}
+
 .metric-card {
   min-height: 104px;
   padding: 16px;
@@ -430,7 +652,7 @@ h3 {
 
 .action-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -440,6 +662,14 @@ h3 {
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.guild-overview-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.guild-snapshot-panel .snapshot-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .command-panel {
@@ -570,8 +800,12 @@ h3 {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.dashboard-grid > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -2653,6 +2887,14 @@ th.numeric {
   .identity-metrics,
   .action-strip,
   .boss-ranking-panel-wide .boss-ranking-list {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-workspace-links,
+  .boss-member-comparison-controls,
+  .boss-member-comparison,
+  .skeleton-grid,
+  .skeleton-charts {
     grid-template-columns: 1fr;
   }
 

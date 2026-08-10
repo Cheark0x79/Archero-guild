@@ -4,14 +4,13 @@ export const publicNavItems = [
   ["dashboard", "Dashboard", "/dashboard"],
   ["members", "Members", "/members"],
   ["boss", "Boss", "/boss"],
-  ["rankings", "Records", "/records"],
-  ["activity", "Activity", "/activity"],
-  ["api-docs", "API Docs", "/api-docs"],
 ];
 
 const adminNavItems = [
-  ["admin", "Admin", "/admin"],
+  ["admin", "Overview", "/admin"],
+  ["activity", "Member activity", "/admin/activity"],
   ["settings", "Rules", "/admin/rules"],
+  ["api-docs", "API reference", "/api-docs"],
 ];
 
 export function navigationItemsForRole(role, { testToolsEnabled = false } = {}) {
