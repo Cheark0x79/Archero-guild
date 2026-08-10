@@ -1,2 +1,1 @@
-"""Archero observer pipeline."""
-
+"""Archero Guild OCR pipeline."""

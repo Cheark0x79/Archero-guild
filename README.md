@@ -1,6 +1,6 @@
-# Archero Observer
+# Archero Guild
 
-Archero Observer collects reviewed Archero guild data, stores it in PostgreSQL,
+Archero Guild collects reviewed Archero guild data, stores it in PostgreSQL,
 and exposes a dashboard plus a read-only API for integrations such as Discord
 bots. Screenshots are uploaded to the trusted OCR workstation; the public
 server never receives raw images or runs Tesseract.

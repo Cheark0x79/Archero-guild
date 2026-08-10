@@ -300,7 +300,7 @@ export default function ApiDocsClient({ publicOrigin }) {
         </section>
 
         <footer className={styles.footer}>
-          <span>Archero Observer API · v1</span>
+          <span>Archero Guild API · v1</span>
           <div><a href="/dashboard">Dashboard</a><a href="/openapi.yaml">OpenAPI YAML</a><a href="/api/v1/health">Status</a></div>
         </footer>
       </main>

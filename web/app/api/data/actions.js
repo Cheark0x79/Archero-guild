@@ -43,7 +43,7 @@ export async function runObserverModule(moduleName, args = []) {
       resolve({
         ok: false,
         status: 500,
-        error: stderr.trim() || stdout.trim() || `observer command exited with code ${code}`,
+        error: stderr.trim() || stdout.trim() || `OCR command exited with code ${code}`,
         stdout,
         stderr,
       });

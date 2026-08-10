@@ -32,7 +32,7 @@ ENV NODE_ENV=production \
     ARCHERO_PYTHON=/opt/archero-venv/bin/python \
     PYTHONPATH=/app
 
-LABEL org.opencontainers.image.title="Archero Guild Observer" \
+LABEL org.opencontainers.image.title="Archero Guild" \
       org.opencontainers.image.version=$APP_VERSION
 
 RUN apt-get update \

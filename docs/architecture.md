@@ -1,6 +1,6 @@
 # Architecture
 
-Archero Observer is split into two independently operated products connected by
+Archero Guild is split into two independently operated products connected by
 one versioned JSON contract.
 
 ## Product boundaries

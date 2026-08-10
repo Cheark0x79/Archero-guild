@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Archero Observer. Keep contributions focused,
+Thank you for helping improve Archero Guild. Keep contributions focused,
 reviewable, and free of private guild data.
 
 ## Before opening a change
