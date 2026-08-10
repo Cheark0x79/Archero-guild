@@ -4,6 +4,8 @@ import test from "node:test";
 import { bossDefinitionForSnapshot } from "../lib/boss-identity.js";
 import { sharedMemberProfileFromData } from "../lib/shared-member.js";
 
+process.env.ARCHERO_SHARE_LINK_SECRET ??= "test-only-share-link-secret-32-bytes";
+
 const definitions = [
   { key: "medusa", weekday: 4, name: "Medusa", imagePath: "/bosses/medusa.png" },
   { key: "stoneman", weekday: 5, name: "Stoneman", imagePath: "/bosses/stoneman.png" },

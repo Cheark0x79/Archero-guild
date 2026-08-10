@@ -16,10 +16,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY observer ./observer
-COPY config ./config
-COPY contracts ./contracts
+COPY ocr/app/archero_guild ./archero_guild
+COPY docs/contracts ./docs/contracts
 COPY ocr/ui ./ocr/ui
 COPY web/sample-data.js ./web/sample-data.js
 
-ENTRYPOINT ["python", "-m", "observer.ocr.remote"]
+ENTRYPOINT ["python", "-m", "archero_guild.ocr.local_app"]

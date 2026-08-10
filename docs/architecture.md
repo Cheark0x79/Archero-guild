@@ -7,25 +7,25 @@ one versioned JSON contract.
 
 | Product | Runtime | Inbound access | Outbound dependencies | Operator |
 | --- | --- | --- | --- | --- |
-| Web platform | Next.js, Python export adapter, PostgreSQL, Cloudflare Tunnel | HTTPS through Cloudflare; loopback port `5181` on the host | PostgreSQL and Cloudflare | Homelab operator |
-| OCR workstation | Python, Tesseract, ADB/BlueStacks, local review UI | Loopback port `5190` only | Platform ingestion API over HTTPS | Trusted workstation operator |
+| Web/API | Next.js, Python export adapter, PostgreSQL | Configurable host port `5181`, bound to loopback by default | PostgreSQL | Server operator |
+| OCR workstation | Python, Tesseract, local review UI | Loopback port `5190` only | Web ingestion API over HTTPS | Trusted workstation operator |
 
-The production image contains no Tesseract, ADB bridge, emulator integration,
-or raw screenshot mount. The OCR workstation has no direct PostgreSQL access.
+The production image contains no Tesseract or raw screenshot mount. The OCR
+workstation has no direct PostgreSQL access or device/emulator integration.
 
 ## Data flow
 
 ```text
-BlueStacks / exported PNG
+Manually exported PNG
           |
           v
 OCR workstation (:5190)
 explicit roster sync <- HTTPS ingestion API <- PostgreSQL
-local cache -> capture -> OCR -> human review -> import-batch.schema.json validation
+local cache -> upload -> OCR -> human review -> import-batch.schema.json validation
           |
-          | HTTPS + ingestion key (+ Cloudflare service token when enabled)
+          | HTTP(S) + ingestion key
           v
-Platform ingestion API
+Web ingestion API
           |
           | transactional and idempotent write
           v
@@ -48,7 +48,7 @@ network connection.
   read-only access to one member until expiry; no login is required.
 - PostgreSQL is internal to the Compose backend network and has no production
   host port.
-- Cloudflare Tunnel is outbound-only. The application still validates every
+- Any external reverse proxy is operator-owned. The application validates every
   session, API key, ingestion key, and temporary share code itself.
 
 ## Temporary member sharing
@@ -65,18 +65,15 @@ cookie scoped to that member profile, and redirects to the clean
 profile is read-only and excludes officer notes, warning actions, raw OCR, and
 Discord identity.
 
-Cloudflare Access must not require an interactive login for `/s/*` or
-`/shared/*`; otherwise Discord recipients cannot use temporary links.
-
 ## Source-of-truth ownership
 
 | Contract or state | Owner |
 | --- | --- |
-| OCR ingestion schema | `contracts/import-batch.schema.json` |
-| PostgreSQL schema | `observer/storage/schema.sql` |
+| OCR ingestion schema | `docs/contracts/import-batch.schema.json` |
+| PostgreSQL schema | `ocr/app/archero_guild/storage/schema.sql` |
 | Public HTTP API | `docs/openapi.yaml` |
 | API field semantics | `docs/api-fields.md` |
-| Runtime deployment | `platform/compose.yml` and `ocr/compose.yml` |
+| Runtime deployment | `web/compose.yml` and `ocr/compose.yml` |
 | Environment semantics | `docs/configuration.md` |
 | Operator lifecycle | `docs/operations.md` |
 

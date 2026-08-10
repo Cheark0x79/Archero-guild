@@ -45,12 +45,11 @@ test("failure limiter locks a client for the configured window and clears on suc
   assert.equal(limiter.check("client", 1002).allowed, true);
 });
 
-test("client address prefers the Cloudflare authenticated forwarding header", () => {
+test("client address uses the first conventional forwarded address", () => {
   const request = new Request("http://localhost/login", {
     headers: {
-      "cf-connecting-ip": "203.0.113.8",
       "x-forwarded-for": "198.51.100.5, 198.51.100.6",
     },
   });
-  assert.equal(requestClientAddress(request), "203.0.113.8");
+  assert.equal(requestClientAddress(request), "198.51.100.5");
 });

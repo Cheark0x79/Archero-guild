@@ -50,15 +50,6 @@ export function roleCanAccessPath(pathname, role) {
   return accessLevel !== ADMIN_ACCESS || role === ADMIN_ROLE;
 }
 
-export function isLocalOcrPath(pathname) {
-  return pathname === "/admin/data"
-    || pathname.startsWith("/api/data/capture/")
-    || pathname === "/api/data/discard"
-    || pathname === "/api/data/import"
-    || pathname === "/api/data/import/status"
-    || pathname === "/api/data/screenshot";
-}
-
 export function applicationUrl(pathname, requestUrl, environment = process.env) {
   const configuredOrigin = environment.ARCHERO_PUBLIC_ORIGIN?.trim();
   if (!configuredOrigin) return new URL(pathname, requestUrl);

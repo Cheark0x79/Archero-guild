@@ -13,7 +13,6 @@ export default function AppSidebar({
 }) {
   const navRoute = activeRoute === "member" ? "members" : activeRoute;
   const navigation = navigationItemsForRole(sessionRole, {
-    localOcrEnabled: process.env.NEXT_PUBLIC_LOCAL_OCR_ENABLED === "1",
     testToolsEnabled: process.env.NEXT_PUBLIC_TEST_DATA_ADMIN === "1"
       && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV),
   });

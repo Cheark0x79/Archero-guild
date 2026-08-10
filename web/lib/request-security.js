@@ -43,8 +43,6 @@ export function requireContentLength(request, maximumBytes) {
 }
 
 export function requestClientAddress(request) {
-  const cloudflareAddress = request.headers.get("cf-connecting-ip")?.trim();
-  if (cloudflareAddress) return cloudflareAddress.slice(0, 128);
   const forwardedAddress = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return (forwardedAddress || "unknown").slice(0, 128);
 }

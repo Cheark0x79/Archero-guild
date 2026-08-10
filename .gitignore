@@ -2,11 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-/platform/.env
-/platform/.env.production
+/web/.env.prod
 /ocr/.env
 /ocr/targets.json
-.release-version
 screenshots/
 logs/
 /data/
