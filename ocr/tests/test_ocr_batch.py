@@ -52,6 +52,34 @@ class OcrBatchTests(unittest.TestCase):
         self.assertEqual(first["quality"]["status"], "pass")
         self.assertEqual(first["members"][0]["name"], "Alice")
 
+    def test_attaches_best_guild_overview_only_from_member_scans(self) -> None:
+        first_result = {
+            "input": {"width": 1080, "height": 1920},
+            "detection": {"rowCount": 0},
+            "rows": [],
+            "guildStats": {"guildName": "Example", "level": 7, "memberCount": 41},
+            "quality": {"expectedRows": 0, "usefulRows": 0, "completeRows": 0, "warnings": []},
+        }
+        better_result = {
+            **first_result,
+            "guildStats": {
+                "guildName": "Example", "guildId": "123", "level": 7,
+                "memberCount": 41, "memberCapacity": 42, "expeditionPoints": 825,
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            one = Path(directory) / "members-001.png"
+            two = Path(directory) / "members-002.png"
+            one.write_bytes(b"first")
+            two.write_bytes(b"second")
+            batch = build_import_batch(
+                [("guild-members", one, first_result), ("guild-members", two, better_result)],
+                capture_date="2026-08-09", agent_version="test",
+            )
+
+        self.assertEqual(batch["guildStats"]["guildId"], "123")
+        self.assertEqual(batch["guildStats"]["expeditionPoints"], 825)
+
     def test_keeps_a_member_row_when_ocr_detects_no_name(self) -> None:
         result = {
             "input": {"width": 1080, "height": 1920},

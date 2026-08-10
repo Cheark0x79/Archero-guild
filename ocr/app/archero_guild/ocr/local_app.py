@@ -31,10 +31,12 @@ from archero_guild.ocr.review import (
     apply_batch_edit,
     clear_reviewed_data,
     delete_batch_row,
+    confirmed_departure_ids,
     load_review_log,
     link_member_identity,
     merge_reviewed_scope,
     prepare_export_batch,
+    record_departure_decision,
     refresh_reviewed_batch,
     remove_reviewed_scope,
 )
@@ -163,6 +165,32 @@ def save_identity_alias(path: Path, *, observed_name: str | None, player_id: str
         changed += 1
     _write_private_json(path, {"schemaVersion": 1, "updatedAt": timestamp, "aliases": aliases})
     return changed
+
+
+def learn_identity_alias_from_edit(
+    path: Path,
+    *,
+    batch: dict[str, Any],
+    category: str,
+    row_index: int,
+    field: str,
+    observed_name: str | None = None,
+) -> int:
+    """Remember stable identity edits, while daily metrics are always scanned again."""
+    if category != "members" or field not in {"rawName", "name", "playerId"}:
+        return 0
+    rows = batch.get("members")
+    if not isinstance(rows, list) or row_index < 0 or row_index >= len(rows):
+        return 0
+    row = rows[row_index]
+    if not isinstance(row, dict) or not row.get("playerId") or not row.get("name"):
+        return 0
+    return save_identity_alias(
+        path,
+        observed_name=observed_name if observed_name is not None else row.get("rawName"),
+        player_id=str(row["playerId"]),
+        canonical_name=str(row["name"]),
+    )
 
 
 def _identity_name_key(value: str) -> str:
@@ -585,6 +613,14 @@ def build_demo_batch(capture_date: str, agent_version: str) -> dict[str, Any]:
             }
             for rank, name, damage_text, damage in bosses
         ],
+        "guildStats": {
+            "guildName": "Demo Guild", "guildId": "demo-123", "level": 7,
+            "memberCount": 4, "memberCapacity": 42, "totalPower": 82_030_000,
+            "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "I",
+            "xpCurrent": 5_600, "xpRequired": 800_000,
+            "donationsValue": None, "rank": None, "rawText": "synthetic demo header",
+            "quality": {"status": "pass", "missingFields": []},
+        },
         "quality": {},
     }
     refresh_reviewed_batch(batch)
@@ -810,6 +846,9 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/link-member":
                 self._link_reviewed_member(payload)
+                return
+            if self.path == "/api/missing-member-decision":
+                self._record_missing_member_decision(payload)
                 return
             if self.path == "/api/clear":
                 self._clear_reviewed_data(payload)
@@ -1255,9 +1294,28 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
                 field=str(payload.get("field") or ""),
                 value=payload.get("value"),
             )
+            latest_correction = corrections.get("entries", [])[-1] if corrections.get("entries") else {}
+            observed_name = (
+                latest_correction.get("before")
+                if latest_correction.get("field") == "rawName"
+                else None
+            )
+            learned_aliases = learn_identity_alias_from_edit(
+                self._identity_aliases_path(),
+                batch=batch,
+                category=str(payload.get("category") or ""),
+                row_index=row_index,
+                field=str(payload.get("field") or ""),
+                observed_name=str(observed_name) if observed_name is not None else None,
+            )
         finally:
             JOB_LOCK.release()
-        self._send_json({"ok": True, "batch": batch, "corrections": corrections})
+        self._send_json({
+            "ok": True,
+            "batch": batch,
+            "corrections": corrections,
+            "learnedAliases": learned_aliases,
+        })
 
     def _delete_reviewed_row(self, payload: dict[str, Any]) -> None:
         capture_date = str(payload.get("date") or "")
@@ -1341,6 +1399,40 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             "learnedAliases": learned_aliases,
         })
 
+    def _record_missing_member_decision(self, payload: dict[str, Any]) -> None:
+        capture_date = str(payload.get("date") or "")
+        _validate_date(capture_date)
+        player_id = str(payload.get("playerId") or "").strip()
+        confirmed = payload.get("confirmed") is True
+        if not JOB_LOCK.acquire(blocking=False):
+            self._send_json({"ok": False, "error": "another OCR action is already running"}, HTTPStatus.CONFLICT)
+            return
+        try:
+            batch_path, corrections_path = self._review_paths(payload, capture_date)
+            if payload.get("simulation") is True:
+                raise LocalOcrError("departure decisions are not available in simulation mode")
+            try:
+                batch = json.loads(batch_path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise LocalOcrError("no reviewed OCR batch exists for this date") from exc
+            roster, _ = self._scan_roster()
+            missing, _ = reconcile_member_rows(batch, roster)
+            member = next((item for item in roster if item.player_id == player_id), None)
+            if member is None:
+                raise LocalOcrError("the selected member is no longer present in the synchronized roster")
+            if confirmed and not any(item["playerId"] == player_id for item in missing):
+                raise LocalOcrError("the selected member is already present in this OCR batch")
+            corrections = record_departure_decision(
+                corrections_path,
+                capture_date=capture_date,
+                player_id=member.player_id,
+                name=member.name,
+                confirmed=confirmed,
+            )
+        finally:
+            JOB_LOCK.release()
+        self._send_json({"ok": True, "corrections": corrections})
+
     def _identity_aliases_path(self) -> Path:
         return getattr(self.app, "identity_aliases_path", self.app.outbox_root / "identity-aliases.json")
 
@@ -1404,10 +1496,15 @@ class LocalOcrHandler(BaseHTTPRequestHandler):
             return
         roster, roster_source = self._scan_roster()
         missing, unlinked = reconcile_member_rows(batch, roster)
+        corrections = load_review_log(self._corrections_path(capture_date), capture_date)
+        confirmed_ids = confirmed_departure_ids(corrections)
+        confirmed_departures = [member for member in missing if member["playerId"] in confirmed_ids]
+        missing = [member for member in missing if member["playerId"] not in confirmed_ids]
         self._send_json({
             "ok": True,
             "members": missing,
             "unlinkedRows": unlinked,
+            "confirmedDepartures": confirmed_departures,
             "target": {"key": "local", "label": roster_source["label"]},
         })
 

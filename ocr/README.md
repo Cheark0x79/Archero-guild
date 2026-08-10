@@ -51,22 +51,25 @@ OCR on the same private captures used for the final evaluation report.
 
 ## Guild overview statistics
 
-The import contract and PostgreSQL history accept optional daily guild-level
-statistics: name, ID, level, members/capacity, total power, donation value,
-rank and XP progress. `archero_guild.pipeline.guild_stats.parse_guild_stats_text`
-parses labeled OCR text without confusing guild capacity with Boss
-participants. Screenshot-specific cropping is intentionally not enabled in the
-UI until at least one representative Guild overview capture can be calibrated
-and evaluated; raw screenshots remain local and outside Git.
+The Members extraction also reads the fixed guild header: name, ID, level,
+members/capacity, total power, expedition points, expedition tier and rank,
+and XP progress. These values are attached to the atomic import batch as
+`guildStats`, shown above the Members review table, and stored as a dated
+PostgreSQL snapshot. Boss screenshots never run this extraction.
 
-The conservative full-screen extractor can already be exercised privately:
+ `archero_guild.pipeline.guild_stats.extract_guild_stats_from_screenshot` uses
+resolution-independent crops calibrated against private portrait captures.
+Raw screenshots remain local and outside Git. Missing header fields mark only
+the guild overview as requiring review; they are never guessed from Boss rows.
+
+The extractor can be exercised privately with:
 
 ```bash
 python -m archero_guild.pipeline.guild_stats /private/guild-overview.png
 ```
 
-It always reports missing required fields and keeps the result in review until
-the representative capture has validated the layout.
+It reports every parsed field plus a `quality` object listing any missing
+required values.
 
 ## Player ID synchronization
 

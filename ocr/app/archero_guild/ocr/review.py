@@ -69,6 +69,11 @@ def merge_reviewed_scope(existing: dict[str, Any] | None, incoming: dict[str, An
     ] + deepcopy(incoming["sourceImages"])
     rows_key = "members" if kind == "guild-members" else "bossRankings"
     merged[rows_key] = deepcopy(incoming[rows_key])
+    if kind == "guild-members":
+        if "guildStats" in incoming:
+            merged["guildStats"] = deepcopy(incoming["guildStats"])
+        else:
+            merged.pop("guildStats", None)
     merged.setdefault("members", [])
     merged.setdefault("bossRankings", [])
     refresh_reviewed_batch(merged)
@@ -100,6 +105,8 @@ def remove_reviewed_scope(
         if isinstance(image, dict) and image.get("kind") != kind
     ]
     batch[rows_key] = []
+    if kind == "guild-members":
+        batch.pop("guildStats", None)
     if not batch["sourceImages"]:
         return clear_reviewed_data(batch_path, corrections_path, capture_date)
     refresh_reviewed_batch(batch)
@@ -127,6 +134,53 @@ def load_review_log(path: Path, capture_date: str) -> dict[str, Any]:
     if not isinstance(payload.get("entries"), list):
         raise ReviewError(f"{path} does not contain correction entries")
     return payload
+
+
+def confirmed_departure_ids(correction_log: dict[str, Any]) -> set[str]:
+    decisions: dict[str, bool] = {}
+    for entry in correction_log.get("entries", []):
+        if not isinstance(entry, dict) or entry.get("action") != "departure":
+            continue
+        player_id = str(entry.get("playerId") or "").strip()
+        if player_id:
+            decisions[player_id] = entry.get("confirmed") is True
+    return {player_id for player_id, confirmed in decisions.items() if confirmed}
+
+
+def record_departure_decision(
+    corrections_path: Path,
+    *,
+    capture_date: str,
+    player_id: str,
+    name: str,
+    confirmed: bool,
+) -> dict[str, Any]:
+    normalized_id = str(player_id or "").strip()
+    normalized_name = str(name or "").strip()
+    if not normalized_id or not normalized_name:
+        raise ReviewError("a roster player ID and name are required")
+    correction_log = load_review_log(corrections_path, capture_date)
+    current = normalized_id in confirmed_departure_ids(correction_log)
+    if current == confirmed:
+        return correction_log
+    timestamp = datetime.now(ZoneInfo("Europe/Paris")).isoformat()
+    correction_log["updatedAt"] = timestamp
+    correction_log["entries"].append(
+        {
+            "at": timestamp,
+            "action": "departure",
+            "category": "members",
+            "source": "synchronized roster",
+            "field": "rosterPresence",
+            "playerId": normalized_id,
+            "name": normalized_name,
+            "confirmed": confirmed,
+            "before": "missing member" if confirmed else "confirmed departure",
+            "after": "confirmed departure" if confirmed else "missing member",
+        }
+    )
+    _atomic_json_write(corrections_path, correction_log)
+    return correction_log
 
 
 def apply_batch_edit(
@@ -347,13 +401,11 @@ def refresh_reviewed_batch(batch: dict[str, Any]) -> None:
     complete = sum(_member_complete(row) for row in members) + sum(_boss_complete(row) for row in bosses)
     completeness = complete / len(rows) if rows else 0
     quality = batch.setdefault("quality", {})
-    member_expected = sum(
-        max(0, int(image.get("detectedRows") or 0))
-        for image in batch.get("sourceImages", [])
-        if isinstance(image, dict) and image.get("kind") == "guild-members"
-    )
-    if member_expected <= 0 and members:
-        member_expected = len(members)
+    # Member screenshots overlap while scrolling just like Boss screenshots.
+    # Rows are already deduplicated by identity during extraction, so summing
+    # every detected rectangle creates false coverage gaps. Roster differences
+    # are reviewed separately through the missing-member workflow.
+    member_expected = len(members)
 
     boss_ranks = [
         row.get("rank")
@@ -376,6 +428,8 @@ def refresh_reviewed_batch(batch: dict[str, Any]) -> None:
     quality["memberExpectedRows"] = member_expected
     quality["bossExpectedRows"] = boss_expected
     quality["reviewedExpectedRows"] = reviewed_expected
+    quality["memberCoverage"] = 1 if members else 0
+    quality["bossCoverage"] = round(min(1, len(bosses) / boss_expected), 6) if boss_expected else 0
     coverage = (
         min(1, len(rows) / reviewed_expected)
         if isinstance(reviewed_expected, int) and reviewed_expected > 0

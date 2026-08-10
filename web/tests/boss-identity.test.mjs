@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+process.env.ARCHERO_SHARE_LINK_SECRET ??= "boss-identity-test-share-secret-longer-than-thirty-two-bytes";
+
 import { bossDefinitionForSnapshot } from "../lib/boss-identity.js";
 import { sharedMemberProfileFromData } from "../lib/shared-member.js";
 
