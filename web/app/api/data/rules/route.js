@@ -51,7 +51,7 @@ function normalizePartialRules(value) {
 
 export async function GET() {
   if (databaseConfigured()) {
-    const result = await runObserverModule("observer.storage.rules");
+    const result = await runObserverModule("archero_guild.storage.rules");
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.error || "database rules read failed" }, { status: 503 });
     }
@@ -85,7 +85,7 @@ export async function PUT(request) {
     const payload = await request.json();
     const rules = normalizeRules(payload.rules);
     if (databaseConfigured()) {
-      const result = await runObserverModule("observer.storage.rules", ["--set-json", JSON.stringify(rules)]);
+      const result = await runObserverModule("archero_guild.storage.rules", ["--set-json", JSON.stringify(rules)]);
       if (!result.ok) {
         return NextResponse.json({ ok: false, error: result.error || "database rules save failed" }, { status: 503 });
       }

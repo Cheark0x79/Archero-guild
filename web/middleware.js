@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   applicationUrl,
   AUTH_COOKIE_NAME,
-  isLocalOcrPath,
   isPublicPath,
   roleCanAccessPath,
   roleForSessionToken,
@@ -12,12 +11,6 @@ export function middleware(request) {
   const role = roleForSessionToken(request.cookies.get(AUTH_COOKIE_NAME)?.value);
   const authenticated = Boolean(role);
   const { pathname } = request.nextUrl;
-
-  if (process.env.ARCHERO_LOCAL_OCR_ENABLED === "0" && isLocalOcrPath(pathname)) {
-    return pathname.startsWith("/api/")
-      ? NextResponse.json({ ok: false, error: "local OCR is not installed on this platform" }, { status: 404 })
-      : new NextResponse("Not found", { status: 404 });
-  }
 
   if (isPublicPath(pathname)) {
     if (pathname === "/login" && authenticated) {

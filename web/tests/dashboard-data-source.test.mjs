@@ -18,7 +18,7 @@ test("database payload never imports demo members or Discord links", () => {
     {
       guildRoster: [
         {
-          playerId: "119974403",
+          playerId: "900000114",
           name: "Ac1s",
           discordName: null,
           discordLinked: false,
@@ -33,7 +33,7 @@ test("database payload never imports demo members or Discord links", () => {
       dailyRawSnapshots: [],
       guildRoster: [
         {
-          playerId: "119974403",
+          playerId: "900000114",
           name: "Ac1s",
           discordLinked: true,
         },
@@ -52,7 +52,7 @@ test("database payload never imports demo members or Discord links", () => {
 
   assert.deepEqual(merged.guildRoster, [
     {
-      playerId: "119974403",
+      playerId: "900000114",
       name: "Ac1s",
       discordName: null,
       discordLinked: false,
@@ -133,7 +133,7 @@ test("explicit demo mode fails closed for production and strict database environ
 });
 
 test("officer warning actions are only included for administrators", () => {
-  const actions = { "119974403:2026-07-29:low_contribution": { status: "contacted" } };
+  const actions = { "900000114:2026-07-29:low_contribution": { status: "contacted" } };
 
   assert.deepEqual(selectWarningActions(actions, false), {});
   assert.deepEqual(selectWarningActions(actions, true), actions);

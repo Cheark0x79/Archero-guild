@@ -1,2 +1,0 @@
-"""Archero observer pipeline."""
-

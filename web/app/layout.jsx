@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Archero Observer",
-  description: "Guild management dashboard for Archero 2 observer data.",
+  title: "Archero Guild",
+  description: "Guild management dashboard for Archero 2 data.",
 };
 
 export default function RootLayout({ children }) {

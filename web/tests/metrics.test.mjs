@@ -232,7 +232,7 @@ test("filterMembers matches normalized names", () => {
   const rows = mergeRosterMetrics(
     [
       {
-        playerId: "120015522",
+        playerId: "900000111",
         name: "Mundõ",
         discordName: "Mundo",
         discordLinked: true,
@@ -390,10 +390,10 @@ test("lineChartPath returns drawable paths", () => {
 test("mergeRosterMetrics keeps unresolved IDs and marks missing captures", () => {
   const rows = mergeRosterMetrics(
     [
-      { playerId: "119945896", name: "5m4" },
+      { playerId: "900000110", name: "5m4" },
       { playerId: null, name: "Dronkar", discordLinked: true },
     ],
-    [{ ...member, playerId: "119945896", contribution7d: 1000 }],
+    [{ ...member, playerId: "900000110", contribution7d: 1000 }],
   );
 
   assert.equal(rows[0].name, "5m4");

@@ -35,9 +35,9 @@ await check("members: pagination", async () => {
 });
 
 await check("members: name search", async () => {
-  const result = await get("/api/v1/members?q=Sendrock");
+  const result = await get("/api/v1/members?q=EmberOne");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data[0].playerId, "119934456");
+  assert.equal(result.body.data[0].playerId, "900000108");
 });
 
 await check("members: former status", async () => {
@@ -53,21 +53,21 @@ await check("members: invalid status", async () => {
 });
 
 await check("resolver: exact Player ID", async () => {
-  const result = await get("/api/v1/members/resolve?q=119934456");
+  const result = await get("/api/v1/members/resolve?q=900000108");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data.match.name, "Sendrock");
+  assert.equal(result.body.data.match.name, "EmberOne");
 });
 
 await check("resolver: normalized name", async () => {
   const result = await get("/api/v1/members/resolve?q=Mundo");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data.match.playerId, "120015522");
+  assert.equal(result.body.data.match.playerId, "900000111");
 });
 
 await check("resolver: typo", async () => {
-  const result = await get("/api/v1/members/resolve?q=Sendrok");
+  const result = await get("/api/v1/members/resolve?q=EmberOn");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data.match.playerId, "119934456");
+  assert.equal(result.body.data.match.playerId, "900000108");
 });
 
 await check("resolver: missing query", async () => {
@@ -77,9 +77,9 @@ await check("resolver: missing query", async () => {
 });
 
 await check("member detail: existing", async () => {
-  const result = await get("/api/v1/members/119934456");
+  const result = await get("/api/v1/members/900000108");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data.name, "Sendrock");
+  assert.equal(result.body.data.name, "EmberOne");
 });
 
 await check("member detail: unknown", async () => {
@@ -128,9 +128,9 @@ await check("boss results: date and limit", async () => {
 });
 
 await check("boss results: player filter", async () => {
-  const result = await get("/api/v1/boss-results?playerId=119934456");
+  const result = await get("/api/v1/boss-results?playerId=900000108");
   assert.equal(result.status, 200);
-  assert.ok(result.body.data.every((group) => group.rows.every((row) => row.playerId === "119934456")));
+  assert.ok(result.body.data.every((group) => group.rows.every((row) => row.playerId === "900000108")));
 });
 
 await check("boss results: invalid date", async () => {
@@ -146,9 +146,9 @@ await check("boss results: impossible calendar date", async () => {
 });
 
 await check("member bosses: seven records", async () => {
-  const result = await get("/api/v1/members/119934456/bosses");
+  const result = await get("/api/v1/members/900000108/bosses");
   assert.equal(result.status, 200);
-  assert.equal(result.body.data.member.name, "Sendrock");
+  assert.equal(result.body.data.member.name, "EmberOne");
   assert.equal(result.body.data.recordsByBoss.length, 7);
 });
 
@@ -158,7 +158,7 @@ await check("member bosses: unknown member", async () => {
 });
 
 await check("member history: inverted date range", async () => {
-  const result = await get("/api/v1/members/119934456/history?from=2026-07-22&to=2026-07-20");
+  const result = await get("/api/v1/members/900000108/history?from=2026-07-22&to=2026-07-20");
   assert.equal(result.status, 400);
   assert.equal(result.body.error.code, "invalid_date_range");
 });

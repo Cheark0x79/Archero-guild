@@ -1,4 +1,4 @@
-# Archero Observer API
+# Archero Guild API
 
 The public API is a stable, read-only JSON interface intended for Discord bots
 and other server-side integrations. All versioned routes use the `/api/v1`

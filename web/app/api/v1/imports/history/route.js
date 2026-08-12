@@ -9,7 +9,7 @@ export async function GET(request) {
   if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 50) {
     return apiError(400, "invalid_limit", "limit must be an integer between 1 and 50.");
   }
-  const result = await runObserverModule("observer.storage.import_history", ["--limit", rawLimit]);
+  const result = await runObserverModule("archero_guild.storage.import_history", ["--limit", rawLimit]);
   if (!result.ok) {
     return apiError(result.status || 500, "history_unavailable", result.error || "Import history is unavailable.");
   }

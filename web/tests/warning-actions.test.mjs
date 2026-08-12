@@ -16,7 +16,7 @@ test("warning officer follow-up is validated and persisted", async (t) => {
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const saved = await saveWarningAction(root, {
-    playerId: "120015522",
+    playerId: "900000111",
     date: "2026-07-28",
     type: "missed_boss",
     status: "contacted",
@@ -26,7 +26,7 @@ test("warning officer follow-up is validated and persisted", async (t) => {
   assert.match(saved.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 
   const actions = await readWarningActions(root);
-  assert.equal(actions[warningActionKey("120015522", "2026-07-28", "missed_boss")].note, "Message sent on Discord.");
+  assert.equal(actions[warningActionKey("900000111", "2026-07-28", "missed_boss")].note, "Message sent on Discord.");
 });
 
 test("warning officer follow-up rejects unknown statuses and types", () => {

@@ -34,7 +34,7 @@ export async function POST(request) {
     for (const batch of batches) {
       const batchPath = path.join(temporaryDirectory, `${batch.captureDate}.json`);
       await fs.writeFile(batchPath, JSON.stringify(batch), { encoding: "utf8", flag: "wx" });
-      const result = await runObserverModule("observer.storage.ingest_batch", [batchPath]);
+      const result = await runObserverModule("archero_guild.storage.ingest_batch", [batchPath]);
       if (!result.ok) {
         return NextResponse.json(
           { ok: false, error: result.error || `synthetic import failed for ${batch.captureDate}` },
@@ -43,7 +43,7 @@ export async function POST(request) {
       }
       results.push(result.data);
     }
-    const rulesResult = await runObserverModule("observer.storage.rules", ["--set-json", JSON.stringify(defaultRules)]);
+    const rulesResult = await runObserverModule("archero_guild.storage.rules", ["--set-json", JSON.stringify(defaultRules)]);
     if (!rulesResult.ok) {
       return NextResponse.json({ ok: false, error: rulesResult.error || "synthetic rules initialization failed" }, { status: 500 });
     }
@@ -69,7 +69,7 @@ export async function DELETE(request) {
   const unsafeDatabase = await rejectUnsafeDatabase();
   if (unsafeDatabase) return unsafeDatabase;
 
-  const result = await runObserverModule("observer.storage.clear_synthetic_data");
+  const result = await runObserverModule("archero_guild.storage.clear_synthetic_data");
   if (!result.ok) {
     return NextResponse.json(
       { ok: false, error: result.error || "synthetic database clear was refused" },

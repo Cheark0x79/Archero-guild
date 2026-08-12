@@ -8,7 +8,6 @@ import {
   applicationUrl,
   AUTH_COOKIE_NAME,
   isAdminPath,
-  isLocalOcrPath,
   isPublicPath,
   roleForSessionToken,
   roleCanAccessPath,
@@ -56,7 +55,7 @@ test("only login, authentication assets, and health are public", () => {
   assert.equal(isPublicPath("/s/short-code"), true);
   assert.equal(isPublicPath("/s"), false);
   assert.equal(isPublicPath("/shared/expired"), true);
-  assert.equal(isPublicPath("/shared/members/119982936"), true);
+  assert.equal(isPublicPath("/shared/members/900000104"), true);
   assert.equal(isPublicPath("/bosses/flame-demon.png"), true);
   assert.equal(isPublicPath("/_next/static/app.js"), true);
   assert.equal(isPublicPath("/dashboard"), false);
@@ -70,7 +69,6 @@ test("admin pages and data mutation APIs require the admin role", () => {
   assert.equal(isAdminPath("/activity"), true);
   assert.equal(isAdminPath("/admin/activity"), true);
   assert.equal(isAdminPath("/test"), true);
-  assert.equal(isAdminPath("/api/data/import"), true);
   assert.equal(isAdminPath("/api/member-admin"), true);
   assert.equal(isAdminPath("/api/warning-actions"), true);
   assert.equal(isAdminPath("/dashboard"), false);
@@ -90,7 +88,7 @@ test("the route access matrix distinguishes public, viewer, and admin paths", ()
 });
 
 test("viewer navigation excludes every admin page while admin navigation is explicit", () => {
-  const viewerNavigation = navigationItemsForRole(USER_ROLE, { localOcrEnabled: true });
+  const viewerNavigation = navigationItemsForRole(USER_ROLE);
   assert.deepEqual(viewerNavigation.admin, []);
   assert.deepEqual(viewerNavigation.test, []);
   assert.equal(viewerNavigation.primary.some((item) => item[2].startsWith("/admin")), false);
@@ -100,19 +98,9 @@ test("viewer navigation excludes every admin page while admin navigation is expl
   const platformAdminNavigation = navigationItemsForRole(ADMIN_ROLE);
   assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/activity", "/admin/rules", "/api-docs"]);
   assert.deepEqual(platformAdminNavigation.test, []);
-  const testAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { testToolsEnabled: true });
-  assert.deepEqual(testAdminNavigation.test.map((item) => item[2]), ["/test"]);
-  const localAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { localOcrEnabled: true });
-  assert.deepEqual(localAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/activity", "/admin/data", "/admin/rules", "/api-docs"]);
-  assert.equal(sessionRoleLabel(ADMIN_ROLE), "Administrator");
-});
-
-test("local OCR routes are identifiable without blocking remote ingestion", () => {
-  assert.equal(isLocalOcrPath("/admin/data"), true);
-  assert.equal(isLocalOcrPath("/api/data/import"), true);
-  assert.equal(isLocalOcrPath("/admin/rules"), false);
-  assert.equal(isLocalOcrPath("/api/v1/imports"), false);
-  assert.equal(isLocalOcrPath("/api/v1/imports/validate"), false);
+    const testAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { testToolsEnabled: true });
+    assert.deepEqual(testAdminNavigation.test.map((item) => item[2]), ["/test"]);
+    assert.equal(sessionRoleLabel(ADMIN_ROLE), "Administrator");
 });
 
 test("session tokens resolve to separate user and admin roles", () => {

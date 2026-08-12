@@ -73,6 +73,6 @@ test("the admin control and route keep independent client and server guards", ()
   assert.match(route, /syntheticTestDataAllowed\(\)/);
   assert.match(route, /hasDashboardActionHeader\(request\)/);
   assert.match(route, /export async function DELETE/);
-  assert.match(route, /observer\.storage\.clear_synthetic_data/);
+  assert.match(route, /archero_guild\.storage\.clear_synthetic_data/);
   assert.doesNotMatch(route, /api\/v1\/imports/);
 });
