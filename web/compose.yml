@@ -1,0 +1,87 @@
+name: archero-guild
+
+services:
+  app:
+    image: ${ARCHERO_WEB_IMAGE:-ghcr.io/cheark0x79/archero-guild}:${ARCHERO_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    cpus: "1.50"
+    mem_limit: 2g
+    pids_limit: 256
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${ARCHERO_IMAGE_TAG:-latest}
+      PORT: 5181
+      HOSTNAME: 0.0.0.0
+      ARCHERO_PUBLIC_ORIGIN: ${ARCHERO_PUBLIC_ORIGIN:?Set ARCHERO_PUBLIC_ORIGIN}
+      ARCHERO_USER_USERNAME: ${ARCHERO_USER_USERNAME:-viewer}
+      ARCHERO_USER_PASSWORD: ${ARCHERO_USER_PASSWORD:?Set ARCHERO_USER_PASSWORD}
+      ARCHERO_USER_SESSION_TOKEN: ${ARCHERO_USER_SESSION_TOKEN:?Set ARCHERO_USER_SESSION_TOKEN}
+      ARCHERO_ADMIN_USERNAME: ${ARCHERO_ADMIN_USERNAME:-admin}
+      ARCHERO_ADMIN_PASSWORD: ${ARCHERO_ADMIN_PASSWORD:?Set ARCHERO_ADMIN_PASSWORD}
+      ARCHERO_ADMIN_SESSION_TOKEN: ${ARCHERO_ADMIN_SESSION_TOKEN:?Set ARCHERO_ADMIN_SESSION_TOKEN}
+      ARCHERO_API_KEYS: ${ARCHERO_API_KEYS:?Set ARCHERO_API_KEYS}
+      ARCHERO_SHARE_LINK_SECRET: ${ARCHERO_SHARE_LINK_SECRET:?Set ARCHERO_SHARE_LINK_SECRET}
+      ARCHERO_INGESTION_KEYS: ${ARCHERO_INGESTION_KEYS:?Set ARCHERO_INGESTION_KEYS}
+      ARCHERO_DATA_CACHE_TTL_MS: ${ARCHERO_DATA_CACHE_TTL_MS:-15000}
+      ARCHERO_DATA_ERROR_CACHE_TTL_MS: ${ARCHERO_DATA_ERROR_CACHE_TTL_MS:-2000}
+      ARCHERO_API_RATE_LIMIT_PER_MINUTE: ${ARCHERO_API_RATE_LIMIT_PER_MINUTE:-120}
+      ARCHERO_DATABASE_URL: postgresql://${POSTGRES_USER:-archero}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-archero_observer}
+      ARCHERO_PYTHON: /opt/archero-venv/bin/python
+      ARCHERO_REQUIRE_DATABASE: "1"
+      ARCHERO_DEPLOYMENT_ENV: production
+      TZ: Europe/Paris
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ARCHERO_BIND_ADDRESS:-127.0.0.1}:${ARCHERO_DASHBOARD_PORT:-5181}:5181"
+    volumes:
+      - ../data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5181/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    cpus: "1.00"
+    mem_limit: 2g
+    pids_limit: 256
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-archero_observer}
+      POSTGRES_USER: ${POSTGRES_USER:-archero}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      TZ: Europe/Paris
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../ocr/app/archero_guild/storage/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+volumes:
+  postgres-data:
+
+networks:
+  backend:
+    internal: true

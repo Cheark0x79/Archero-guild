@@ -1,43 +1,57 @@
-ENV_FILE ?= platform/.env.production
-COMPOSE = docker compose --env-file $(ENV_FILE) -f platform/compose.yml
+ENV_FILE ?= web/.env.prod
+WEB_IMAGE ?= ghcr.io/cheark0x79/archero-guild
+VERSION = $(shell cat VERSION)
+IMAGE_TAG ?= $(VERSION)
+COMPOSE = ARCHERO_WEB_IMAGE=$(WEB_IMAGE) ARCHERO_IMAGE_TAG=$(IMAGE_TAG) docker compose --env-file $(ENV_FILE) -f web/compose.yml
 OCR_ENV_FILE ?= ocr/.env
 OCR_COMPOSE = docker compose --env-file $(OCR_ENV_FILE) -f ocr/compose.yml
-VERSION = $(shell if [ -f .release-version ]; then cat .release-version; else cat VERSION; fi)
+OCR_TEST_IMAGE ?= archero-guild-ocr:test
 
-.PHONY: start deploy backup release release-minor release-major status logs pause-tunnel resume-tunnel ocr-start ocr-stop ocr-status ocr-logs
+.PHONY: build start stop update backup status logs test doctor ocr-start ocr-stop ocr-status ocr-logs
+
+build:
+	docker build -f web/Dockerfile --build-arg APP_VERSION=$(VERSION) -t archero-guild-web:$(VERSION) .
 
 start:
-	ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) up -d --build
+	$(COMPOSE) pull app
+	$(COMPOSE) up -d --no-build --wait --wait-timeout 90
 
-deploy:
-	ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) build app
-	ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) up -d --no-deps app
-	@./scripts/wait-for-app.sh "$(ENV_FILE)" "$(VERSION)"
-	@echo "Archero $(VERSION) is healthy."
+stop:
+	$(COMPOSE) stop
+
+update:
+	$(COMPOSE) pull app
+	$(COMPOSE) up -d --no-deps --no-build --wait --wait-timeout 90 app
+	@echo "Archero $(IMAGE_TAG) is healthy."
 
 backup:
-	@sh ./scripts/backup.sh "$(ENV_FILE)"
-
-release:
-	@./scripts/release.sh patch
-
-release-minor:
-	@./scripts/release.sh minor
-
-release-major:
-	@./scripts/release.sh major
+	@sh ./web/scripts/backup.sh "$(ENV_FILE)"
 
 status:
-	@ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) ps
+	@$(COMPOSE) ps
 
 logs:
-	@ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) logs --tail=100 app postgres cloudflared
+	@$(COMPOSE) logs --tail=100 app postgres
 
-pause-tunnel:
-	@ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) stop cloudflared
+test:
+	docker build -f ocr/Dockerfile -t $(OCR_TEST_IMAGE) .
+	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace \
+		-e PYTHONPATH=/workspace/ocr/app --entrypoint python $(OCR_TEST_IMAGE) \
+		-B -m unittest discover -s ocr/tests
+	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace \
+		-e PYTHONPATH=/workspace/ocr/app --entrypoint python $(OCR_TEST_IMAGE) \
+		-B -m unittest discover -s web/server/tests
+	docker run --rm -v "$(CURDIR):/source:ro" -w /workspace node:22-bookworm-slim \
+		sh -c 'cp -a /source/. /workspace/ && npm --prefix web ci >/dev/null && npm --prefix web test && npm --prefix web run docs:check && npm --prefix web audit --omit=dev && npm --prefix web run build && npm --prefix web run check:public-bundle'
+	bash web/scripts/test-env.sh test
 
-resume-tunnel:
-	@ARCHERO_IMAGE_TAG=$(VERSION) $(COMPOSE) start cloudflared
+doctor:
+	@command -v docker >/dev/null
+	@docker compose version >/dev/null
+	@docker compose --env-file web/.env.dev.example -f web/compose.dev.yml config -q
+	@docker compose --env-file web/.env.prod.example -f web/compose.yml config -q
+	@docker compose --env-file ocr/.env.example -f ocr/compose.yml config -q
+	@echo "Development environment is ready."
 
 ocr-start:
 	$(OCR_COMPOSE) up -d --build --wait ui

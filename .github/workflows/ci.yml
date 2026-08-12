@@ -1,63 +1,28 @@
 name: CI
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: archero_observer_test
-          POSTGRES_USER: archero
-          POSTGRES_PASSWORD: archero_dev_password
-        ports:
-          - 55440:5432
-        options: >-
-          --health-cmd "pg_isready -U archero -d archero_observer_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Tesseract runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            tesseract-ocr \
-            tesseract-ocr-chi-sim \
-            tesseract-ocr-chi-tra \
-            tesseract-ocr-eng \
-            tesseract-ocr-rus
-          tesseract --version
-          tesseract --list-langs
-      - run: pip install pillow pytesseract "psycopg[binary]"
-      - run: python -m unittest discover -s tests
-        env:
-          ARCHERO_TEST_DATABASE_URL: postgresql://archero:archero_dev_password@127.0.0.1:55440/archero_observer_test
-          ARCHERO_INTEGRATION_DATABASE_URL: postgresql://archero:archero_dev_password@127.0.0.1:55440/archero_observer_test
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - working-directory: web
-        run: npm ci
-      - working-directory: web
-        run: npm run docs:check
-      - working-directory: web
-        run: npm test
-      - working-directory: web
-        run: npm audit --omit=dev
-      - working-directory: web
-        run: npm run build
-      - working-directory: web
-        run: npm run check:public-bundle
-      - run: docker compose --env-file platform/.env.example -f platform/compose.yml config
-      - run: docker compose --env-file ocr/.env.example -f ocr/compose.yml config
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check project configuration
+        run: make doctor
+      - name: Run the complete test suite
+        run: make test
+      - name: Build the Web/API container
+        run: make build

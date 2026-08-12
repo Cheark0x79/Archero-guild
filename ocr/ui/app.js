@@ -1152,9 +1152,6 @@ function openTargetForm(target = null) {
   $("target-url").value = target?.url || "";
   $("target-token").value = "";
   $("target-token").required = !target;
-  $("target-cf-id").value = "";
-  $("target-cf-secret").value = "";
-  $("target-cf-clear").checked = false;
   $("target-label").focus();
 }
 
@@ -1177,9 +1174,6 @@ async function saveTarget(event) {
         label: $("target-label").value,
         url: $("target-url").value,
         ingestionToken: $("target-token").value,
-        cfAccessClientId: $("target-cf-id").value,
-        cfAccessClientSecret: $("target-cf-secret").value,
-        clearCloudflareAccess: $("target-cf-clear").checked,
         createOnly: !state.editingTargetKey,
       }),
     });

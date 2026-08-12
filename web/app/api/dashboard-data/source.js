@@ -65,7 +65,7 @@ export async function loadDashboardData(options = {}) {
       : payload;
   }
 
-  const runExport = options.runExport ?? (() => runObserverModule("observer.storage.export_json"));
+  const runExport = options.runExport ?? (() => runObserverModule("archero_guild.storage.export_json"));
   const request = Promise.resolve()
     .then(runExport)
     .then((result) => {
@@ -292,6 +292,7 @@ const REQUIRED_RULE_KEYS = [
 function emptyPayload() {
   return {
     captures: {
+      guildName: null,
       lastCapturedAt: null,
       lastImportedAt: null,
       baselineJoinedAt: null,

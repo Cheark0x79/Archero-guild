@@ -29,6 +29,7 @@ export function isPublicPath(pathname) {
 export function isAdminPath(pathname) {
   return pathname === "/test"
     || pathname.startsWith("/test/")
+    || pathname === "/activity"
     || pathname === "/admin"
     || pathname.startsWith("/admin/")
     || pathname === "/api/member-admin"
@@ -48,15 +49,6 @@ export function roleCanAccessPath(pathname, role) {
   if (accessLevel === PUBLIC_ACCESS) return true;
   if (!role) return false;
   return accessLevel !== ADMIN_ACCESS || role === ADMIN_ROLE;
-}
-
-export function isLocalOcrPath(pathname) {
-  return pathname === "/admin/data"
-    || pathname.startsWith("/api/data/capture/")
-    || pathname === "/api/data/discard"
-    || pathname === "/api/data/import"
-    || pathname === "/api/data/import/status"
-    || pathname === "/api/data/screenshot";
 }
 
 export function applicationUrl(pathname, requestUrl, environment = process.env) {

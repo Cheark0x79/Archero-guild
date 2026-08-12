@@ -38,16 +38,16 @@ test("rejects invalid dates and empty warnings", () => {
 test("persists private records by player ID", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "archero-member-admin-"));
   try {
-    await saveMemberAdminRecord(root, "119945896", {
+    await saveMemberAdminRecord(root, "900000110", {
       absenceUntil: "2026-08-05",
       absenceReason: "Travel",
       warnings: ["Manual warning"],
       notes: ["Private note"],
     });
     const records = await readMemberAdminRecords(root);
-    assert.equal(records["119945896"].absenceReason, "Travel");
-    assert.equal(records["119945896"].warnings[0].reason, "Manual warning");
-    assert.equal(records["119945896"].notes[0].note, "Private note");
+    assert.equal(records["900000110"].absenceReason, "Travel");
+    assert.equal(records["900000110"].warnings[0].reason, "Manual warning");
+    assert.equal(records["900000110"].notes[0].note, "Private note");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
