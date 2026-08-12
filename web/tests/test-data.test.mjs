@@ -38,6 +38,13 @@ test("synthetic batches provide deterministic Web history without real identitie
   assert.equal(first.reduce((total, batch) => total + batch.bossRankings.length, 0), 672);
   assert.equal(first.every((batch) => batch.members.every((member) => member.name.startsWith("Demo"))), true);
   assert.equal(first.every((batch) => batch.idempotencyKey.startsWith("synthetic-web-admin-v1:")), true);
+  assert.equal(first.at(-1).guildStats.guildName, "Shinigami");
+  assert.equal(first.at(-1).guildStats.memberCount, 41);
+  assert.equal(first.at(-1).guildStats.memberCapacity, 42);
+  assert.equal(first.at(-1).guildStats.totalPower, 89_760_000);
+  assert.equal(first.at(-1).guildStats.expeditionPoints, 825);
+  assert.equal(first.at(-1).guildStats.expeditionName, "Firebound Soul");
+  assert.equal(first.at(-1).guildStats.expeditionRank, "I");
 });
 
 test("the loader refuses to mix synthetic fixtures with another roster", () => {

@@ -1,0 +1,11 @@
+Use case: ui-mockup
+Input images: Image 1 is the Dashboard composition to revise. Image 2 is the exact existing Grim Reaper asset used only as a small Boss route cue.
+Primary request: Correct the Dashboard to show only the real guild overview facts described by the user. Preserve the visual structure, dark compact navigation, sober Archero command-center identity, responsive semantic desktop layout, and small exact boss thumbnail.
+Guild identity: replace “Demo Vanguard” everywhere with “Shinigami”. Page title “Shinigami”, subtitle “Guild overview”. Keep the neutral A2 crest placeholder. Do not show the guild ID in the primary stat band; reserve space for an optional small secondary ID beside the subtitle later, but leave it absent in this mock.
+Primary stat band: remove Guild XP, XP progress, Weekly donations from this top band, Total power 46.1M, and Expedition rank #18. Replace the entire band with exactly these five facts: “Guild level 7”, “Members 41/42”, “Guild power 89.76M”, “Expedition points 825”, “Expedition rank Firebloom Soul 1”. Make the text rank fit comfortably without becoming a badge. Do not show Recruitment.
+Main content: replace the large “Guild progression / Guild XP” chart with “Guild power” and subtitle “Daily guild total · Last 30 days”, using a restrained 30-day line/area trend ending at 89.76M. Do not show XP milestones or invented milestone labels.
+Quick status: keep only compact route summaries: “Roster · 41 members · 1 free slot · Open Members”; “Today’s boss · Grim Reaper · 32/41 participated · Open Boss” using exact Image 2 at small size; “Data captured today · Complete”. No detailed boss data.
+Trend row: keep three equal panels titled “Median member power”, “Weekly donations”, and “Guild boss damage”, with seven weekday points and range controls “1W · 2M · All”. These are secondary historical statistics, not top identity facts.
+Remove “Recent guild milestones” entirely; the page may end after the trend row.
+Environment: keep the discreet “SYNTHETIC TEST DATA” badge because this is a test-environment mock. The synthetic badge is environment chrome, not guild data.
+Constraints: English only; no recruitment field, no Guild XP, no XP bar, no Members online, no detailed member list, no detailed boss ranking, no boss health/countdown, no invented official logo, no glassmorphism, no neon, no watermark.

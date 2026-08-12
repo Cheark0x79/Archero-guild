@@ -298,6 +298,8 @@ function emptyPayload() {
       baselineJoinedAt: null,
       contribution30d: [],
       averagePower8w: [],
+      guildStats: null,
+      guildStatsHistory: [],
     },
     changes: [],
     dailyBossRawSnapshots: [],
