@@ -8,13 +8,12 @@ production values reach each process.
 
 | File | Product and environment | Committed |
 | --- | --- | --- |
-| `.env.example` | Python tools and local PostgreSQL | Example only |
-| `web/.env.local.example` | Native Next.js development | Example only |
-| `platform/.env.example` | Production or pre-production platform | Example only |
+| `web/.env.dev.example` | Web development and local PostgreSQL | Example only |
+| `web/.env.prod.example` | Generic production deployment | Example only |
 | `ocr/.env.example` | Local OCR container paths and port | Example only |
 | `ocr/targets.example.json` | Remote OCR destinations and credentials | Example only |
 
-Real `.env`, `.env.production`, `.env.local`, `ocr/.env`, and
+Real `web/.env.development.local`, `web/.env.prod`, `ocr/.env`, and
 `ocr/targets.json` files are ignored by Git. Restrict production files to the
 operator account (`chmod 600` on Linux).
 
@@ -56,21 +55,22 @@ operator account (`chmod 600` on Linux).
 Comment out both database URL variables to use explicit demonstration mode.
 Database mode never falls back to demonstration data.
 
-## Platform deployment
+## Web deployment
 
 | Setting | Class | Meaning |
 | --- | --- | --- |
 | `ARCHERO_DASHBOARD_PORT` | Optional, default `5181` | Host loopback port |
-| `ARCHERO_BIND_ADDRESS` | Optional, default `127.0.0.1` | Host bind address; keep loopback behind Cloudflare |
+| `ARCHERO_BIND_ADDRESS` | Optional, default `127.0.0.1` | Host bind address; change only when deliberate LAN or proxy access is required |
+| `ARCHERO_WEB_IMAGE` | Optional, default `ghcr.io/cheark0x79/archero-guild` | Published Web/API image; override only for an intentional mirror or custom build |
 | `POSTGRES_DB` | Optional, default `archero_observer` | PostgreSQL database name |
 | `POSTGRES_USER` | Optional, default `archero` | PostgreSQL role |
 | `POSTGRES_PASSWORD` | Required secret | Dedicated database password |
-| `CLOUDFLARE_TUNNEL_TOKEN` | Required secret | Remotely managed tunnel token |
 
-The platform also requires all web secrets listed above, including distinct
+The Web/API application also requires all web secrets listed above, including distinct
 user, administrator, API, share-link, and ingestion credentials.
-`ARCHERO_IMAGE_TAG` is derived from `VERSION` or `.release-version` by the
-Makefile and does not belong in an environment example.
+`ARCHERO_IMAGE_TAG` defaults to `latest` for direct Compose use. The Makefile
+uses the version recorded in `VERSION`; set `IMAGE_TAG=<version>` for a
+specific published release.
 
 ## OCR workstation
 
@@ -82,32 +82,25 @@ Makefile and does not belong in an environment example.
 | `ARCHERO_OUTBOX_ROOT` | Optional | Host reviewed-batch directory mounted at `/outbox` |
 | `ARCHERO_OCR_TARGETS_FILE` | Required path | Private target JSON writable only by the local OCR service |
 | `ARCHERO_OCR_ROSTER_CACHE` | Optional path | Private cache of player IDs explicitly synchronized from a destination; defaults next to the target file |
-| `ARCHERO_TARGET_URL` | Conditional CLI value | Legacy CLI profile destination; the UI uses `targets.json` |
-| `ARCHERO_INGESTION_TOKEN` | Conditional CLI secret | Legacy CLI profile ingestion token |
-| `CF_ACCESS_CLIENT_ID` | Conditional secret identifier | Cloudflare service token ID for CLI publication |
-| `CF_ACCESS_CLIENT_SECRET` | Conditional secret | Cloudflare service token secret for CLI publication |
-
 Create remote destinations from the loopback-only review UI. Every environment
-must use a dedicated ingestion key. Cloudflare Access credentials are optional
-advanced values and are unnecessary when the application ingestion API is
-directly reachable. Keep target secrets in the ignored private OCR storage, not
-in `ocr/.env` or Git.
+must use a dedicated ingestion key. Keep target secrets in the ignored private
+OCR storage, not in `ocr/.env` or Git.
 
 ## Internal and test-only settings
 
 `ARCHERO_NEXT_OUTPUT`, `ARCHERO_API_TEST_URL`, `ARCHERO_API_TOKEN`,
-`NEXT_PUBLIC_APP_VERSION`, `NEXT_PUBLIC_LOCAL_OCR_ENABLED`,
+`NEXT_PUBLIC_APP_VERSION`,
 `NEXT_PUBLIC_TEST_DATA_ADMIN`, `NEXT_PUBLIC_DEPLOYMENT_ENV`, `ARCHERO_PYTHON`,
-`ARCHERO_OCR_UI_ROOT`, `ARCHERO_PROGRESS`, `ARCHERO_RULES_FILE`, and
-`ARCHERO_WSL_DISTRO` are owned by builds, tests, wrappers, or internal runtime
+`ARCHERO_OCR_UI_ROOT`, `ARCHERO_PROGRESS`, and `ARCHERO_RULES_FILE` are owned
+by builds, tests, or internal runtime
 adapters. They are intentionally absent from operator examples.
 
 ## Rotation
 
 - Rotate one credential purpose at a time; never reuse a value across roles.
-- Recreate the affected application container after changing platform values.
+- Recreate the affected Web/API container after changing application values.
 - Rotating session tokens invalidates existing sessions.
 - Rotating `ARCHERO_SHARE_LINK_SECRET` immediately invalidates every temporary
   member link.
-- Rotate ingestion keys on the platform and matching OCR target together.
+- Rotate ingestion keys on the Web/API application and matching OCR target together.
 - Never print current secret values in logs, support messages, or screenshots.

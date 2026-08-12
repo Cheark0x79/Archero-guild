@@ -1,5 +1,5 @@
-import DashboardRoute from "../components/DashboardRoute.jsx";
+import { redirect } from "next/navigation";
 
 export default function ActivityPage() {
-  return <DashboardRoute initialRoute="activity" />;
+  redirect("/admin/activity");
 }

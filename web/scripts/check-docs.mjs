@@ -7,7 +7,7 @@ const docsRoot = path.join(repositoryRoot, "docs");
 const documentationRoots = [
   path.join(repositoryRoot, "README.md"),
   docsRoot,
-  path.join(repositoryRoot, "observer", "storage", "README.md"),
+  path.join(repositoryRoot, "ocr", "app", "archero_guild", "storage", "README.md"),
 ];
 
 const markdownFiles = [];

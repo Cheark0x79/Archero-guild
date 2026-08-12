@@ -2,7 +2,7 @@
 
 This product runs only on the trusted Windows/WSL workstation:
 
-- BlueStacks remains native on Windows;
+- screenshot acquisition stays outside this project;
 - screenshots are uploaded through `http://127.0.0.1:5190`;
 - Tesseract runs in the isolated OCR container;
 - raw PNG files and reviewed outbox JSON remain on the workstation;
@@ -10,15 +10,14 @@ This product runs only on the trusted Windows/WSL workstation:
 
 ## First configuration
 
-```powershell
-Copy-Item ocr/.env.example ocr/.env
-Copy-Item ocr/targets.example.json ocr/targets.json
+```bash
+cp ocr/.env.example ocr/.env
+cp ocr/targets.example.json ocr/targets.json
 ```
 
 The initial file contains only `Local test (offline)`. Start the UI, then use
 `Add destination` to save a name, application URL and dedicated ingestion key.
-Cloudflare Access credentials remain available under advanced options when a
-deployment actually requires them. Both real files are ignored by Git.
+Both real files are ignored by Git.
 
 The selector starts with one protected local environment and accepts any number
 of private remote destinations:
@@ -43,7 +42,7 @@ a `cases` array. Each case supplies `id`, `kind`, `image`, `expectedRows`, and
 optionally `roster`, `includePodium`, `identityField`, and `fields`. Run:
 
 ```bash
-python -m observer.ocr.evaluate /private/eval/manifest.json --output /private/eval/report.json
+python -m archero_guild.ocr.evaluate /private/eval/manifest.json --output /private/eval/report.json
 ```
 
 The report records image dimensions, OCR quality, matched/missing/unexpected
@@ -52,22 +51,25 @@ OCR on the same private captures used for the final evaluation report.
 
 ## Guild overview statistics
 
-The import contract and PostgreSQL history accept optional daily guild-level
-statistics: name, ID, level, members/capacity, total power, donation value,
-rank and XP progress. `observer.pipeline.guild_stats.parse_guild_stats_text`
-parses labeled OCR text without confusing guild capacity with Boss
-participants. Screenshot-specific cropping is intentionally not enabled in the
-UI until at least one representative Guild overview capture can be calibrated
-and evaluated; raw screenshots remain local and outside Git.
+The Members extraction also reads the fixed guild header: name, ID, level,
+members/capacity, total power, expedition points, expedition tier and rank,
+and XP progress. These values are attached to the atomic import batch as
+`guildStats`, shown above the Members review table, and stored as a dated
+PostgreSQL snapshot. Boss screenshots never run this extraction.
 
-The conservative full-screen extractor can already be exercised privately:
+ `archero_guild.pipeline.guild_stats.extract_guild_stats_from_screenshot` uses
+resolution-independent crops calibrated against private portrait captures.
+Raw screenshots remain local and outside Git. Missing header fields mark only
+the guild overview as requiring review; they are never guessed from Boss rows.
+
+The extractor can be exercised privately with:
 
 ```bash
-python -m observer.pipeline.guild_stats /private/guild-overview.png
+python -m archero_guild.pipeline.guild_stats /private/guild-overview.png
 ```
 
-It always reports missing required fields and keeps the result in review until
-the representative capture has validated the layout.
+It reports every parsed field plus a `quality` object listing any missing
+required values.
 
 ## Player ID synchronization
 
@@ -132,10 +134,10 @@ active, every network destination is disabled in the selector and the server
 rejects attempts to simulate a real OCR batch. A persistent orange banner
 identifies the mode.
 
-## Direct LAN destination
+## LAN destination
 
-Cloudflare is not required when the OCR workstation can reach the application
-VM directly. On the VM, set `ARCHERO_BIND_ADDRESS` to its LAN IP and keep
+When the OCR workstation can reach the application VM directly, set
+`ARCHERO_BIND_ADDRESS` to its LAN IP and keep
 `ARCHERO_DASHBOARD_PORT=5181`. In OCR Control's Destination step, use:
 
 ```text

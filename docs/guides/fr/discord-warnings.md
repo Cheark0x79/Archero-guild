@@ -11,7 +11,7 @@ Discord ou un autre outil.
 URL de base :
 
 ```text
-https://archero.cheark0x79.com
+https://api.example.com
 ```
 
 Toutes les routes ci-dessous nécessitent une clé API :
@@ -47,7 +47,7 @@ Retourne uniquement les membres ayant actuellement au moins un warning.
 curl \
   -H "Authorization: Bearer VOTRE_CLE_API" \
   -H "Accept: application/json" \
-  "https://archero.cheark0x79.com/api/v1/warnings"
+  "https://api.example.com/api/v1/warnings"
 ```
 
 Exemple de réponse :
@@ -64,7 +64,7 @@ Exemple de réponse :
     },
     "members": [
       {
-        "playerId": "120015103",
+        "playerId": "900000112",
         "name": "ExampleMember",
         "lastSeenAt": "2026-07-29",
         "evaluation": {
@@ -106,7 +106,7 @@ Retourne les membres classés selon leur nombre de warnings.
 curl \
   -H "Authorization: Bearer VOTRE_CLE_API" \
   -H "Accept: application/json" \
-  "https://archero.cheark0x79.com/api/v1/rankings/warnings?scope=history&limit=10"
+  "https://api.example.com/api/v1/rankings/warnings?scope=history&limit=10"
 ```
 
 Exemple de réponse :
@@ -118,7 +118,7 @@ Exemple de réponse :
     "rankings": [
       {
         "rank": 1,
-        "playerId": "119960803",
+        "playerId": "900000113",
         "name": "ExampleMember",
         "totalWarnings": 6,
         "warningCountsByType": {
@@ -150,7 +150,7 @@ Retourne les warnings d’un membre précis.
 curl \
   -H "Authorization: Bearer VOTRE_CLE_API" \
   -H "Accept: application/json" \
-  "https://archero.cheark0x79.com/api/v1/members/120015103/warnings?scope=history&limit=100"
+  "https://api.example.com/api/v1/members/900000112/warnings?scope=history&limit=100"
 ```
 
 Exemple de réponse :
@@ -158,7 +158,7 @@ Exemple de réponse :
 ```json
 {
   "data": {
-    "playerId": "120015103",
+    "playerId": "900000112",
     "name": "ExampleMember",
     "summary": {
       "totalWarnings": 2,

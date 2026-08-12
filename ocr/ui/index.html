@@ -138,9 +138,19 @@
           <button id="review-boss" class="button secondary compact" type="button">Boss</button>
           <button id="add-row" class="button secondary compact" type="button">Add manual row</button>
         </div>
+        <section id="guild-overview" class="guild-overview" hidden>
+          <div class="guild-overview-heading">
+            <div>
+              <span class="step">GUILD HEADER</span>
+              <strong>Overview detected from Members screenshots</strong>
+            </div>
+            <span id="guild-overview-quality" class="badge neutral">Not detected</span>
+          </div>
+          <dl id="guild-overview-values" class="guild-overview-values"></dl>
+        </section>
         <section id="missing-members" class="missing-members" hidden>
           <div>
-            <strong>Missing from this capture</strong>
+            <strong id="missing-members-title">Roster differences to review</strong>
             <span id="missing-members-source" class="muted"></span>
           </div>
           <span id="missing-members-count" class="counter">0 missing</span>
@@ -155,17 +165,6 @@
       </article>
     </div>
 
-    <section class="panel corrections-panel">
-      <div class="panel-heading">
-        <div>
-          <span class="step">LEARNING LOG</span>
-          <h2>Correction history</h2>
-        </div>
-        <span id="correction-count" class="counter">0 corrections</span>
-      </div>
-      <p class="muted">Every change records the OCR value and your corrected value for future tuning.</p>
-      <div id="correction-list" class="correction-list"></div>
-    </section>
   </section>
 
   <section class="wizard-panel" data-step-panel="4">
@@ -238,23 +237,6 @@
             <input id="target-token" type="password" minlength="16" placeholder="Leave blank to keep the current key">
             <small>The key is stored locally and is never returned to the browser.</small>
           </label>
-          <details>
-            <summary>Advanced Cloudflare Access options</summary>
-            <div class="advanced-fields">
-              <label>
-                Client ID
-                <input id="target-cf-id" type="password" autocomplete="new-password">
-              </label>
-              <label>
-                Client secret
-                <input id="target-cf-secret" type="password" autocomplete="new-password">
-              </label>
-              <label class="inline-check">
-                <input id="target-cf-clear" type="checkbox">
-                Remove the existing Cloudflare Access credentials
-              </label>
-            </div>
-          </details>
           <button id="save-target" class="button primary" type="submit">Save destination</button>
         </form>
         </dialog>

@@ -1,0 +1,53 @@
+name: archero-guild-db-test
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: archero_test
+      POSTGRES_USER: archero_test
+      POSTGRES_PASSWORD: archero_test_password
+    volumes:
+      - ../ocr/app/archero_guild/storage/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U archero_test -d archero_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    cpus: "0.75"
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  integration-tests:
+    build:
+      context: ..
+      dockerfile: web/server/tests/integration/Dockerfile
+    environment:
+      ARCHERO_INTEGRATION_DATABASE_URL: postgresql://archero_test:archero_test_password@postgres:5432/archero_test
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /workspace:/workspace/ocr/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:ro
+    working_dir: /workspace
+    command: ["python", "-B", "-m", "unittest", "web.server.tests.integration.test_database_contract", "-v"]
+    cpus: "0.75"
+    mem_limit: 384m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    profiles: ["test"]
+
+networks:
+  backend:
+    internal: true

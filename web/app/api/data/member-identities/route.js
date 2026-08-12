@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { hasDashboardActionHeader, runObserverModule } from "../actions.js";
 
 export async function GET() {
-  const result = await runObserverModule("observer.storage.member_identities", ["list"]);
+  const result = await runObserverModule("archero_guild.storage.member_identities", ["list"]);
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error || "identity read failed" }, { status: result.status || 500 });
   }
@@ -24,7 +24,7 @@ export async function POST(request) {
       if (!source || source.length > 240) throw new Error("source is required");
       if (!observedName || observedName.length > 120) throw new Error("observed name is required");
       const result = await runObserverModule(
-        "observer.storage.member_identities",
+        "archero_guild.storage.member_identities",
         ["rename-unmatched", captureDate, source, observedName],
       );
       if (!result.ok) {
@@ -39,7 +39,7 @@ export async function POST(request) {
       if (!/^\d{6,20}$/.test(playerId)) throw new Error("player ID must contain 6 to 20 digits");
       if (!["active", "left", "kicked"].includes(status)) throw new Error("invalid member status");
       const result = await runObserverModule(
-        "observer.storage.member_identities",
+        "archero_guild.storage.member_identities",
         ["status", playerId, status, observedName],
       );
       if (!result.ok) {
@@ -51,7 +51,7 @@ export async function POST(request) {
     const playerId = typeof payload?.playerId === "string" ? payload.playerId.trim() : "";
     if (!observedName || observedName.length > 120) throw new Error("observed name is required");
     if (!/^\d{6,20}$/.test(playerId)) throw new Error("player ID must contain 6 to 20 digits");
-    const result = await runObserverModule("observer.storage.member_identities", ["assign", observedName, playerId]);
+    const result = await runObserverModule("archero_guild.storage.member_identities", ["assign", observedName, playerId]);
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.error || "identity save failed" }, { status: result.status || 500 });
     }

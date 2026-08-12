@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+process.env.ARCHERO_SHARE_LINK_SECRET ??= "boss-identity-test-share-secret-longer-than-thirty-two-bytes";
+
 import { bossDefinitionForSnapshot } from "../lib/boss-identity.js";
 import { sharedMemberProfileFromData } from "../lib/shared-member.js";
+
+process.env.ARCHERO_SHARE_LINK_SECRET ??= "test-only-share-link-secret-32-bytes";
 
 const definitions = [
   { key: "medusa", weekday: 4, name: "Medusa", imagePath: "/bosses/medusa.png" },

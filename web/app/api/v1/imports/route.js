@@ -33,7 +33,7 @@ export async function POST(request) {
     temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "archero-import-"));
     const batchPath = path.join(temporaryDirectory, "batch.json");
     await fs.writeFile(batchPath, JSON.stringify(batch), { encoding: "utf8", flag: "wx" });
-    const result = await runObserverModule("observer.storage.ingest_batch", [batchPath]);
+    const result = await runObserverModule("archero_guild.storage.ingest_batch", [batchPath]);
     if (!result.ok) {
       return apiError(result.status || 500, "import_failed", result.error || "The import failed.");
     }

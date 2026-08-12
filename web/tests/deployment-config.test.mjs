@@ -5,49 +5,59 @@ import test from "node:test";
 
 const projectRoot = path.resolve(process.cwd(), "..");
 
-test("release automation versions the image and preserves database deployment", () => {
+test("production packaging preserves the database and operational safeguards", () => {
   const makefile = fs.readFileSync(path.join(projectRoot, "Makefile"), "utf8");
-  const compose = fs.readFileSync(path.join(projectRoot, "platform", "compose.yml"), "utf8");
-  const dockerfile = fs.readFileSync(path.join(projectRoot, "platform", "Dockerfile"), "utf8");
+  const compose = fs.readFileSync(path.join(projectRoot, "web", "compose.yml"), "utf8");
+  const devCompose = fs.readFileSync(path.join(projectRoot, "web", "compose.dev.yml"), "utf8");
+  const testCompose = fs.readFileSync(path.join(projectRoot, "web", "compose.test.yml"), "utf8");
+  const dockerfile = fs.readFileSync(path.join(projectRoot, "web", "Dockerfile"), "utf8");
   const ocrCompose = fs.readFileSync(path.join(projectRoot, "ocr", "compose.yml"), "utf8");
   const ocrDockerfile = fs.readFileSync(path.join(projectRoot, "ocr", "Dockerfile"), "utf8");
   const middleware = fs.readFileSync(path.join(projectRoot, "web", "middleware.js"), "utf8");
   const fallbackPage = fs.readFileSync(path.join(projectRoot, "web", "app", "[...fallback]", "page.jsx"), "utf8");
-  const releaseScript = fs.readFileSync(path.join(projectRoot, "scripts", "release.sh"), "utf8");
-  const backupScript = fs.readFileSync(path.join(projectRoot, "scripts", "backup.sh"), "utf8");
+  const backupScript = fs.readFileSync(path.join(projectRoot, "web", "scripts", "backup.sh"), "utf8");
   const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "web", "package.json"), "utf8"));
   const version = fs.readFileSync(path.join(projectRoot, "VERSION"), "utf8").trim();
 
   assert.match(version, /^\d+\.\d+\.\d+$/);
-  assert.match(makefile, /^release:/m);
-  assert.match(makefile, /up -d --no-deps app/);
-  assert.match(compose, /image: archero-observer-app:\$\{ARCHERO_IMAGE_TAG:-local\}/);
-  assert.match(compose, /APP_VERSION: \$\{ARCHERO_IMAGE_TAG:-local\}/);
+  assert.match(makefile, /^update:/m);
+  assert.match(makefile, /^stop:/m);
+  assert.match(makefile, /^test:/m);
+  assert.match(makefile, /^build:/m);
+  assert.match(makefile, /^doctor:/m);
+  assert.match(makefile, /^backup:/m);
+  assert.match(makefile, /pull app/);
+  assert.match(makefile, /up -d --no-deps --no-build --wait --wait-timeout 90 app/);
+  assert.match(compose, /image: \$\{ARCHERO_WEB_IMAGE:-ghcr\.io\/cheark0x79\/archero-guild\}:\$\{ARCHERO_IMAGE_TAG:-latest\}/);
+  assert.doesNotMatch(compose, /^\s+build:/m);
+  assert.doesNotMatch(compose, /cloudflare|cloudflared|tunnel/i);
+  assert.match(compose, /APP_VERSION: \$\{ARCHERO_IMAGE_TAG:-latest\}/);
   assert.match(compose, /ARCHERO_USER_PASSWORD: \$\{ARCHERO_USER_PASSWORD:\?Set ARCHERO_USER_PASSWORD\}/);
   assert.match(compose, /ARCHERO_USER_SESSION_TOKEN: \$\{ARCHERO_USER_SESSION_TOKEN:\?Set ARCHERO_USER_SESSION_TOKEN\}/);
-  assert.match(compose, /TEST_DATA_ADMIN: "0"/);
-  assert.match(compose, /DEPLOYMENT_ENV: "production"/);
   assert.match(compose, /ARCHERO_DEPLOYMENT_ENV: production/);
   assert.doesNotMatch(compose, /ARCHERO_ENABLE_TEST_DATA_ADMIN/);
   assert.match(compose, /mem_limit: 2g/);
   assert.match(compose, /pids_limit: 256/);
   assert.match(compose, /cap_drop:\s*\n\s*- ALL/);
   assert.doesNotMatch(compose, /tesseract|ADB|screenshots:\/app\/screenshots/i);
+  assert.match(devCompose, /127\.0\.0\.1:\$\{ARCHERO_POSTGRES_PORT:-55440\}:5432/);
+  assert.match(devCompose, /storage\/schema\.sql:\/docker-entrypoint-initdb\.d\/001-schema\.sql:ro/);
+  assert.match(devCompose, /pg_isready -U archero -d archero_observer/);
+  assert.match(testCompose, /internal: true/);
+  assert.doesNotMatch(testCompose, /postgres-test-data/);
+  assert.match(testCompose, /tmpfs:\s*\n\s*- \/var\/lib\/postgresql\/data/);
   assert.match(dockerfile, /org\.opencontainers\.image\.version=\$APP_VERSION/);
+  assert.match(dockerfile, /ARG STRICT_DATABASE=1/);
+  assert.match(dockerfile, /ARG TEST_DATA_ADMIN=0/);
+  assert.match(dockerfile, /ARG DEPLOYMENT_ENV=production/);
   assert.doesNotMatch(dockerfile, /tesseract-ocr/);
   assert.match(ocrCompose, /127\.0\.0\.1:\$\{ARCHERO_OCR_UI_PORT:-5190\}:5190/);
   assert.match(ocrDockerfile, /tesseract-ocr/);
-  assert.ok(
-    releaseScript.indexOf("./scripts/wait-for-app.sh") < releaseScript.indexOf("> .release-version"),
-    "the deployed version must only be recorded after the health check succeeds",
-  );
-  assert.ok(
-    releaseScript.indexOf("sh ./scripts/backup.sh") < releaseScript.indexOf("build app"),
-    "persistent data must be backed up before the release image is built",
-  );
+  assert.match(makefile, /sh \.\/web\/scripts\/backup\.sh/);
   assert.match(backupScript, /pg_dump/);
   assert.match(backupScript, /pg_restore --list/);
   assert.match(backupScript, /tar -tzf/);
+  assert.match(backupScript, /mktemp -d/);
   assert.match(backupScript, /sha256sum -c/);
   assert.doesNotMatch(
     fs.readFileSync(path.join(projectRoot, "web", "app", "components", "DashboardApp.jsx"), "utf8"),
@@ -77,8 +87,8 @@ test("environment examples cover Compose inputs and the configuration contract",
   const derivedComposeSettings = new Set(["ARCHERO_IMAGE_TAG"]);
   const products = [
     {
-      compose: fs.readFileSync(path.join(projectRoot, "platform", "compose.yml"), "utf8"),
-      example: fs.readFileSync(path.join(projectRoot, "platform", ".env.example"), "utf8"),
+      compose: fs.readFileSync(path.join(projectRoot, "web", "compose.yml"), "utf8"),
+      example: fs.readFileSync(path.join(projectRoot, "web", ".env.prod.example"), "utf8"),
     },
     {
       compose: fs.readFileSync(path.join(projectRoot, "ocr", "compose.yml"), "utf8"),
@@ -86,8 +96,7 @@ test("environment examples cover Compose inputs and the configuration contract",
     },
   ];
   const examples = [
-    fs.readFileSync(path.join(projectRoot, ".env.example"), "utf8"),
-    fs.readFileSync(path.join(projectRoot, "web", ".env.local.example"), "utf8"),
+    fs.readFileSync(path.join(projectRoot, "web", ".env.dev.example"), "utf8"),
     ...products.map((product) => product.example),
   ];
 

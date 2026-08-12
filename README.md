@@ -1,31 +1,26 @@
-# Archero Observer
+# Archero Guild
 
-Archero Observer collects reviewed Archero guild data, stores it in PostgreSQL,
+Archero Guild collects reviewed Archero guild data, stores it in PostgreSQL,
 and exposes a dashboard plus a read-only API for integrations such as Discord
-bots. Capture and OCR stay on a trusted workstation; the public server never
-runs ADB, BlueStacks, or Tesseract.
+bots. Screenshots are uploaded to the trusted OCR workstation; the public
+server never receives raw images or runs Tesseract.
 
 ## Products
 
 | Product | Location | Runs on | Responsibility |
 | --- | --- | --- | --- |
-| Web platform | `platform/`, `web/` | Homelab server | Dashboard, API, PostgreSQL, temporary share links, Cloudflare Tunnel |
-| OCR workstation | `ocr/`, `observer/ocr/` | Trusted Windows/WSL PC | Screenshot review, OCR, validation, publication |
-| Observer tools | `observer/`, `scripts/` | Development workstation | Imports, migrations, tests, and maintenance |
+| Web and API | `web/` | Any Docker host | Dashboard, HTTP API, PostgreSQL, and container packaging |
+| OCR workstation | `ocr/` | Trusted Windows/WSL PC | Screenshot upload, OCR, human review, validation, and publication |
 
 The products exchange reviewed JSON through the versioned contract in
-[`contracts/import-batch.schema.json`](contracts/import-batch.schema.json).
+[`docs/contracts/import-batch.schema.json`](docs/contracts/import-batch.schema.json).
 Raw screenshots do not leave the OCR workstation.
 
 ## Prerequisites
 
-- Python 3.12 for observer and OCR tests;
 - Node.js 22 for the web application;
 - Docker Engine with Docker Compose v2 for PostgreSQL and deployments;
-- Tesseract, ADB, and BlueStacks only on the OCR workstation.
-
-`nix develop` provides the supported Linux development toolchain. Appium is
-not part of the default environment.
+- Tesseract inside the OCR workstation container.
 
 ## Quick start
 
@@ -33,18 +28,19 @@ Install the web dependencies and create the local configuration:
 
 ```bash
 npm --prefix web ci
-cp web/.env.local.example web/.env.local
+cp web/.env.dev.example web/.env.development.local
 npm --prefix web run dev
 ```
 
 Open `http://127.0.0.1:5181`. The example starts in explicit demonstration
-mode. Sign in with the local administrator values copied to `web/.env.local`.
+mode. Sign in with the local administrator values copied to `web/.env.development.local`.
 
 To use PostgreSQL instead, start the local database and uncomment
-`ARCHERO_DATABASE_URL` in `web/.env.local`:
+`ARCHERO_DATABASE_URL` in `web/.env.development.local`:
 
 ```bash
-docker compose up -d postgres
+docker compose --env-file web/.env.development.local \
+  -f web/compose.dev.yml up -d postgres
 ```
 
 The local database listens on `127.0.0.1:55440` by default. It is never filled
@@ -72,65 +68,72 @@ in the production Compose stack.
 ## Common development commands
 
 ```bash
-# Python unit tests
-python -m unittest discover -s tests
-
-# Web tests and documentation checks
-npm --prefix web test
-npm --prefix web run docs:check
-
-# Production-style web build
-npm --prefix web run build
-
-# Isolated PostgreSQL integration tests on Windows
-.\scripts\test-env.ps1 test
-.\scripts\test-env.ps1 stop
+make doctor
+make test
 ```
 
-Linux and WSL use `bash scripts/test-env.sh test` and
-`bash scripts/test-env.sh stop`. Stop the foreground web server with `Ctrl+C`.
+`make test` runs the Python and Web unit tests, documentation checks, and the
+disposable PostgreSQL integration tests.
 
 ## OCR workstation
 
 Configure and start the isolated OCR product:
 
-```powershell
-Copy-Item ocr/.env.example ocr/.env
-Copy-Item ocr/targets.example.json ocr/targets.json
-.\ocr\control.ps1 start
-.\ocr\control.ps1 status
+```bash
+cp ocr/.env.example ocr/.env
+cp ocr/targets.example.json ocr/targets.json
+docker compose --env-file ocr/.env -f ocr/compose.yml up -d --build --wait ui
+docker compose --env-file ocr/.env -f ocr/compose.yml ps
 ```
 
 Open `http://127.0.0.1:5190`. See the
-[OCR workstation guide](docs/deployment/ocr-workstation.md) before publishing
-to pre-production or production.
+[OCR workstation documentation](ocr/README.md) before publishing to a remote
+Web/API deployment.
 
-## Production operations
+## Docker deployment
 
-The supported deployment is Docker Compose behind Cloudflare Tunnel:
+The generic Docker Compose stack runs the Web/API application and PostgreSQL:
 
 ```bash
-cp platform/.env.example platform/.env.production
-chmod 600 platform/.env.production
+cp web/.env.prod.example web/.env.prod
+chmod 600 web/.env.prod
 make start
 make status
 make logs
 ```
 
-Use `make release` for a backup-first application update. Never run
+Run `make backup` before updating an installation. Never run
 `docker compose down -v`, `docker volume rm`, or
 `docker system prune --volumes` against the production project: those commands
 can destroy PostgreSQL data.
 
-Follow the [homelab deployment guide](docs/deployment/homelab.md) for first
-installation and [operations](docs/operations.md) for backups, updates,
-restoration, and rollback.
+Follow [operations](docs/operations.md) for backups, updates, restoration, and
+rollback. Public ingress and reverse proxies are deliberately outside the
+open-source stack.
+
+`make start` pulls the version from `VERSION` from GHCR and waits for both the
+Web/API and PostgreSQL health checks. To build the current checkout locally
+instead, run:
+
+```bash
+make build
+```
+
+Published releases produce a multi-architecture container image:
+
+```bash
+docker pull ghcr.io/cheark0x79/archero-guild:<version>
+```
+
+The image is built for `linux/amd64` and `linux/arm64`. Deployment-specific
+Compose overrides, ingress, DNS, and credentials belong in a separate private
+operations repository.
 
 ## Configuration and persistent state
 
-- `platform/.env.production`, `ocr/.env`, `ocr/targets.json`, and
-  `web/.env.local` contain environment-specific values and are ignored by Git.
-- PostgreSQL lives in the `archero-observer_postgres-data` Docker volume.
+- `web/.env.prod`, `ocr/.env`, `ocr/targets.json`, and
+  `web/.env.development.local` contain environment-specific values and are ignored by Git.
+- PostgreSQL lives in the `archero-guild_postgres-data` Docker volume.
 - Application files such as import state and exports live under `data/`.
 - Raw captures and OCR outbox files remain on the trusted workstation.
 - Backup archives live under `backups/` and must also be copied off the server.
@@ -147,7 +150,12 @@ Start with the [documentation index](docs/README.md):
 - [Operations runbook](docs/operations.md)
 - [Public API](docs/api.md)
 - [Canonical OpenAPI contract](docs/openapi.yaml)
-- [Current homelab deployment](docs/deployment/homelab.md)
 
 English is canonical for repository and API contracts. French operator guides
 are kept under `docs/guides/fr/`.
+
+## Project policies
+
+- [MIT License](LICENSE)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)

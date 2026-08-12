@@ -16,8 +16,8 @@ test("synthetic demo data is deterministic and contains no legacy guild identiti
   assert.equal(first.dailyBossRawSnapshots.at(-1).date, "2026-08-09");
   assert.equal(first.guildRoster.every((member) => /^9000000\d{2}$/.test(member.playerId)), true);
   assert.equal(first.guildRoster.every((member) => member.name.startsWith("Demo")), true);
-  assert.equal(JSON.stringify(first).includes("119982936"), false);
-  assert.equal(JSON.stringify(first).includes("Pignouf"), false);
+  assert.equal(JSON.stringify(first).includes("900000104"), false);
+  assert.equal(JSON.stringify(first).includes("MapleFox"), false);
 });
 
 test("baseline covers every boss and gives the primary fixture member a result for each", () => {
