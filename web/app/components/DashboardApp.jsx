@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { defaultRules as bundledDefaultRules } from "../../default-rules.js";
 import {
   activityLabel,
@@ -20,10 +21,18 @@ import {
 } from "../../metrics.js";
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
 import { bossDefinitionForDate, bossDefinitionForSnapshot } from "../../lib/boss-identity.js";
+import { adaptiveChartDomain, chartPointsForRange, completedSundayPoints, weeklyPowerDelta } from "../../lib/chart-points.js";
+import { buildDashboardBossSummary } from "../../lib/dashboard-boss-summary.js";
+import { buildDonationChartDays, latestDonationWeekPoints } from "../../lib/donation-chart.js";
+import {
+  expeditionRankIconPath,
+  expeditionRankScore,
+  formatExpeditionRank,
+} from "../../lib/expedition-rank.js";
 import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
-const RULES_STORAGE_KEY = "archero-guild-rules";
+const RULES_STORAGE_KEY = "archero-observer-rules";
 let captures = {};
 let changes = [];
 let dailyBossRawSnapshots = [];
@@ -201,10 +210,10 @@ const BOSS_ROTATION = [
 ];
 
 const routeMeta = {
-  dashboard: ["Dashboard", "Operational view of guild checks, boss damage, and alerts."],
+  dashboard: ["Dashboard", "Guild overview and collective progression."],
   members: ["Members", "Search, status, and individual progression."],
   boss: ["Boss", "Guild boss damage comparison, daily rankings, and records."],
-  data: ["Data", "Import status and consistency checks for reviewed OCR data."],
+  data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
   admin: ["Admin", "Operational tools and local rules."],
   test: ["Test", "Synthetic fixtures and isolated environment controls."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
@@ -282,6 +291,9 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const title = activeRoute === "dashboard" && captures.guildName
     ? captures.guildName
     : routeTitle;
+  const showSyntheticBadge = activeRoute === "dashboard"
+    && process.env.NEXT_PUBLIC_TEST_DATA_ADMIN === "1"
+    && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV);
 
   async function updateWarningAction(event, nextAction) {
     const response = await fetch("/api/warning-actions", {
@@ -314,17 +326,24 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
       />
       <main className="main" data-version={dataVersion}>
         <header className="topbar">
-          <div>
-            <h1>{selectedMember?.name ?? title}</h1>
-            <p>
-              {selectedMember
-                ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays, selectedMember.activityText)}`
-                : subtitle}
-            </p>
+          <div className={activeRoute === "dashboard" ? "guild-page-title" : undefined}>
+            {activeRoute === "dashboard" ? <span className="guild-crest-placeholder" aria-hidden="true">A2</span> : null}
+            <div>
+              <h1>{selectedMember?.name ?? title}</h1>
+              <p>
+                {selectedMember
+                  ? `${selectedMember.playerId ?? "Missing ID"} · ${roleLabel(selectedMember.role)} · ${activityLabel(selectedMember.lastActivityDays, selectedMember.activityText)}`
+                  : subtitle}
+              </p>
+            </div>
           </div>
-          <div className="topbar-meta" aria-label="Last update">
-            <span>Last update</span>
-            <strong>{formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}</strong>
+          <div className="topbar-right">
+            {activeRoute === "members" ? <div id="topbar-actions" className="topbar-actions" /> : null}
+            <div className="topbar-meta" aria-label="Data freshness">
+              {showSyntheticBadge ? <span className="environment-badge">Synthetic test data</span> : null}
+              <span>{activeRoute === "dashboard" ? "Last capture" : "Last update"}</span>
+              <strong>{formatDateTime(captures.lastCapturedAt ?? captures.lastImportedAt)}</strong>
+            </div>
           </div>
         </header>
         {dataWarning ? (
@@ -343,6 +362,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           <MembersView query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} sort={sort} setSort={setSort} rules={rules} />
         )}
         {!dataLoading && activeRoute === "boss" && <BossView />}
+        {!dataLoading && activeRoute === "data" && <DataView />}
         {!dataLoading && activeRoute === "admin" && <AdminView dataVersion={dataVersion} />}
         {!dataLoading && activeRoute === "test" && <TestEnvironmentView />}
         {!dataLoading && activeRoute === "member" && selectedMember && (
@@ -376,6 +396,407 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         {!dataLoading && activeRoute === "settings" && <RulesView rules={rules} setRules={setRules} />}
       </main>
     </div>
+  );
+}
+
+function DataView() {
+  const [busyAction, setBusyAction] = useState(null);
+  const [importDate, setImportDate] = useState(todayLabel());
+  const [messages, setMessages] = useState([]);
+  const [bossAudit, setBossAudit] = useState({ loading: true, audit: null, dataAvailable: false, error: null });
+  const [adbStatus, setAdbStatus] = useState({ checking: true, connected: false, devices: [], error: null });
+  const [captureDialog, setCaptureDialog] = useState(null);
+  const [syncSteps, setSyncSteps] = useState(() => buildSyncSteps());
+  const [importJob, setImportJob] = useState(null);
+  const [importHistory, setImportHistory] = useState([]);
+  const reportedImportJobs = useRef(new Set());
+  const importRunning = importJob && ["queued", "running"].includes(importJob.status);
+
+  useEffect(() => {
+    refreshBossAudit();
+    refreshAdbStatus();
+    refreshImportJobStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!importRunning) return undefined;
+    const timer = window.setInterval(() => refreshImportJobStatus(importJob.id), 5_000);
+    return () => window.clearInterval(timer);
+  }, [importRunning, importJob?.id]);
+
+  async function refreshAdbStatus() {
+    setAdbStatus((current) => ({ ...current, checking: true }));
+    try {
+      const response = await fetch("/api/data/status", { headers: dataActionHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      setAdbStatus({
+        checking: false,
+        connected: Boolean(payload.adb?.connected),
+        devices: payload.adb?.devices ?? [],
+        error: payload.adb?.error ?? null,
+      });
+    } catch (error) {
+      setAdbStatus({
+        checking: false,
+        connected: false,
+        devices: [],
+        error: error instanceof Error ? error.message : "ADB status unavailable",
+      });
+    }
+  }
+
+  async function refreshBossAudit() {
+    setBossAudit((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const response = await fetch("/api/data/boss-history-audit", { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.audit) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      setBossAudit({ loading: false, audit: payload.audit, dataAvailable: payload.dataAvailable !== false, error: null });
+    } catch (error) {
+      setBossAudit({ loading: false, audit: null, dataAvailable: false, error: error instanceof Error ? error.message : "Boss history audit unavailable" });
+    }
+  }
+
+  function openCapture(kind) {
+    setCaptureDialog({ kind, phase: "confirm", result: null, error: null });
+  }
+
+  async function confirmCapture() {
+    if (!captureDialog) return;
+    const action = `capture:${captureDialog.kind}`;
+    setBusyAction(action);
+    setCaptureDialog((current) => ({ ...current, phase: "capturing", error: null }));
+    try {
+      const response = await fetch(`/api/data/capture/${captureDialog.kind}`, { method: "POST", headers: dataActionHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        setCaptureDialog((current) => ({ ...current, phase: "error", error: payload.error ?? `HTTP ${response.status}` }));
+        return;
+      }
+      setCaptureDialog((current) => ({ ...current, phase: "review", result: payload.capture }));
+    } catch (error) {
+      setCaptureDialog((current) => ({
+        ...current,
+        phase: "error",
+        error: error instanceof Error ? error.message : "Unexpected browser error",
+      }));
+    } finally {
+      setBusyAction(null);
+      refreshAdbStatus();
+    }
+  }
+
+  function validateCapture() {
+    if (!captureDialog?.result) return;
+    addDataMessage(setMessages, dataSuccessMessage(`capture:${captureDialog.kind}`, { capture: captureDialog.result }));
+    setCaptureDialog(null);
+  }
+
+  async function rejectCapture() {
+    if (!captureDialog?.result) {
+      setCaptureDialog(null);
+      return;
+    }
+    const action = `capture:${captureDialog.kind}`;
+    setBusyAction("discard");
+    try {
+      const response = await fetch("/api/data/discard", {
+        method: "POST",
+        headers: dataActionHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ path: captureDialog.result.path }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        setCaptureDialog((current) => ({ ...current, phase: "error", error: payload.error ?? `HTTP ${response.status}` }));
+        return;
+      }
+      addDataMessage(setMessages, {
+        action,
+        status: "warning",
+        title: `${dataActionLabel(action)} discarded`,
+        detail: `${captureDialog.result.path} was moved to the recoverable screenshot trash.`,
+      });
+      setCaptureDialog(null);
+    } catch (error) {
+      setCaptureDialog((current) => ({
+        ...current,
+        phase: "error",
+        error: error instanceof Error ? error.message : "Unexpected browser error",
+      }));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function importDay() {
+    const date = importDate.trim();
+    setSyncSteps(importJobToSteps({ status: "queued", stepIndex: 0, detail: "Starting import job." }));
+    setBusyAction("import-start");
+    try {
+      const response = await fetch("/api/data/import", {
+        method: "POST",
+        headers: dataActionHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(date ? { date } : {}),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        setSyncSteps(markSyncStep(buildSyncSteps(), 0, "error"));
+        addDataMessage(setMessages, {
+          action: "import",
+          status: "error",
+          title: "Synchronize did not start",
+          detail: payload.error ?? `HTTP ${response.status}`,
+        });
+        return;
+      }
+      setImportJob(payload.job);
+      setSyncSteps(importJobToSteps(payload.job));
+      addDataMessage(setMessages, {
+        action: "import",
+        status: payload.alreadyRunning ? "warning" : "success",
+        title: payload.alreadyRunning ? "Synchronize already running" : "Synchronize started",
+        detail: importJobDetail(payload.job),
+      });
+      refreshImportJobStatus(payload.job.id);
+    } catch (error) {
+      setSyncSteps(markSyncStep(buildSyncSteps(), 0, "error"));
+      addDataMessage(setMessages, {
+        action: "import",
+        status: "error",
+        title: "Synchronize did not start",
+        detail: error instanceof Error ? error.message : "Unexpected browser error",
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function refreshImportJobStatus(id = null) {
+    const suffix = id ? `?id=${encodeURIComponent(id)}` : "";
+    try {
+      const response = await fetch(`/api/data/import/status${suffix}`, { headers: dataActionHeaders() });
+      const payload = await response.json().catch(() => ({}));
+      setImportHistory(payload.jobs ?? []);
+      if (!response.ok || payload.ok === false || !payload.job) return;
+      setImportJob(payload.job);
+      setSyncSteps(importJobToSteps(payload.job));
+      if (["succeeded", "failed"].includes(payload.job.status) && !reportedImportJobs.current.has(payload.job.id)) {
+        reportedImportJobs.current.add(payload.job.id);
+        addDataMessage(
+          setMessages,
+          payload.job.status === "succeeded"
+            ? dataSuccessMessage("import", { import: payload.job.result })
+            : {
+                action: "import",
+                status: "error",
+                title: "Synchronize failed",
+                detail: payload.job.error ?? "Import stopped without an error message.",
+              },
+        );
+      }
+    } catch {
+      // Keep the last known job state; the next poll can recover.
+    }
+  }
+
+  return (
+    <div className="data-page">
+      <section className="panel data-status-panel">
+        <PanelHeading
+          title="Boss history audit"
+          subtitle="Read-only verification of result dates, exported boss identities, and personal records."
+          action={
+            <button className="secondary-button compact-action" type="button" onClick={refreshBossAudit} disabled={bossAudit.loading}>
+              {bossAudit.loading ? "Checking..." : "Refresh"}
+            </button>
+          }
+        />
+        {bossAudit.error ? <p className="muted">Audit unavailable: {bossAudit.error}</p> : null}
+        {bossAudit.audit ? (
+          <>
+            <div className="data-status-row">
+              <StatusPill
+                label={!bossAudit.dataAvailable ? "No live data" : bossAudit.audit.summary.issues === 0 ? "Aligned" : `${bossAudit.audit.summary.issues} issue${bossAudit.audit.summary.issues === 1 ? "" : "s"}`}
+                severity={bossAudit.dataAvailable && bossAudit.audit.summary.issues === 0 ? "positive" : "warning"}
+              />
+              <span className="muted">
+                {!bossAudit.dataAvailable ? "Rotation available, but no database export could be audited." : `${bossAudit.audit.summary.daysChecked} days · ${bossAudit.audit.summary.rowsChecked} results · ${bossAudit.audit.summary.personalBestsAffected} PB affected`}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Day</th><th>Expected boss</th><th>Exported boss</th><th>Impact</th><th>Suggested date</th></tr></thead>
+                <tbody>
+                  {bossAudit.audit.issues.length ? bossAudit.audit.issues.map((issue, index) => (
+                    <tr key={`${issue.type}-${issue.date ?? "unknown"}-${index}`}>
+                      <td>{issue.date ?? "Invalid date"}</td>
+                      <td>{issue.expectedBoss?.name ?? "Unknown"}</td>
+                      <td>{issue.actualBoss?.name ?? issue.bossKeys?.join(", ") ?? "Missing"}</td>
+                      <td>{bossAuditIssueLabel(issue)}</td>
+                      <td>{issue.suggestedPreviousDate ?? "—"}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan="5">No date/boss inconsistency detected in the current export.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted">Rotation: {bossAudit.audit.rotation.map((boss) => `${boss.dayLabel} ${boss.name}`).join(" · ")}</p>
+          </>
+        ) : null}
+      </section>
+
+      <section className={`panel data-status-panel ${adbStatus.connected ? "connected" : "disconnected"}`}>
+        <PanelHeading
+          title="ADB"
+          subtitle={adbStatus.checking ? "Checking device connection." : adbStatus.connected ? "Ready for manual screenshots." : "No ready ADB device detected."}
+          action={
+            <button className="secondary-button compact-action" type="button" onClick={refreshAdbStatus}>
+              Refresh
+            </button>
+          }
+        />
+        <div className="data-status-row">
+          <StatusPill label={adbStatus.connected ? "Connected" : adbStatus.checking ? "Checking" : "Disconnected"} severity={adbStatus.connected ? "positive" : "warning"} />
+          <span className="muted">{adbStatus.devices.length > 0 ? adbStatus.devices.map((device) => `${device.serial} ${device.state}`).join(" · ") : adbStatus.error ?? "No device listed"}</span>
+        </div>
+      </section>
+
+      <section className="panel data-command-panel">
+        <PanelHeading title="BlueStacks screenshot" subtitle="Capture only: no OCR, import, or database write runs until you request synchronization." />
+        <div className="data-command-grid">
+          <DataActionButton
+            title="Guild members"
+            detail="Current guild member list screen."
+            disabled={busyAction !== null}
+            onClick={() => openCapture("guild-members")}
+          />
+          <DataActionButton
+            title="Guild boss"
+            detail="Current boss ranking screen."
+            disabled={busyAction !== null}
+            onClick={() => openCapture("guild-boss")}
+          />
+        </div>
+      </section>
+
+      <section className="panel data-import-panel">
+        <PanelHeading title="Synchronize data" subtitle="Runs OCR/import on the server. The job continues if this page is reloaded." />
+        <div className="data-import-row">
+          <label className="data-date-field">
+            <span>Capture date</span>
+            <input value={importDate} onChange={(event) => setImportDate(event.target.value)} placeholder="YYYY-MM-DD" inputMode="numeric" />
+          </label>
+          <button className="primary-button" type="button" disabled={busyAction === "import-start" || importRunning} onClick={importDay}>
+            {busyAction === "import-start" ? "Starting..." : importRunning ? "Synchronizing..." : "Synchronize"}
+          </button>
+          <button className="secondary-button" type="button" disabled={busyAction === "import-start"} onClick={() => refreshImportJobStatus(importJob?.id)}>
+            Refresh status
+          </button>
+        </div>
+        <SyncSteps steps={syncSteps} />
+        {importJob ? (
+          <div className={`sync-job-card ${importJob.status}`}>
+            <div>
+              <strong>{importJob.status === "failed" ? "Import failed" : importJob.status === "succeeded" ? "Import complete" : "Import running"}</strong>
+              <span>{importJobDetail(importJob)}</span>
+            </div>
+            <meter min="0" max="100" value={importJob.progress ?? 0}>
+              {importJob.progress ?? 0}%
+            </meter>
+            {importJob.status === "succeeded" && importJob.result?.quality ? (
+              <div className={`import-quality ${importJob.result.quality.status}`}>
+                <strong>{importJob.result.quality.status === "accepted" ? "Quality checks passed" : "Accepted with warnings"}</strong>
+                <span>
+                  Guild {Math.round((importJob.result.quality.roster_coverage ?? importJob.result.quality.member_coverage ?? 0) * 100)}% · Boss{" "}
+                  {Math.round((importJob.result.quality.boss_coverage ?? 0) * 100)}%
+                </span>
+                {(importJob.result.quality.warnings ?? []).map((warning) => (
+                  <small key={warning}>{warning}</small>
+                ))}
+                <small>
+                  {importJob.result.database_persisted ? "Saved to PostgreSQL." : "PostgreSQL not configured; local data only."}
+                  {importJob.result.backup_path ? ` Backup: ${importJob.result.backup_path}` : ""}
+                </small>
+              </div>
+            ) : null}
+            <small>{importJob.status === "failed" ? importJob.error : `Updated ${formatDateTime(importJob.updatedAt)}. Status refreshes every 5 seconds while running.`}</small>
+          </div>
+        ) : (
+          <p className="muted">No import job is currently known by the server.</p>
+        )}
+        {importHistory.length ? (
+          <div className="import-history">
+            <strong>Recent imports</strong>
+            {importHistory.map((job) => (
+              <article className={job.status} key={job.id}>
+                <span>{job.date ?? "Latest capture"}</span>
+                <StatusPill
+                  label={importHistoryLabel(job)}
+                  severity={importHistorySeverity(job)}
+                />
+                <small>{job.status === "failed" ? job.error : job.result?.quality?.warnings?.[0] ?? job.detail}</small>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel data-log-panel">
+        <PanelHeading title="Action log" subtitle="Latest manual capture and import messages for this browser session." />
+        <div className="data-log">
+          {messages.length === 0 ? (
+            <p className="muted">No manual action has run yet.</p>
+          ) : (
+            messages.map((message) => (
+              <article className={`data-log-item ${message.status}`} key={message.id}>
+                <header>
+                  <strong>{message.title}</strong>
+                  <span>{message.at}</span>
+                </header>
+                <p>{message.detail}</p>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+      {captureDialog ? (
+        <CaptureDialog
+          dialog={captureDialog}
+          busyAction={busyAction}
+          adbConnected={adbStatus.connected}
+          onCancel={() => setCaptureDialog(null)}
+          onConfirm={confirmCapture}
+          onValidate={validateCapture}
+          onReject={rejectCapture}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function bossAuditIssueLabel(issue) {
+  const impact = `${issue.rowsAffected ?? 0} result${issue.rowsAffected === 1 ? "" : "s"}, ${issue.personalBestsAffected ?? 0} PB`;
+  return {
+    weekday_mismatch: `Boss does not match weekday · ${impact}`,
+    missing_explicit_boss: `Legacy export without boss identity · ${impact}`,
+    unknown_boss: `Unknown exported boss · ${impact}`,
+    multiple_bosses_for_date: `Several bosses share this date · ${impact}`,
+    invalid_date: `Invalid result date · ${impact}`,
+  }[issue.type] ?? impact;
+}
+
+function DataActionButton({ title, detail, disabled, onClick }) {
+  return (
+    <button className="data-action-button" type="button" disabled={disabled} onClick={onClick}>
+      <span className="data-action-icon" aria-hidden="true">
+        PNG
+      </span>
+      <span>
+        <strong>{title}</strong>
+        <small>{detail}</small>
+      </span>
+    </button>
   );
 }
 
@@ -700,7 +1121,7 @@ function AdminMemberEditor({ member, record, onSaved }) {
               pattern="[0-9]{6,20}"
               value={playerIdDraft}
               onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
-              placeholder="900000000"
+              placeholder="119000000"
             />
             <button className="primary-button" type="submit" disabled={saveState.saving}>Assign ID</button>
           </div>
@@ -787,6 +1208,137 @@ function AdminMemberEditor({ member, record, onSaved }) {
   );
 }
 
+function CaptureDialog({ dialog, busyAction, adbConnected, onCancel, onConfirm, onValidate, onReject }) {
+  const title = dataKindLabel(dialog.kind);
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="data-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
+        <header>
+          <div>
+            <h2 id="capture-dialog-title">{title} screenshot</h2>
+            <p>{dialog.phase === "review" ? "Review the screenshot that was saved." : "Confirm when the emulator is already on the correct screen."}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onCancel} aria-label="Close capture dialog">
+            ×
+          </button>
+        </header>
+
+        {dialog.phase === "confirm" ? (
+          <div className="data-modal-body">
+            <div className="data-confirm-box">
+              <StatusPill label={adbConnected ? "Connected" : "Disconnected"} severity={adbConnected ? "positive" : "warning"} />
+              <p>Only one BlueStacks screenshot will be taken. No navigation, OCR, import, or database command will run.</p>
+            </div>
+            <div className="data-modal-actions">
+              <button className="secondary-button" type="button" onClick={onCancel}>
+                Cancel
+              </button>
+              <button className="primary-button" type="button" disabled={!adbConnected || busyAction !== null} onClick={onConfirm}>
+                Take screenshot
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {dialog.phase === "capturing" ? (
+          <div className="data-modal-body">
+            <div className="data-progress-note">Capturing current ADB screen...</div>
+          </div>
+        ) : null}
+
+        {dialog.phase === "review" ? (
+          <div className="data-modal-body">
+            <ScreenshotPreview title="Captured screenshot" capture={dialog.result} />
+            <div className="data-modal-actions">
+              <button className="secondary-button" type="button" disabled={busyAction !== null} onClick={onReject}>
+                {busyAction === "discard" ? "Discarding..." : "Discard screenshot"}
+              </button>
+              <button className="secondary-button" type="button" disabled={busyAction !== null} onClick={onConfirm}>
+                Retake
+              </button>
+              <button className="primary-button" type="button" disabled={busyAction !== null} onClick={onValidate}>
+                Keep screenshot
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {dialog.phase === "error" ? (
+          <div className="data-modal-body">
+            <div className="data-error-box">{dialog.error}</div>
+            <div className="data-modal-actions">
+              <button className="secondary-button" type="button" onClick={onCancel}>
+                Close
+              </button>
+              <button className="primary-button" type="button" disabled={!adbConnected} onClick={onConfirm}>
+                Try again
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function ScreenshotPreview({ title, capture }) {
+  if (!capture) return null;
+  return (
+    <figure className="screenshot-preview">
+      <figcaption>
+        <strong>{title}</strong>
+        <span>{capture.path}</span>
+      </figcaption>
+      {capture.imageUrl ? <img src={capture.imageUrl} alt={title} /> : <div className="preview-missing">Preview unavailable</div>}
+    </figure>
+  );
+}
+
+function SyncSteps({ steps }) {
+  return (
+    <ol className="sync-steps">
+      {steps.map((step) => (
+        <li className={step.status} key={step.label}>
+          <span aria-hidden="true" />
+          <strong>{step.label}</strong>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function buildSyncSteps(status = "idle") {
+  return ["Find raw screenshots", "Extract guild data", "Check imported data", "Update dashboard file"].map((label) => ({ label, status }));
+}
+
+function markSyncStep(steps, index, status) {
+  return steps.map((step, stepIndex) => ({ ...step, status: stepIndex === index ? status : stepIndex < index ? "done" : "idle" }));
+}
+
+function importJobToSteps(job) {
+  if (!job) return buildSyncSteps();
+  if (job.status === "succeeded") return buildSyncSteps("done");
+  const index = Math.max(0, Math.min(3, job.stepIndex ?? 0));
+  return buildSyncSteps().map((step, stepIndex) => ({
+    ...step,
+    status: job.status === "failed" && stepIndex === index ? "error" : stepIndex < index ? "done" : stepIndex === index ? "running" : "idle",
+  }));
+}
+
+function importJobDetail(job) {
+  if (!job) return "";
+  const percent = typeof job.progress === "number" ? `${Math.round(job.progress)}%` : "progress unknown";
+  const date = job.date ? `${job.date} · ` : "";
+  return `${date}${percent} · ${job.detail ?? job.phase ?? job.status}`;
+}
+
+function dataKindLabel(kind) {
+  return {
+    "guild-members": "Guild members",
+    "guild-boss": "Guild boss",
+  }[kind] ?? kind;
+}
+
 function dataActionHeaders(extra = {}) {
   return { "x-archero-dashboard-action": "1", ...extra };
 }
@@ -794,117 +1346,225 @@ function dataActionHeaders(extra = {}) {
 function Dashboard({ rules }) {
   const [donationRange, setDonationRange] = useState("1w");
   const [powerRange, setPowerRange] = useState("1w");
-  const [bossRange, setBossRange] = useState("1w");
   const summary = buildSummary(members, rules);
-  const powerStats = dashboardRangeRows(buildDailyPowerStats(), powerRange);
+  const guildStats = objectOrDefault(captures.guildStats, {});
+  const guildPowerStats = dashboardRangeRows(buildDailyGuildPowerStats().slice(-30), "month", "total");
+  const guildPowerSeries = guildPowerStats.map((day) => day.total);
+  const guildPowerDates = dashboardRangeLabels(guildPowerStats);
+  const powerStats = dashboardRangeRows(buildDailyPowerStats(), powerRange, "median");
   const medianPowerSeries = powerStats.map((day) => day.median);
-  const powerDates = dashboardRangeLabels(powerStats, powerRange);
-  const weeklyDonationStats = buildWeeklyDonationStats();
-  const donationStats = donationRange === "1w"
-    ? dashboardRangeRows(buildDailyDonationStats(), donationRange)
-    : dashboardRangeRows(weeklyDonationStats, donationRange);
+  const powerDates = dashboardRangeLabels(powerStats);
+  const donationStats = dashboardDonationRangeRows(buildDailyDonationStats(), donationRange);
   const donationSeries = donationStats.map((day) => day.total);
-  const donationDates = dashboardRangeLabels(donationStats, donationRange);
-  const bossDamageStats = dashboardRangeRows(buildDailyBossDamageStats(), bossRange);
-  const bossDamageSeries = bossDamageStats.map((day) => day.total);
-  const bossDamageDates = dashboardRangeLabels(bossDamageStats, bossRange);
-  const latestMemberDay = Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots.at(-1) : null;
-  const currentBossDay = filterBossDayToCurrentMembers(Array.isArray(dailyBossRawSnapshots) ? dailyBossRawSnapshots.at(-1) : null);
-  const bossRows = currentBossDay?.rows?.filter((row) => isCurrentPlayerId(row.playerId) && typeof row.bossDamageToday === "number") ?? [];
-  const topBoss = [...bossRows].sort((left, right) => (right.bossDamageToday ?? 0) - (left.bossDamageToday ?? 0))[0] ?? null;
-  const latestCaptureDate = latestMemberDay?.date ?? currentBossDay?.date ?? null;
-  const guildCaptureRows = latestMemberDay?.rows?.length ?? 0;
-  const bossCaptureRows = currentBossDay?.rows?.filter((row) => !row.playerId || isCurrentPlayerId(row.playerId)) ?? [];
-  const cards = [
-    ["Guild members", summary.members, "Current roster and guild capacity"],
-    ["Free slots", summary.freeSlots, "Places available in the guild"],
-    ["Weekly donations", formatNumber(summary.totalContribution), deltaDetail(summary.totalContributionDelta)],
-    ["Boss participation", `${bossRows.length}/${summary.currentMembers}`, "Members recorded for the current boss"],
+  const donationDates = dashboardRangeLabels(donationStats);
+  const memberCount = numericValue(guildStats.memberCount, summary.currentMembers);
+  const memberCapacity = numericValue(guildStats.memberCapacity, rules.memberCapacity);
+  const freeSlots = typeof memberCount === "number" && typeof memberCapacity === "number"
+    ? Math.max(0, memberCapacity - memberCount)
+    : null;
+  const guildPower = numericValue(guildStats.totalPower, guildPowerSeries.at(-1));
+  const guildStatsHistory = Array.isArray(captures.guildStatsHistory) ? captures.guildStatsHistory : [];
+  const guildPowerDelta = weeklyGuildMetricDelta(guildStatsHistory, "totalPower");
+  const expeditionPointsDelta = weeklyGuildMetricDelta(guildStatsHistory, "expeditionPoints");
+  const expeditionRank = formatExpeditionRank(guildStats);
+  const expeditionRankTrend = weeklyGuildRankTrend(guildStatsHistory, expeditionRank);
+  const bossSummary = buildDashboardBossSummary({
+    today: localIsoDate(),
+    snapshots: dailyBossRawSnapshots,
+    participationSnapshots: dailyRawSnapshots,
+    definitions: BOSS_ROTATION,
+    memberCount,
+    includePlayer: isCurrentPlayerId,
+  });
+  const facts = [
+    {
+      key: "level",
+      label: "Guild level",
+      value: formatOptionalNumber(guildStats.level),
+      detail: formatGuildExperience(guildStats.xpCurrent, guildStats.xpRequired),
+    },
+    {
+      key: "members",
+      label: "Members",
+      value: formatRatio(memberCount, memberCapacity),
+      detail: freeSlots == null ? "Capacity not captured" : `${freeSlots} free slot${freeSlots === 1 ? "" : "s"}`,
+    },
+    {
+      key: "power",
+      label: "Guild power",
+      value: formatOptionalCompact(guildPower),
+      detail: weeklyDeltaDetail(guildPowerDelta, formatCompact),
+      detailTone: deltaTone(guildPowerDelta),
+    },
+    {
+      key: "expedition",
+      label: "Expedition points",
+      value: formatOptionalNumber(guildStats.expeditionPoints),
+      detail: weeklyDeltaDetail(expeditionPointsDelta, formatNumber),
+      detailTone: deltaTone(expeditionPointsDelta),
+    },
+    {
+      key: "rank",
+      label: "Expedition rank",
+      value: expeditionRank || "Not captured",
+      detail: expeditionRankTrend.label,
+      detailTone: expeditionRankTrend.tone,
+      iconSrc: expeditionRankIconPath(expeditionRank),
+    },
   ];
 
   return (
-    <>
-      <div className="dashboard-command-grid guild-overview-grid">
-        <section className="panel command-panel guild-snapshot-panel">
-          <PanelHeading title="Guild snapshot" subtitle="Latest validated overview of the current guild." />
-          <div className="snapshot-grid">
-            <div>
-              <span>Date</span>
-              <strong>{latestCaptureDate ?? "No capture"}</strong>
-            </div>
-            <div>
-              <span>Members captured</span>
-              <strong>{guildCaptureRows}/{summary.currentMembers}</strong>
-            </div>
-            <div>
-              <span>Boss captures</span>
-              <strong>{bossRows.length}/{bossCaptureRows.length}</strong>
-            </div>
+    <div className="guild-dashboard">
+      <section className="guild-facts-band" aria-label="Guild overview statistics">
+        {facts.map((fact) => (
+          <div className="guild-fact" key={fact.key}>
+            <GuildFactIcon type={fact.key} src={fact.iconSrc} />
+            <span className="guild-fact-copy">
+              <span className="guild-fact-label">{fact.label}</span>
+              <strong>{fact.value}</strong>
+              <small className={`guild-fact-detail ${fact.detailTone ?? ""}`.trim()}>{fact.detail}</small>
+            </span>
           </div>
-        </section>
-      </div>
-      <div className="action-strip">
-        <a className="action-tile" href="/boss">
-          <span>Boss</span>
-          <strong>{topBoss ? formatBossDamageText(topBoss.bossDamageToday, topBoss.damageText) : "Not recorded"}</strong>
-          <small>{topBoss?.name ?? "No boss damage"}</small>
-        </a>
-        <a className="action-tile" href="/members">
-          <span>Roster</span>
-          <strong>{summary.members}</strong>
-          <small>Browse current members</small>
-        </a>
-      </div>
-      <div className="metrics-grid">
-        {cards.map(([label, value, detail]) => (
-          <article className="metric-card" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{detail}</small>
-          </article>
         ))}
-      </div>
-      <div className="dashboard-grid">
+      </section>
+
+      <div className="guild-dashboard-focus-grid">
         <ChartPanel
-          title="Weekly donation peak"
-          subtitle={donationRange === "1w" ? "Current week · Monday to Sunday" : "Weekly peak captured at the end of each week"}
-          action={<DashboardRangeSelector value={donationRange} onChange={setDonationRange} />}
-          values={donationSeries}
-          xLabels={donationDates}
-          label="Weekly donation"
-          value={formatOptionalNumber(donationSeries.at(-1))}
+          className="guild-power-panel"
+          title="Guild power"
+          subtitle="Seven checkpoints · Last 30 captured days"
+          values={guildPowerSeries}
+          xLabels={guildPowerDates}
+          label="Guild power"
+          value={formatOptionalCompact(guildPower)}
+          accessibleSummary={chartAccessibleSummary(guildPowerStats, "total", formatCompact)}
           showPoints
-          pointValueMode="auto"
+          pointValueMode="all"
         />
+        <DashboardBossCard summary={bossSummary} />
+      </div>
+
+      <div className="guild-trends-grid">
         <ChartPanel
-          title="Median power"
-          subtitle={powerRange === "1w" ? "Current week · Monday to Sunday" : "Weekly guild median, sampled for readability"}
-          action={<DashboardRangeSelector value={powerRange} onChange={setPowerRange} />}
+          title="Median member power"
+          subtitle={dashboardRangeSubtitle(powerRange)}
+          action={<DashboardRangeSelector value={powerRange} onChange={setPowerRange} label="Median member power range" />}
           values={medianPowerSeries}
           xLabels={powerDates}
-          label="Median power"
+          label="Median member power"
           value={formatOptionalCompact(medianPowerSeries.at(-1))}
+          accessibleSummary={chartAccessibleSummary(powerStats, "median", formatCompact)}
           positive
           showPoints
         />
         <ChartPanel
-          title="Guild boss damage"
-          subtitle={bossRange === "1w" ? "Total damage recorded for each boss this week" : "Weekly guild damage trend"}
-          action={<DashboardRangeSelector value={bossRange} onChange={setBossRange} />}
-          values={bossDamageSeries}
-          xLabels={bossDamageDates}
-          label="Total boss damage"
-          value={formatOptionalBossDamage(bossDamageSeries.at(-1))}
+          title="Weekly donations"
+          subtitle={donationRangeSubtitle(donationRange, donationStats.length)}
+          action={<DonationRangeSelector value={donationRange} onChange={setDonationRange} />}
+          values={donationSeries}
+          xLabels={donationDates}
+          label="Weekly donation"
+          value={formatOptionalNumber(donationSeries.at(-1))}
+          accessibleSummary={chartAccessibleSummary(donationStats, "total", formatNumber)}
           showPoints
           pointValueMode="auto"
         />
       </div>
-    </>
+    </div>
+  );
+}
+
+function DashboardBossCard({ summary }) {
+  const todayBoss = summary?.todayBoss;
+  const resultBoss = summary?.resultBoss;
+  const participation = summary?.resultCaptured && typeof summary.participants === "number"
+    ? `${summary.participants}/${summary.memberCount ?? "—"} members attacked`
+    : "No result captured yet";
+  const resultLabel = summary?.resultIsYesterday ? "Yesterday" : "Latest result";
+
+  return (
+    <section className="panel dashboard-boss-card" aria-labelledby="dashboard-boss-card-title">
+      <div className="dashboard-boss-card-heading">
+        <div>
+          <span className="eyebrow">Guild boss</span>
+          <h2 id="dashboard-boss-card-title">Today</h2>
+        </div>
+        <a className="boss-week-details" href="/boss">Details</a>
+      </div>
+      <div className="dashboard-boss-today">
+        <span className="dashboard-boss-main-image" aria-hidden="true">
+          {todayBoss?.image ? <img src={todayBoss.image} alt="" /> : <span>—</span>}
+        </span>
+        <span>
+          <strong>{todayBoss?.name ?? "Boss not available"}</strong>
+          <small>{summary?.today ? formatShortDate(summary.today) : "Date unavailable"}</small>
+        </span>
+      </div>
+      <div className="dashboard-boss-yesterday">
+        <span className="dashboard-boss-small-image" aria-hidden="true">
+          {resultBoss?.image ? <img src={resultBoss.image} alt="" /> : <span>—</span>}
+        </span>
+        <span>
+          <small>{resultLabel} · {summary?.resultDate ? formatShortDate(summary.resultDate) : "Date unavailable"}</small>
+          <strong>{resultBoss?.name ?? "Boss not available"}</strong>
+          <small>{participation}</small>
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function GuildFactIcon({ type, src = null }) {
+  const paths = {
+    level: (
+      <>
+        <path d="M10 2.5 12.2 7l4.9.7-3.55 3.45.85 4.88L10 13.72l-4.4 2.31.85-4.88L2.9 7.7 7.8 7 10 2.5Z" />
+      </>
+    ),
+    members: (
+      <>
+        <circle cx="7" cy="7" r="2.5" />
+        <circle cx="14.5" cy="8" r="2" />
+        <path d="M2.8 16.5c.45-3 2-4.5 4.7-4.5s4.25 1.5 4.7 4.5M12 13c2.9-.7 4.65.45 5.2 3.5" />
+      </>
+    ),
+    power: (
+      <>
+        <path d="m11.3 2.5-6 8h4.6l-1.2 7 6-8h-4.6l1.2-7Z" />
+      </>
+    ),
+    expedition: (
+      <>
+        <circle cx="10" cy="10" r="7" />
+        <path d="m12.8 7.2-1.7 3.9-3.9 1.7 1.7-3.9 3.9-1.7Z" />
+      </>
+    ),
+    rank: (
+      <>
+        <path d="M5 3.5h10v4.2c0 3.1-2.05 5.3-5 5.3s-5-2.2-5-5.3V3.5Z" />
+        <path d="M5 6H2.8v1.2c0 2 1.15 3.2 3.1 3.35M15 6h2.2v1.2c0 2-1.15 3.2-3.1 3.35M10 13v3.5M6.8 17h6.4" />
+      </>
+    ),
+  };
+  return (
+    <span className={`guild-fact-icon${src ? " guild-fact-icon-image" : ""}`} aria-hidden="true">
+      {src ? (
+        <img src={src} alt="" />
+      ) : (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          {paths[type] ?? paths.expedition}
+        </svg>
+      )}
+    </span>
   );
 }
 
 function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, setSort, rules }) {
   const [exporting, setExporting] = useState(false);
+  const [topbarActionHost, setTopbarActionHost] = useState(null);
+  useEffect(() => {
+    setTopbarActionHost(document.getElementById("topbar-actions"));
+  }, []);
   const historyDates = memberHistoryDates(members);
   const latestHistoryDate = historyDates.at(-1) ?? currentImportDate();
   const [selectedMembersDate, setSelectedMembersDate] = useState(latestHistoryDate);
@@ -912,8 +1572,21 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
     setSelectedMembersDate(latestHistoryDate);
   }, [latestHistoryDate]);
   const selectedMembersDateIndex = Math.max(0, historyDates.indexOf(selectedMembersDate));
-  const previousMembersDate = selectedMembersDateIndex > 0 ? historyDates[selectedMembersDateIndex - 1] : null;
   const datedMembers = members.map((member) => memberSnapshotForDate(member, selectedMembersDate));
+  const currentDatedMembers = datedMembers.filter((member) => !isFormerStatus(member.status));
+  const memberCapacity = numericValue(captures.guildStats?.memberCapacity, rules.memberCapacity);
+  const requiredBossTries = numericValue(rules.minBossTries, rules.bossRequiredOnEventDay ? 1 : 0);
+  const weeklyDonationTarget = numericValue(rules.minContribution7d, null);
+  const memberOverview = currentDatedMembers.reduce(
+    (overview, member) => {
+      const evaluation = evaluateMember(member, rules);
+      if (evaluation.status === "Absent") overview.absent += 1;
+      if (requiredBossTries != null && typeof member.bossAttacks === "number" && member.bossAttacks < requiredBossTries) overview.bossIncomplete += 1;
+      if (weeklyDonationTarget != null && typeof member.contribution7d === "number" && member.contribution7d < weeklyDonationTarget) overview.donationBelowTarget += 1;
+      return overview;
+    },
+    { bossIncomplete: 0, donationBelowTarget: 0, absent: 0 },
+  );
   const membersForView = datedMembers.filter((member) => statusFilter === "former" || !isFormerStatus(member.status));
   const visibleMembers = sortMembers(filterMembers(membersForView, rules, query, statusFilter), rules, sort);
 
@@ -949,15 +1622,47 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
   }
 
   return (
-    <>
-      <div className="toolbar">
-        <label className="search-field">
-          <span>Search</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="Name or player ID" />
+    <div className="members-page">
+      <section className="members-overview" aria-label="Roster overview">
+        <article className="metric-card compact">
+          <span className="members-overview-label"><MemberOverviewIcon type="members" />Members</span>
+          <strong>{formatRatio(currentDatedMembers.length, memberCapacity)}</strong>
+          <small>{memberCapacity == null ? "Capacity not captured" : `${Math.max(0, memberCapacity - currentDatedMembers.length)} free slots`}</small>
+        </article>
+        <article className="metric-card compact members-overview-boss">
+          <span className="members-overview-label"><MemberOverviewIcon type="boss" />Boss incomplete</span>
+          <strong>{memberOverview.bossIncomplete}</strong>
+          <small>{requiredBossTries == null ? "Target not configured" : `Below ${requiredBossTries} tries`}</small>
+        </article>
+        <article className="metric-card compact members-overview-donation">
+          <span className="members-overview-label"><MemberOverviewIcon type="donation" />Donation below target</span>
+          <strong>{memberOverview.donationBelowTarget}</strong>
+          <small>{weeklyDonationTarget == null ? "Target not configured" : `Below ${formatNumber(weeklyDonationTarget)} weekly`}</small>
+        </article>
+        <article className="metric-card compact members-overview-absent">
+          <span className="members-overview-label"><MemberOverviewIcon type="absent" />Absent</span>
+          <strong>{memberOverview.absent}</strong>
+          <small>Activity threshold reached</small>
+        </article>
+      </section>
+      <div className="toolbar members-toolbar">
+        <label className="members-search-control">
+          <span className="sr-only">Search members</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="Search members" />
+          {query ? <button type="button" aria-label="Clear member search" title="Clear search" onClick={() => setQuery("")}>×</button> : null}
         </label>
-        <label className="select-field">
-          <span>Filter</span>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+        <HistoryDateSelector
+          rows={historyDates.map((date) => ({ date }))}
+          selectedDate={selectedMembersDate}
+          selectedIndex={selectedMembersDateIndex}
+          onSelect={setSelectedMembersDate}
+          onPrevious={selectPreviousMembersDate}
+          onNext={selectNextMembersDate}
+        />
+        <label className="members-status-control">
+          <span>Status</span>
+          <select aria-label="Filter members by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
             {[
               ["all", "All"],
               ["active", "Active"],
@@ -971,19 +1676,13 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
             ))}
           </select>
         </label>
-        <HistoryDateSelector
-          rows={historyDates.map((date) => ({ date }))}
-          selectedDate={selectedMembersDate}
-          selectedIndex={selectedMembersDateIndex}
-          previousRow={previousMembersDate ? { date: previousMembersDate } : null}
-          onSelect={setSelectedMembersDate}
-          onPrevious={selectPreviousMembersDate}
-          onNext={selectNextMembersDate}
-        />
-        <button className="secondary-button" type="button" onClick={exportMembers} disabled={exporting || visibleMembers.length === 0}>
-          {exporting ? "Exporting..." : "Export image"}
-        </button>
       </div>
+      {topbarActionHost ? createPortal(
+        <button className="secondary-button" type="button" onClick={exportMembers} disabled={exporting || visibleMembers.length === 0}>
+          {exporting ? "Exporting..." : "Export PNG"}
+        </button>,
+        topbarActionHost,
+      ) : null}
       <section className="panel table-panel">
         <div className="table-context">
           <strong>{visibleMembers.length} member{visibleMembers.length === 1 ? "" : "s"}</strong>
@@ -998,7 +1697,6 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
               <col className="col-donation" />
               <col className="col-boss-tries" />
               <col className="col-power" />
-              <col className="col-capture" />
               <col className="col-alerts" />
             </colgroup>
             <thead>
@@ -1010,7 +1708,6 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
                   ["donation", "Donation"],
                   ["bossTries", "Boss tries"],
                   ["power", "Power"],
-                  ["capture", "Last seen"],
                   ["alerts", "Status"],
                 ].map(([key, label]) => (
                   <th key={key}>
@@ -1025,12 +1722,12 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
               {visibleMembers.map((member) => (
                 <MemberRow member={member} rules={rules} key={memberKey(member)} />
               ))}
-              {visibleMembers.length === 0 ? <tr><td colSpan="8" className="table-empty-state">No members match this view.</td></tr> : null}
+              {visibleMembers.length === 0 ? <tr><td colSpan="7" className="table-empty-state">No members match this view.</td></tr> : null}
             </tbody>
           </table>
         </div>
       </section>
-    </>
+    </div>
   );
 }
 
@@ -1247,14 +1944,13 @@ function BossMultiLineChart({ dates, series }) {
   const height = 430;
   const padding = { top: 28, right: 36, bottom: 46, left: 64 };
   const values = series.flatMap((player) => player.points.map((point) => point.damage));
-  const max = Math.max(...values, 1);
-  const scaleMax = max * 1.08;
+  const { minimum: scaleMin, maximum: scaleMax, span: scaleRange } = adaptiveChartDomain(values);
   const xForDate = (date) => {
     const index = dates.indexOf(date);
     return dates.length === 1 ? width / 2 : padding.left + (index * (width - padding.left - padding.right)) / (dates.length - 1);
   };
-  const yForDamage = (value) => height - padding.bottom - (value / scaleMax) * (height - padding.top - padding.bottom);
-  const gridValues = [0.25, 0.5, 0.75, 1].map((ratio) => scaleMax * ratio);
+  const yForDamage = (value) => height - padding.bottom - ((value - scaleMin) / scaleRange) * (height - padding.top - padding.bottom);
+  const gridValues = [1, 0.75, 0.5, 0.25, 0].map((ratio) => scaleMin + scaleRange * ratio);
 
   return (
     <div className="boss-multi-chart">
@@ -1687,6 +2383,37 @@ function BossByBossRecordsPanel({ records, limit = 3 }) {
   );
 }
 
+function MemberOverviewIcon({ type }) {
+  const paths = {
+    members: (
+      <>
+        <circle cx="8" cy="8" r="3" />
+        <path d="M2.5 19c.6-3.7 2.45-5.5 5.5-5.5s4.9 1.8 5.5 5.5M14 6.5a2.5 2.5 0 0 1 0 5M15.5 14c2.8.15 4.55 1.8 5 5" />
+      </>
+    ),
+    boss: (
+      <>
+        <circle cx="12" cy="12" r="8.5" />
+        <circle cx="12" cy="12" r="4.5" />
+        <path d="M12 3.5V7M12 17v3.5M3.5 12H7M17 12h3.5" />
+      </>
+    ),
+    donation: (
+      <>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M14.8 8.7c-.65-.55-1.5-.85-2.55-.85-1.4 0-2.35.65-2.35 1.65 0 2.55 5.1 1.2 5.1 4 0 1.05-1 1.8-2.55 1.8-1.15 0-2.15-.35-2.95-1.05M12.25 6.4v11.2" />
+      </>
+    ),
+    absent: (
+      <>
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 19c.6-3.65 2.6-5.5 6-5.5 1.3 0 2.4.28 3.3.84M16 15l5 5M21 15l-5 5" />
+      </>
+    ),
+  };
+  return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[type]}</svg>;
+}
+
 function MemberRow({ member, rules }) {
   const router = useRouter();
   const evaluation = evaluateMember(member, rules);
@@ -1694,28 +2421,33 @@ function MemberRow({ member, rules }) {
     <tr
       className={`member-row ${rowStateClass(evaluation)} ${isFormerStatus(member.status) ? "row-former" : ""} clickable-row`}
       onClick={() => navigateToMember(member, router)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigateToMember(member, router);
+        }
+      }}
+      tabIndex={0}
+      aria-label={`Open ${member.name}`}
     >
-      <td>
+      <td data-label="Member">
         <a className="member-link" href={`/members/${encodeURIComponent(memberKey(member))}`} onClick={(event) => event.stopPropagation()}>
           <strong>{member.name}</strong>
           <NewMemberBadge member={member} rules={rules} />
         </a>
       </td>
-      <td>{roleLabel(member.role)}</td>
-      <td>{activityLabel(member.lastActivityDays, member.activityText)}</td>
-      <td className="numeric">
+      <td data-label="Role">{roleLabel(member.role)}</td>
+      <td data-label="Last connection">{activityLabel(member.lastActivityDays, member.activityText)}</td>
+      <td className="numeric" data-label="Donation">
         <ValueWithDelta value={formatOptionalNumber(member.contribution7d)} delta={member.contributionDelta} formatter={formatNumber} />
       </td>
-      <td className="numeric">
+      <td className="numeric" data-label="Boss tries">
         <ValueWithDelta value={formatOptionalNumber(member.bossAttacks)} delta={member.bossAttacksDelta} formatter={formatNumber} />
       </td>
-      <td className="numeric">
+      <td className="numeric" data-label="Power">
         <ValueWithDelta value={formatOptionalCompact(member.power)} delta={member.powerDelta} formatter={formatCompact} />
       </td>
-      <td>
-        <CapturePill member={member} />
-      </td>
-      <td>
+      <td data-label="Status">
         <StatusPill label={evaluation.status} severity={evaluation.severity} />
       </td>
     </tr>
@@ -1824,16 +2556,14 @@ function MemberDetail({
         {sessionRole === "admin" ? <StatusPill label={evaluation.status} severity={evaluation.severity} /> : null}
       </div>
       <div className="member-detail-grid">
-        <section className="panel detail-hero">
-          <div className="detail-title">
+        <section className="panel detail-hero wide">
+          <div className="member-profile-intro">
             <div>
-              <h2>
-                {member.name} <NewMemberBadge member={member} rules={rules} />
-              </h2>
-              <p>
-                {member.playerId ?? "Missing ID"} · {roleLabel(member.role)}
-              </p>
+              <span className="eyebrow">Current snapshot</span>
+              <h2>Member performance</h2>
+              <p>Latest captured guild contribution and progression.</p>
             </div>
+            <NewMemberBadge member={member} rules={rules} />
           </div>
           <div className="detail-metrics">
             <DetailMetric label="Power" value={formatOptionalCompact(member.power)} delta={member.powerDelta} formatter={formatCompact} />
@@ -1845,85 +2575,78 @@ function MemberDetail({
             <span><strong>Last observed</strong>{member.lastSeenAt ?? "Not recorded"}</span>
             <span><strong>Joined guild</strong>{member.joinedAt ?? "Not recorded"}</span>
           </div>
-          {!member.playerId && sessionRole === "admin" ? (
-            <form className="identity-assignment" onSubmit={assignPlayerId}>
-              <div>
-                <strong>Unmatched OCR member</strong>
-                <span>Assign the permanent Archero player ID. Existing history with the same observed name will be linked.</span>
-              </div>
-              <label>
-                <span>Player ID</span>
-                <input
-                  inputMode="numeric"
-                  pattern="[0-9]{6,20}"
-                  value={playerIdDraft}
-                  onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
-                  placeholder="900000000"
-                  aria-describedby={identitySaveState.error ? "identity-save-error" : undefined}
-                />
-              </label>
-              <button className="primary-button" type="submit" disabled={identitySaveState.saving}>
-                {identitySaveState.saving ? "Saving..." : "Assign ID"}
-              </button>
-              {identitySaveState.error ? (
-                <small className="form-error" id="identity-save-error" role="alert">
-                  {identitySaveState.error}
-                </small>
-              ) : null}
-            </form>
-          ) : null}
-          {member.playerId && sessionRole === "admin" ? (
-            <div className="identity-assignment member-status-assignment">
-              <div>
-                <strong>Guild membership</strong>
-                <span>Confirm departures manually so an incomplete screenshot never removes somebody automatically.</span>
-              </div>
-              <div className="member-status-actions">
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={statusSaveState.saving || member.status === "active"}
-                  onClick={() => updateMemberStatus("active")}
-                >
-                  Active
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={statusSaveState.saving || member.status === "left"}
-                  onClick={() => updateMemberStatus("left")}
-                >
-                  Left
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={statusSaveState.saving || member.status === "kicked"}
-                  onClick={() => updateMemberStatus("kicked")}
-                >
-                  Kicked
-                </button>
-              </div>
-              {statusSaveState.error ? <small className="form-error" role="alert">{statusSaveState.error}</small> : null}
-            </div>
-          ) : null}
         </section>
         {sessionRole === "admin" ? (
-          <section className="panel">
-            <PanelHeading title="Needs" subtitle="Automatic checks against the current rules" />
-            <div className="need-list">
-              {needs.length === 0 ? (
-                <p className="muted">No current rule issue.</p>
-              ) : (
-                needs.map((need) => (
-                  <div className="need-row" key={need.label}>
-                    <StatusPill label={need.label} severity={need.severity} />
-                    <span>{need.detail}</span>
+          <details className="panel wide member-officer-tools">
+            <summary>
+              <span>
+                <strong>Officer tools</strong>
+                <small>Current checks and guild membership management</small>
+              </span>
+              <span className="officer-summary-state">
+                {needs.length > 0 ? `${needs.length} issue${needs.length === 1 ? "" : "s"}` : "No current issue"}
+              </span>
+            </summary>
+            <div className="member-officer-content">
+              <section className="member-officer-needs">
+                <PanelHeading title="Current checks" subtitle="Automatic checks against the current rules" />
+                <div className="need-list">
+                  {needs.length === 0 ? (
+                    <p className="muted">No current rule issue.</p>
+                  ) : (
+                    needs.map((need) => (
+                      <div className="need-row" key={need.label}>
+                        <StatusPill label={need.label} severity={need.severity} />
+                        <span>{need.detail}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+              {!member.playerId ? (
+                <form className="identity-assignment" onSubmit={assignPlayerId}>
+                  <div>
+                    <strong>Unmatched OCR member</strong>
+                    <span>Assign the permanent Archero player ID. Existing history with the same observed name will be linked.</span>
                   </div>
-                ))
+                  <label>
+                    <span>Player ID</span>
+                    <input
+                      inputMode="numeric"
+                      pattern="[0-9]{6,20}"
+                      value={playerIdDraft}
+                      onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
+                      placeholder="119000000"
+                      aria-describedby={identitySaveState.error ? "identity-save-error" : undefined}
+                    />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={identitySaveState.saving}>
+                    {identitySaveState.saving ? "Saving..." : "Assign ID"}
+                  </button>
+                  {identitySaveState.error ? <small className="form-error" id="identity-save-error" role="alert">{identitySaveState.error}</small> : null}
+                </form>
+              ) : (
+                <div className="identity-assignment member-status-assignment">
+                  <div>
+                    <strong>Guild membership</strong>
+                    <span>Confirm departures manually so an incomplete screenshot never removes somebody automatically.</span>
+                  </div>
+                  <div className="member-status-actions">
+                    {[
+                      ["active", "Active"],
+                      ["left", "Left"],
+                      ["kicked", "Kicked"],
+                    ].map(([status, label]) => (
+                      <button className="secondary-button" type="button" disabled={statusSaveState.saving || member.status === status} onClick={() => updateMemberStatus(status)} key={status}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {statusSaveState.error ? <small className="form-error" role="alert">{statusSaveState.error}</small> : null}
+                </div>
               )}
             </div>
-          </section>
+          </details>
         ) : null}
         <section className="panel">
           <PanelHeading title="Power progression" subtitle="Up to seven evenly spaced captured values" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
@@ -1943,6 +2666,7 @@ function MemberDetail({
             events={automaticWarnings}
             title="Automatic warning history"
             canManage
+            collapsible
             onUpdate={updateWarningAction}
           />
         ) : null}
@@ -1957,6 +2681,7 @@ function MemberBossPersonalBests({ member }) {
   return (
     <section className="panel wide">
       <PanelHeading title="PB by boss" subtitle={`${recordedCount}/${BOSS_ROTATION.length} bosses with a recorded personal best.`} />
+      <span className="member-boss-scroll-hint">Swipe to see all bosses →</span>
       <div className="member-boss-pb-grid">
         {rows.map(({ boss, record }) => (
           <article className={record ? "member-boss-pb-card" : "member-boss-pb-card empty"} key={boss.key}>
@@ -1970,7 +2695,7 @@ function MemberBossPersonalBests({ member }) {
             {record ? (
               <div className="member-boss-pb-score">
                 <strong>{formatBossDamageText(record.damage, record.damageText)}</strong>
-                <span>{record.date}</span>
+                <span>{formatFullDate(record.date)}</span>
                 <small>{record.rank ? `Game rank ${record.rank}` : "No game rank"}</small>
               </div>
             ) : (
@@ -2124,51 +2849,78 @@ function RulesView({ rules, setRules }) {
   );
 }
 
-function ChartPanel({ title, subtitle, badge, action, values, label, value, positive, xLabels = [], showPoints = false, pointValueMode = "all" }) {
-  const { line, area, points } = chartGeometry(values, 720, 230);
-  const pointRadius = values.length > 12 ? 3 : 5;
+function ChartPanel({ className = "", title, subtitle, badge, action, values, label, value, positive, xLabels = [], showPoints = false, pointValueMode = "all", accessibleSummary = "", referenceValue = null, referenceLabel = "" }) {
+  const pointRadius = values.length > 12 ? 2.5 : 3.5;
+  const chartHeight = className.split(/\s+/).includes("guild-power-panel") ? 140 : 160;
+  const chartVariants = [
+    { className: "chart-svg-wide", width: 720, height: chartHeight },
+    { className: "chart-svg-compact", width: 390, height: chartHeight },
+  ];
   return (
-    <section className="panel chart-panel">
+    <section className={`panel chart-panel ${className}`.trim()}>
       <div className="panel-heading">
         <div>
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
-        {action ?? <StatusPill label={badge} severity={positive ? "positive" : "neutral"} />}
+        {action ?? (badge ? <StatusPill label={badge} severity={positive ? "positive" : "neutral"} /> : null)}
       </div>
       <div className="chart">
         {values.length === 0 ? (
           <div className="chart-empty">No captured data for this range.</div>
         ) : (
-          <svg viewBox="0 0 720 230" role="img" aria-label={`${label}: ${value}`}>
-            {xLabels.length > 0 && <path className="chart-grid-line" d="M 34 196 L 686 196" />}
-            <path className="chart-area" d={area} />
-            <path className="chart-line" d={line} />
-            {showPoints &&
-              points.map((point, index) => (
-                <g key={`${xLabels[index] ?? index}-${values[index]}`}>
-                  <circle className="chart-point" cx={point.x} cy={point.y} r={pointRadius} />
-                  {shouldShowPointValue(index, points.length, pointValueMode) && (
-                    <text className="chart-value-label" x={point.x} y={chartPointValueY(point.y)} textAnchor={chartPointTextAnchor(index, points.length)}>
-                      {formatCompact(values[index])}
+          <>
+            <p className="sr-only">{accessibleSummary || `${label}: ${value}`}</p>
+            {chartVariants.map((variant) => {
+              const { line, area, points, ticks, plot, referenceY } = chartGeometry(values, variant.width, variant.height, referenceValue);
+              return (
+                <svg className={variant.className} viewBox={`0 0 ${variant.width} ${variant.height}`} aria-hidden="true" key={variant.className}>
+                  {ticks.map((tick) => (
+                    <g key={tick.value}>
+                      <path className="chart-grid-line" d={`M ${plot.left} ${tick.y} L ${plot.right} ${tick.y}`} />
+                      <text className="chart-y-axis-label" x={plot.left - 8} y={tick.y + 4} textAnchor="end">
+                        {formatCompact(tick.value)}
+                      </text>
+                    </g>
+                  ))}
+                  {referenceY != null ? (
+                    <g>
+                      <path className="chart-reference-line" d={`M ${plot.left} ${referenceY} L ${plot.right} ${referenceY}`} />
+                      <text className="chart-reference-label" x={plot.right - 2} y={Math.max(12, referenceY - 5)} textAnchor="end">
+                        {referenceLabel}
+                      </text>
+                    </g>
+                  ) : null}
+                  <path className="chart-area" d={area} />
+                  <path className="chart-line" d={line} />
+                  {showPoints &&
+                    points.map((point, index) => (
+                      <g key={`${index}-${xLabels[index] ?? ""}-${values[index]}`}>
+                        <circle className="chart-point" cx={point.x} cy={point.y} r={pointRadius} />
+                        {shouldShowPointValue(index, points.length, pointValueMode) && (
+                          <text className="chart-value-label" x={point.x} y={chartPointValueY(point.y, index)} textAnchor={chartPointTextAnchor(index, points.length)}>
+                            {formatCompact(values[index])}
+                          </text>
+                        )}
+                        {xLabels[index] && (
+                          <text className="chart-axis-label" x={point.x} y={variant.height - 10} textAnchor={chartPointTextAnchor(index, points.length)}>
+                            {xLabels[index]}
+                          </text>
+                        )}
+                      </g>
+                    ))}
+                  <text className="chart-label" x="22" y="24">
+                    {label}
+                  </text>
+                  {!showPoints && (
+                    <text className="chart-label" x={variant.width - 22} y="24" textAnchor="end">
+                      {value}
                     </text>
                   )}
-                  {xLabels[index] && (
-                    <text className="chart-axis-label" x={point.x} y="216" textAnchor={chartPointTextAnchor(index, points.length)}>
-                      {xLabels[index]}
-                    </text>
-                  )}
-                </g>
-              ))}
-            <text className="chart-label" x="22" y="24">
-              {label}
-            </text>
-            {!showPoints && (
-              <text className="chart-label" x="698" y="24" textAnchor="end">
-                {value}
-              </text>
-            )}
-          </svg>
+                </svg>
+              );
+            })}
+          </>
         )}
       </div>
     </section>
@@ -2181,8 +2933,8 @@ function chartPointTextAnchor(index, pointCount) {
   return "middle";
 }
 
-function chartPointValueY(pointY) {
-  return pointY < 60 ? pointY + 24 : pointY - 12;
+function chartPointValueY(pointY, index) {
+  return pointY - (index % 2 === 0 ? 9 : 18);
 }
 
 function shouldShowPointValue(index, pointCount, mode) {
@@ -2192,26 +2944,39 @@ function shouldShowPointValue(index, pointCount, mode) {
   return true;
 }
 
-function chartGeometry(values, width, height) {
-  if (values.length === 0) return { line: "", area: "", points: [] };
+function chartGeometry(values, width, height, referenceValue = null) {
+  if (values.length === 0) return { line: "", area: "", points: [], ticks: [], plot: { left: 0, right: width } };
 
-  const padding = { left: 34, right: 34, top: 42, bottom: 34 };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(1, max - min);
+  const padding = { left: 58, right: 28, top: 42, bottom: 26 };
+  const domainValues = Number.isFinite(referenceValue) ? [...values, referenceValue] : values;
+  const { minimum, maximum, span } = adaptiveChartDomain(domainValues);
   const drawableWidth = width - padding.left - padding.right;
   const drawableHeight = height - padding.top - padding.bottom;
   const step = values.length > 1 ? drawableWidth / (values.length - 1) : 0;
   const points = values.map((chartValue, index) => ({
     x: padding.left + index * step,
-    y: padding.top + ((max - chartValue) / range) * drawableHeight,
+    y: padding.top + ((maximum - chartValue) / span) * drawableHeight,
   }));
   const line = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
   const first = points[0];
   const last = points.at(-1);
   const baseline = height - padding.bottom;
   const area = `${line} L ${last.x.toFixed(1)} ${baseline} L ${first.x.toFixed(1)} ${baseline} Z`;
-  return { line, area, points };
+  const tickValues = [maximum, minimum + span / 2, minimum];
+  const ticks = tickValues.map((tickValue) => ({
+    value: tickValue,
+    y: Number((padding.top + ((maximum - tickValue) / span) * drawableHeight).toFixed(1)),
+  }));
+  return {
+    line,
+    area,
+    points,
+    ticks,
+    referenceY: Number.isFinite(referenceValue)
+      ? Number((padding.top + ((maximum - referenceValue) / span) * drawableHeight).toFixed(1))
+      : null,
+    plot: { left: padding.left, right: width - padding.right },
+  };
 }
 
 function HistoryChart({ rows, dataKey, formatter, emptyText }) {
@@ -2223,13 +2988,7 @@ function HistoryChart({ rows, dataKey, formatter, emptyText }) {
   const height = 230;
   const padding = 28;
   const values = points.map((point) => point.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const paddingValue = Math.max(1, Math.abs(average) * 0.01, (max - min) * 0.25);
-  const scaleMin = Math.max(0, min - paddingValue);
-  const scaleMax = max + paddingValue;
-  const range = Math.max(1, scaleMax - scaleMin);
+  const { minimum: scaleMin, span: range } = adaptiveChartDomain(values);
   const slots = Math.max(rows.length, points.length, 1);
   const coordinates = points.map((point) => {
     const x = slots === 1 ? width / 2 : padding + (point.slotIndex * (width - padding * 2)) / (slots - 1);
@@ -2283,7 +3042,7 @@ function chartValueLabelY(point, index) {
 function HistoryTable({ rows }) {
   if (rows.length === 0) return <p className="muted">No captured daily history for this member yet.</p>;
   return (
-    <div className="table-wrap compact-table-wrap">
+    <div className="table-wrap compact-table-wrap member-history-table">
       <table className="detail-table">
         <thead>
           <tr>
@@ -2300,21 +3059,21 @@ function HistoryTable({ rows }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.date}>
-              <td>{row.date}</td>
-              <td>
+              <td data-label="Date">{formatFullDate(row.date)}</td>
+              <td data-label="Power">
                 <ValueWithDelta value={formatOptionalPower(row.power)} delta={row.powerDelta} formatter={formatCompact} />
               </td>
-              <td>
+              <td data-label="Donation">
                 <ValueWithDelta value={formatOptionalNumber(row.donation)} delta={row.donationDelta} formatter={formatNumber} />
               </td>
-              <td>
+              <td data-label="Boss tries">
                 <ValueWithDelta value={formatOptionalNumber(row.bossAttacks)} delta={row.bossAttacksDelta} formatter={formatNumber} />
               </td>
-              <td>
+              <td data-label="Boss damage">
                 <ValueWithDelta value={formatOptionalBossDamage(row.bossDamage, row.bossDamageText)} delta={row.bossDamageDelta} formatter={formatBossDamageText} />
               </td>
-              <td>{row.activity}</td>
-              <td>
+              <td data-label="Activity">{row.activity}</td>
+              <td data-label="Warnings">
                 <div className="warning-tag-list">
                   {(row.warnings ?? []).length > 0
                     ? row.warnings.map((warning) => (
@@ -2323,7 +3082,7 @@ function HistoryTable({ rows }) {
                     : <span className="muted">—</span>}
                 </div>
               </td>
-              <td>
+              <td data-label="Source">
                 <span className="muted">{row.source}</span>
               </td>
             </tr>
@@ -2334,14 +3093,10 @@ function HistoryTable({ rows }) {
   );
 }
 
-function AutomaticWarningHistory({ events, title, showMember = false, canManage = false, onUpdate }) {
+function AutomaticWarningHistory({ events, title, showMember = false, canManage = false, collapsible = false, onUpdate }) {
   const visibleEvents = events.slice(0, 100);
-  return (
-    <section className="panel wide">
-      <PanelHeading
-        title={title}
-        subtitle={`${events.length} rule warning(s) recorded; they remain visible after the current status is resolved.`}
-      />
+  const historyContent = (
+    <>
       <div className="event-list">
         {events.length === 0 ? (
           <p className="muted">No automatic warnings recorded yet.</p>
@@ -2357,6 +3112,26 @@ function AutomaticWarningHistory({ events, title, showMember = false, canManage 
           ))
         )}
       </div>
+    </>
+  );
+  if (collapsible) {
+    return (
+      <details className="panel wide warning-history-drawer">
+        <summary>
+          <span>
+            <strong>{title}</strong>
+            <small>Officer follow-up history</small>
+          </span>
+          <span>{events.length} recorded</span>
+        </summary>
+        {historyContent}
+      </details>
+    );
+  }
+  return (
+    <section className="panel wide">
+      <PanelHeading title={title} subtitle={`${events.length} rule warning(s) recorded; they remain visible after the current status is resolved.`} />
+      {historyContent}
     </section>
   );
 }
@@ -2483,16 +3258,47 @@ function RangeSelector({ chart, ranges, setRange }) {
   );
 }
 
-function DashboardRangeSelector({ value, onChange }) {
+function DashboardRangeSelector({ value, onChange, label = "Dashboard chart range" }) {
   return (
-    <div className="range-selector" aria-label="Dashboard chart range">
+    <div className="range-selector" role="group" aria-label={label}>
       {[
         ["1w", "1W"],
-        ["2m", "2M"],
+        ["4w", "4W"],
+        ["8w", "8W"],
         ["all", "All"],
       ].map(([range, label]) => (
-        <button className={value === range ? "active" : ""} type="button" onClick={() => onChange(range)} key={range}>
+        <button
+          className={value === range ? "active" : ""}
+          type="button"
+          aria-pressed={value === range}
+          onClick={() => onChange(range)}
+          key={range}
+        >
           {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DonationRangeSelector({ value, onChange }) {
+  return (
+    <div className="range-selector" role="group" aria-label="Weekly donations range">
+      {[
+        ["1w", "1W", "1 week"],
+        ["4w", "1M", "1 month"],
+        ["8w", "2M", "2 months"],
+        ["all", "All", "All history"],
+      ].map(([range, shortLabel, title]) => (
+        <button
+          className={value === range ? "active" : ""}
+          type="button"
+          aria-label={title}
+          aria-pressed={value === range}
+          onClick={() => onChange(range)}
+          key={range}
+        >
+          {shortLabel}
         </button>
       ))}
     </div>
@@ -2519,31 +3325,109 @@ function StatusPill({ label, severity }) {
   return <span className={`status-pill ${severity}`}>{displayLabel(label)}</span>;
 }
 
-function HistoryDateSelector({ rows, selectedDate, selectedIndex, previousRow, onSelect, onPrevious, onNext }) {
+function HistoryDateSelector({ rows, selectedDate, selectedIndex, onSelect, onPrevious, onNext }) {
   const hasRows = rows.length > 0;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(String(selectedDate).slice(0, 7));
+  const pickerRef = useRef(null);
+  const previousDate = selectedIndex > 0 ? rows[selectedIndex - 1]?.date : null;
+  const nextDate = selectedIndex < rows.length - 1 ? rows[selectedIndex + 1]?.date : null;
+  const availableDates = new Set(rows.map((row) => row.date));
+  const availableMonths = [...new Set(rows.map((row) => String(row.date).slice(0, 7)))];
+  const visibleMonthIndex = availableMonths.indexOf(visibleMonth);
+  const [visibleYear, visibleMonthNumber] = visibleMonth.split("-").map(Number);
+  const firstDayOffset = visibleYear && visibleMonthNumber
+    ? (new Date(Date.UTC(visibleYear, visibleMonthNumber - 1, 1)).getUTCDay() + 6) % 7
+    : 0;
+  const daysInVisibleMonth = visibleYear && visibleMonthNumber
+    ? new Date(Date.UTC(visibleYear, visibleMonthNumber, 0)).getUTCDate()
+    : 0;
+
+  useEffect(() => {
+    setVisibleMonth(String(selectedDate).slice(0, 7));
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    function closePicker(event) {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      if (event.type === "pointerdown" && pickerRef.current?.contains(event.target)) return;
+      setPickerOpen(false);
+    }
+    document.addEventListener("pointerdown", closePicker);
+    document.addEventListener("keydown", closePicker);
+    return () => {
+      document.removeEventListener("pointerdown", closePicker);
+      document.removeEventListener("keydown", closePicker);
+    };
+  }, [pickerOpen]);
+
   return (
-    <div className="history-date-selector" aria-label="Member history date selector">
-      <button className="secondary-button compact-action" type="button" onClick={onPrevious} disabled={!hasRows || selectedIndex <= 0}>
-        Previous
-      </button>
-      <label>
-        <span>Date</span>
-        <select value={selectedDate} onChange={(event) => onSelect(event.target.value)} disabled={!hasRows}>
-          {hasRows ? (
-            rows.map((row) => (
-              <option key={row.date} value={row.date}>
-                {row.date}
-              </option>
-            ))
-          ) : (
-            <option value={selectedDate}>No capture</option>
-          )}
-        </select>
-      </label>
-      <button className="secondary-button compact-action" type="button" onClick={onNext} disabled={!hasRows || selectedIndex >= rows.length - 1}>
-        Next
-      </button>
-      <small>{previousRow ? `Compared with ${previousRow.date}` : "First captured day"}</small>
+    <div className="history-date-selector" aria-label="Member history date selector" ref={pickerRef}>
+      <div className="history-date-controls">
+        <button className="secondary-button compact-action" type="button" aria-label="Previous captured day" title={previousDate ? `Previous capture — ${formatFullDate(previousDate)}` : "No previous capture"} onClick={onPrevious} disabled={!previousDate}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+        </button>
+        <button className="capture-date-trigger" type="button" aria-haspopup="dialog" aria-expanded={pickerOpen} title="Choose a captured day" onClick={() => setPickerOpen((current) => !current)} disabled={!hasRows}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z" /></svg>
+          <strong>{hasRows ? formatFullDate(selectedDate) : "No capture"}</strong>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
+        </button>
+        <button className="secondary-button compact-action" type="button" aria-label="Next captured day" title={nextDate ? `Next capture — ${formatFullDate(nextDate)}` : "No next capture"} onClick={onNext} disabled={!nextDate}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+        </button>
+      </div>
+      {pickerOpen ? (
+        <div className="capture-calendar" role="dialog" aria-label="Choose a captured day">
+          <div className="capture-calendar-heading">
+            <button
+              type="button"
+              aria-label="Previous capture month"
+              onClick={() => setVisibleMonth(availableMonths[visibleMonthIndex - 1])}
+              disabled={visibleMonthIndex <= 0}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+            </button>
+            <strong>{formatMonthLabel(visibleMonth)}</strong>
+            <button
+              type="button"
+              aria-label="Next capture month"
+              onClick={() => setVisibleMonth(availableMonths[visibleMonthIndex + 1])}
+              disabled={visibleMonthIndex < 0 || visibleMonthIndex >= availableMonths.length - 1}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></svg>
+            </button>
+          </div>
+          <div className="capture-calendar-weekdays" aria-hidden="true">
+            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}
+          </div>
+          <div className="capture-calendar-days">
+            {Array.from({ length: firstDayOffset }, (_, index) => <span aria-hidden="true" key={`blank-${index}`} />)}
+            {Array.from({ length: daysInVisibleMonth }, (_, index) => {
+              const day = index + 1;
+              const date = `${visibleMonth}-${String(day).padStart(2, "0")}`;
+              const available = availableDates.has(date);
+              return (
+                <button
+                  type="button"
+                  aria-label={formatFullDate(date)}
+                  aria-current={date === selectedDate ? "date" : undefined}
+                  className={date === selectedDate ? "selected" : undefined}
+                  disabled={!available}
+                  key={date}
+                  onClick={() => {
+                    onSelect(date);
+                    setPickerOpen(false);
+                  }}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+          <small>Only captured days can be selected</small>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2721,6 +3605,24 @@ function buildDailyPowerStats() {
   ];
 }
 
+function buildDailyGuildPowerStats() {
+  const capturedHistory = (Array.isArray(captures.guildStatsHistory) ? captures.guildStatsHistory : [])
+    .filter((snapshot) => snapshot?.date && typeof snapshot.totalPower === "number")
+    .map((snapshot) => ({ date: snapshot.date, total: snapshot.totalPower }));
+  if (capturedHistory.length > 0) return capturedHistory.sort((left, right) => left.date.localeCompare(right.date));
+
+  return (Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots : [])
+    .slice()
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .map((day) => {
+      const powers = (day.rows ?? [])
+        .filter((row) => isCurrentPlayerId(row.playerId) && typeof row.power === "number")
+        .map((row) => row.power);
+      return powers.length > 0 ? { date: day.date, total: powers.reduce((sum, power) => sum + power, 0) } : null;
+    })
+    .filter(Boolean);
+}
+
 function medianNumber(values) {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
@@ -2728,20 +3630,7 @@ function medianNumber(values) {
 }
 
 function buildDailyDonationStats() {
-  return (Array.isArray(dailyRawSnapshots) ? dailyRawSnapshots : [])
-    .slice()
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .map((day) => {
-      const rows = (day.rows ?? []).filter((row) => isCurrentPlayerId(row.playerId) && typeof row.contribution7d === "number");
-      return rows.length > 0
-        ? {
-            date: day.date,
-            total: rows.reduce((sum, row) => sum + row.contribution7d, 0),
-            count: rows.length,
-          }
-        : null;
-    })
-    .filter(Boolean);
+  return buildDonationChartDays(dailyRawSnapshots, isCurrentPlayerId);
 }
 
 function buildDailyBossDamageStats() {
@@ -2815,32 +3704,60 @@ function weeklyDonationBuckets() {
   return weeks;
 }
 
-function filterDatedChartRows(rows, range) {
-  if (range === "all" || rows.length === 0) return rows;
-  const latest = Math.max(...rows.map((row) => Date.parse(`${row.date}T00:00:00`)));
-  const cutoff =
-    range === "1w"
-      ? startOfWeek(new Date(latest)).getTime()
-      : latest - 29 * 86_400_000;
-  return rows.filter((row) => Date.parse(`${row.date}T00:00:00`) >= cutoff);
+function dashboardRangeRows(rows, range, valueKey) {
+  const chartRange = range === "1w" ? "week" : range === "4w" ? "month" : range === "8w" ? "twoMonths" : range;
+  return chartPointsForRange(
+    rows.map((row) => ({ ...row, value: row[valueKey] })),
+    chartRange,
+    7,
+  );
 }
 
-function dashboardRangeRows(rows, range) {
-  const ordered = [...rows].sort((left, right) => left.date.localeCompare(right.date));
-  if (ordered.length === 0) return [];
-  if (range === "1w") return filterDatedChartRows(ordered, "1w").slice(-7);
-  if (range === "2m") {
-    const latest = Date.parse(`${ordered.at(-1).date}T00:00:00Z`);
-    const recent = ordered.filter((row) => Date.parse(`${row.date}T00:00:00Z`) >= latest - 55 * 86_400_000);
-    return latestRowPerWeek(recent).slice(-8);
+function dashboardDonationRangeRows(rows, range) {
+  if (range === "1w") return latestDonationWeekPoints(rows);
+  const weekCount = range === "4w" ? 4 : range === "8w" ? 8 : null;
+  return completedSundayPoints(
+    rows.map((row) => ({ ...row, total: row.cumulative, value: row.cumulative })),
+    weekCount,
+    7,
+  );
+}
+
+function weeklyGuildMetricDelta(history, key) {
+  return weeklyPowerDelta(
+    history
+      .filter((snapshot) => snapshot?.date && typeof snapshot[key] === "number")
+      .map((snapshot) => ({ date: snapshot.date, value: snapshot[key] })),
+  );
+}
+
+function weeklyDeltaDetail(delta, formatter) {
+  return typeof delta === "number" ? `${signedFormatted(delta, formatter)} vs last week` : "No weekly comparison";
+}
+
+function deltaTone(delta) {
+  if (typeof delta !== "number" || delta === 0) return "trend-neutral";
+  return delta > 0 ? "trend-positive" : "trend-negative";
+}
+
+function weeklyGuildRankTrend(history, currentRank) {
+  const ranked = history
+    .map((snapshot) => ({ ...snapshot, normalizedRank: formatExpeditionRank(snapshot) }))
+    .filter((snapshot) => snapshot?.date && snapshot.normalizedRank)
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const latest = ranked.at(-1);
+  if (!latest || !currentRank) return { label: "No weekly comparison", tone: "trend-neutral" };
+  const targetDate = addDaysIso(latest.date, -7);
+  const baseline = [...ranked].reverse().find((snapshot) => snapshot.date <= targetDate);
+  if (!baseline) return { label: "No weekly comparison", tone: "trend-neutral" };
+  const currentScore = expeditionRankScore(currentRank);
+  const baselineScore = expeditionRankScore(baseline.normalizedRank);
+  if (currentScore == null || baselineScore == null || currentScore === baselineScore) {
+    return { label: "No rank change vs last week", tone: "trend-neutral" };
   }
-  return evenlySampleRows(latestRowPerWeek(ordered), 12);
-}
-
-function latestRowPerWeek(rows) {
-  const weeks = new Map();
-  for (const row of rows) weeks.set(weekStartIso(row.date), row);
-  return [...weeks.values()];
+  return currentScore > baselineScore
+    ? { label: "Rank up vs last week", tone: "trend-positive" }
+    : { label: "Rank down vs last week", tone: "trend-negative" };
 }
 
 function evenlySampleRows(rows, maximumPoints) {
@@ -2848,11 +3765,51 @@ function evenlySampleRows(rows, maximumPoints) {
   return Array.from({ length: maximumPoints }, (_, index) => rows[Math.round(index * (rows.length - 1) / (maximumPoints - 1))]);
 }
 
-function dashboardRangeLabels(rows, range) {
-  if (range === "1w") {
-    return rows.map((row) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${row.date}T12:00:00Z`).getUTCDay()]);
-  }
-  return rows.map((row) => formatWeekLabel(row.date));
+function dashboardRangeLabels(rows) {
+  return rows.map((row) => formatShortDate(row.date));
+}
+
+function dashboardRangeSubtitle(range) {
+  if (range === "1w") return "Last 7 captured days";
+  if (range === "4w") return "7 checkpoints · 4 weeks";
+  if (range === "8w") return "7 checkpoints · 8 weeks";
+  return "7 checkpoints · Full history";
+}
+
+function donationRangeSubtitle(range, pointCount) {
+  if (range === "1w") return "Daily amount earned · Current captured week";
+  const windowLabel = range === "4w" ? "1 month" : range === "8w" ? "2 months" : "Full history";
+  return `${pointCount} Sunday checkpoint${pointCount === 1 ? "" : "s"} before reset · ${windowLabel}`;
+}
+
+function latestDatedSnapshot(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => typeof row?.date === "string")
+    .slice()
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .at(-1) ?? null;
+}
+
+function numericValue(primary, fallback = null) {
+  if (typeof primary === "number" && Number.isFinite(primary)) return primary;
+  return typeof fallback === "number" && Number.isFinite(fallback) ? fallback : null;
+}
+
+function formatRatio(value, total) {
+  if (typeof value !== "number" || typeof total !== "number") return "Not captured";
+  return `${formatNumber(value)}/${formatNumber(total)}`;
+}
+
+function formatGuildExperience(current, required) {
+  if (typeof current !== "number" || typeof required !== "number") return "Experience not captured";
+  return `${formatNumber(current)} / ${formatNumber(required)} XP`;
+}
+
+function chartAccessibleSummary(rows, valueKey, formatter) {
+  const values = rows
+    .filter((row) => row?.date && typeof row[valueKey] === "number")
+    .map((row) => `${row.date}: ${formatter(row[valueKey])}`);
+  return values.length > 0 ? `Captured series. ${values.join("; ")}.` : "No captured data for this range.";
 }
 
 function buildBossDashboardData() {
@@ -3300,12 +4257,21 @@ function addDaysIso(value, days) {
   return current.toISOString().slice(0, 10);
 }
 
-function formatWeekLabel(value) {
-  return `W ${formatShortDate(value)}`;
+function formatShortDate(date) {
+  const [year, month, day] = String(date).split("-");
+  return year && month && day ? `${day}/${month}` : String(date);
 }
 
-function formatShortDate(date) {
-  return date.slice(5);
+function formatFullDate(date) {
+  const [year, month, day] = String(date).split("-");
+  return year && month && day ? `${day}/${month}/${year}` : String(date);
+}
+
+function formatMonthLabel(value) {
+  const [year, month] = String(value).split("-").map(Number);
+  if (!year || !month) return String(value);
+  return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
 function findMemberByKey(key) {
@@ -3447,8 +4413,28 @@ function todayLabel() {
   return currentIsoDate();
 }
 
+function dataActionLabel(action) {
+  return {
+    "capture:guild-members": "Guild members capture",
+    "capture:guild-boss": "Guild boss capture",
+    import: "Synchronize",
+    upload: "Upload",
+  }[action] ?? action;
+}
+
 function dataSuccessMessage(action, payload) {
   const now = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  if (action.startsWith("capture:")) {
+    const capture = payload.capture ?? {};
+    return {
+      action,
+      status: "success",
+      title: `${dataActionLabel(action)} saved`,
+      detail: capture.path ? `${capture.path} · index ${capture.index ?? "?"}` : "Screenshot saved.",
+      at: now,
+    };
+  }
+
   const report = payload.import ?? {};
   return {
     action,
@@ -3530,7 +4516,7 @@ async function exportMembersImage(rows, rules, filters) {
   });
 
   drawMembersExportTable(ctx, rows, evaluations, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
-  drawText(ctx, `Generated by Archero Guild on ${new Date().toLocaleString("en-GB")}`, margin, height - 52, { size: 18, weight: 650, color: "#667588" });
+  drawText(ctx, `Generated by Archero Observer on ${new Date().toLocaleString("en-GB")}`, margin, height - 52, { size: 18, weight: 650, color: "#667588" });
   downloadCanvas(canvas, `archero-members-${filters.selectedDate || currentIsoDate()}.png`);
 }
 
@@ -3617,7 +4603,7 @@ function formatDateTime(value) {
   if (!value) return "Loading…";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "Unavailable";
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Europe/Paris",

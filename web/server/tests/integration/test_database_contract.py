@@ -43,6 +43,7 @@ class DatabaseContractTests(unittest.TestCase):
                         ocr_failures,
                         rule_settings,
                         boss_daily_results,
+                        guild_stat_snapshots,
                         member_metrics,
                         guild_snapshots,
                         import_reports,
@@ -122,6 +123,20 @@ class DatabaseContractTests(unittest.TestCase):
                     )
                 cursor.execute(
                     """
+                    INSERT INTO guild_stat_snapshots (
+                        capture_date, guild_name, guild_id, guild_level, member_count,
+                        member_capacity, total_power, donations_value, guild_rank,
+                        xp_current, xp_required, raw_payload
+                    )
+                    VALUES (
+                        DATE '2026-07-28', 'Integration Guild', 'integration-guild', 7, 1,
+                        42, 89760000, 128450, NULL, NULL, NULL,
+                        '{"expeditionPoints":825,"expeditionName":"Firebound Soul","expeditionRank":"I"}'::jsonb
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
                     INSERT INTO boss_daily_results (
                         capture_date, boss_key, user_id, player_name, boss_rank,
                         damage_text, damage_value, row_area, row_index
@@ -154,6 +169,11 @@ class DatabaseContractTests(unittest.TestCase):
         self.assertEqual(payload["rules"]["memberCapacity"], 40)
         self.assertEqual(len(payload["bossDefinitions"]), 7)
         self.assertEqual(payload["dailyBossRawSnapshots"][0]["bossKey"], "fire-dragon")
+        self.assertEqual(payload["captures"]["guildName"], "Integration Guild")
+        self.assertEqual(payload["captures"]["guildStats"]["totalPower"], 89_760_000)
+        self.assertEqual(payload["captures"]["guildStats"]["expeditionPoints"], 825)
+        self.assertEqual(payload["captures"]["guildStats"]["expeditionName"], "Firebound Soul")
+        self.assertEqual(payload["captures"]["guildStats"]["expeditionRank"], "I")
         self.assertEqual(payload["guildRoster"][0]["previousNames"], ["Old Alice"])
         self.assertEqual(payload["guildRoster"][0]["searchAliases"], ["Alice I", "integration hero"])
 

@@ -76,6 +76,8 @@ test("empty database collections stay empty instead of falling back to demo valu
   assert.deepEqual(normalized.dailyBossRawSnapshots, []);
   assert.deepEqual(normalized.rules, {});
   assert.equal(normalized.captures.lastCapturedAt, null);
+  assert.equal(normalized.captures.guildStats, null);
+  assert.deepEqual(normalized.captures.guildStatsHistory, []);
 });
 
 test("production database mode never exposes bundled data without a database URL", async () => {

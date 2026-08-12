@@ -35,6 +35,7 @@ export function createSyntheticImportBatches(options = {}) {
     scenario,
   });
   const bossesByDate = new Map(data.dailyBossRawSnapshots.map((snapshot) => [snapshot.date, snapshot]));
+  const guildStatsByDate = new Map((data.captures.guildStatsHistory ?? []).map((snapshot) => [snapshot.date, snapshot]));
 
   return data.dailyRawSnapshots.map((snapshot) => {
     const bossSnapshot = bossesByDate.get(snapshot.date);
@@ -74,6 +75,7 @@ export function createSyntheticImportBatches(options = {}) {
         syntheticImage("guild-members", dateKey, members.length),
         syntheticImage("guild-boss", dateKey, bossRankings.length),
       ],
+      guildStats: guildStatsByDate.get(snapshot.date) ?? null,
       members,
       bossRankings,
       quality: {

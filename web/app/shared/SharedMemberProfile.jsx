@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { chartPointsForRange } from "../../lib/chart-points.js";
+import { adaptiveChartDomain, chartPointsForRange } from "../../lib/chart-points.js";
 import styles from "./shared.module.css";
 
 const CHART_RANGES = ["week", "month", "all"];
@@ -149,15 +149,11 @@ function chartGeometry(points) {
     return { minimum: 0, maximum: 0, points: [], grid: [42, 111, 180], linePath: "", areaPath: "" };
   }
   const values = points.map((point) => point.value);
-  const rawMinimum = Math.min(...values);
-  const rawMaximum = Math.max(...values);
-  const padding = Math.max((rawMaximum - rawMinimum) * 0.16, rawMaximum * 0.04, 1);
-  const minimum = Math.max(0, rawMinimum - padding);
-  const maximum = rawMaximum + padding;
+  const { minimum, maximum, span } = adaptiveChartDomain(values);
   const plotted = points.map((point, index) => ({
     ...point,
     x: 58 + (index / Math.max(points.length - 1, 1)) * 512,
-    y: 180 - ((point.value - minimum) / Math.max(maximum - minimum, 1)) * 138,
+    y: 180 - ((point.value - minimum) / span) * 138,
   }));
   const linePath = plotted.map((point, index) => `${index ? "L" : "M"}${point.x} ${point.y}`).join(" ");
   return {

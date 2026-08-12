@@ -52,13 +52,50 @@ def _captures(connection) -> dict[str, Any]:
     ).fetchone()
     imported_at = _iso(row["imported_at"]) if row else None
     captured_at = _iso(row["captured_at"]) if row else None
+    guild_stats_history = _guild_stats_history(connection)
+    guild_stats = guild_stats_history[-1] if guild_stats_history else None
     return {
+        "guildName": guild_stats.get("guildName") if guild_stats else None,
         "lastCapturedAt": captured_at,
         "lastImportedAt": imported_at,
         "baselineJoinedAt": None,
         "contribution30d": [],
         "averagePower8w": [],
+        "guildStats": guild_stats,
+        "guildStatsHistory": guild_stats_history,
     }
+
+
+def _guild_stats_history(connection) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT capture_date, guild_name, guild_id, guild_level, member_count,
+               member_capacity, total_power, donations_value, guild_rank,
+               xp_current, xp_required, raw_payload
+        FROM guild_stat_snapshots
+        ORDER BY capture_date
+        """
+    ).fetchall()
+    history: list[dict[str, Any]] = []
+    for row in rows:
+        raw_payload = row.get("raw_payload") if isinstance(row.get("raw_payload"), dict) else {}
+        history.append({
+            "date": _iso(row["capture_date"]),
+            "guildName": row.get("guild_name"),
+            "guildId": row.get("guild_id"),
+            "level": row.get("guild_level"),
+            "memberCount": row.get("member_count"),
+            "memberCapacity": row.get("member_capacity"),
+            "totalPower": row.get("total_power"),
+            "donationsValue": row.get("donations_value"),
+            "rank": row.get("guild_rank"),
+            "xpCurrent": row.get("xp_current"),
+            "xpRequired": row.get("xp_required"),
+            "expeditionPoints": raw_payload.get("expeditionPoints"),
+            "expeditionName": raw_payload.get("expeditionName"),
+            "expeditionRank": raw_payload.get("expeditionRank"),
+        })
+    return history
 
 
 def _guild_roster(connection) -> list[dict[str, Any]]:

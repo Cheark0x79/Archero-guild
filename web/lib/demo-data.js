@@ -42,15 +42,35 @@ export function createDemoData(options = {}) {
   const previousMemberSnapshots = [...previousById.values()];
   const memberSnapshots = latestRows.map((row) => currentSnapshot(row, previousById.get(row.playerId), roster));
   const dailyBossRawSnapshots = dates.map((date, dayIndex) => bossSnapshotForDay(activeMembers, date, dayIndex, scenario));
+  const guildStatsHistory = dates.map((date, dayIndex) => ({
+    date,
+    guildName: "Shinigami",
+    guildId: "synthetic-shinigami",
+    level: 7,
+    memberCount: activeMembers.length + Math.min(5, Math.floor(dayIndex / 5)),
+    memberCapacity: 42,
+    totalPower: 81_240_000 + dayIndex * 426_000,
+    donationsValue: 91_200 + dayIndex * 1_865,
+    rank: null,
+    xpCurrent: 13_700 + dayIndex * 1_250,
+    xpRequired: 800_000,
+    expeditionPoints: 625 + dayIndex * 10,
+    expeditionName: "Firebound Soul",
+    expeditionRank: "I",
+  }));
+  const latestGuildStats = { ...guildStatsHistory.at(-1), memberCount: 41, totalPower: 89_760_000, xpCurrent: 13_700, expeditionPoints: 825 };
+  guildStatsHistory[guildStatsHistory.length - 1] = latestGuildStats;
 
   return {
     captures: {
-      guildName: "Demo Vanguard",
+      guildName: latestGuildStats.guildName,
       lastCapturedAt: `${anchorDate}T20:30:00+02:00`,
       lastImportedAt: `${anchorDate}T20:35:00+02:00`,
       baselineJoinedAt: dates[0],
       contribution30d: Array.from({ length: 30 }, (_, index) => 12_000 + index * 710 + Math.floor(random() * 900)),
       averagePower8w: Array.from({ length: 8 }, (_, index) => 1_050_000 + index * 82_000),
+      guildStats: latestGuildStats,
+      guildStatsHistory,
     },
     guildRoster: roster,
     previousMemberSnapshots,
@@ -86,7 +106,8 @@ function memberRowsForDay(members, date, dayIndex, random, scenario) {
   const rows = members.map((member, index) => {
     const basePower = member.metadata.demoPowerBase;
     const power = basePower + dayIndex * (4_000 + index * 115) + Math.floor(random() * 2_000);
-    const donation = 90 + weekday * (105 + index * 9) + (dayIndex % 3) * 20;
+    const donationDay = (weekday + 6) % 7;
+    const donation = 90 + donationDay * (105 + index * 9) + (dayIndex % 3) * 20;
     const attacks = (index + dayIndex) % 9 === 0 ? 0 : (index + dayIndex) % 7 === 0 ? 1 : 2;
     const sparse = scenario === "sparse" && (index === 31 || index === 34);
     return {
