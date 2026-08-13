@@ -223,7 +223,7 @@ const routeMeta = {
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
   activity: ["Member activity", "Review roster events, absences, and warnings."],
-  settings: ["Rules", "Local thresholds before backend wiring."],
+  settings: ["Rules", "Thresholds used to generate officer alerts."],
 };
 
 export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null, initialSessionRole = null }) {
@@ -472,7 +472,7 @@ function MembershipAdminView({ membersToReview, onReviewed }) {
   );
 }
 
-function MembershipReview({ membersToReview, onReviewed }) {
+function MembershipReview({ membersToReview, onReviewed, compact = false }) {
   const [busyPlayerId, setBusyPlayerId] = useState("");
   const [error, setError] = useState("");
 
@@ -504,8 +504,8 @@ function MembershipReview({ membersToReview, onReviewed }) {
   }
 
   return (
-    <section className="membership-review" aria-labelledby="membership-review-title">
-      <div className="membership-review-heading">
+    <section className={`membership-review ${compact ? "compact" : ""}`} aria-labelledby="membership-review-title">
+      {!compact ? <div className="membership-review-heading">
         <div>
           <h2 id="membership-review-title">Review guild departures</h2>
           <p>
@@ -516,7 +516,7 @@ function MembershipReview({ membersToReview, onReviewed }) {
           </p>
         </div>
         <span className="membership-review-count">{membersToReview.length} pending</span>
-      </div>
+      </div> : null}
       <div className="membership-review-list">
         {membersToReview.map((member) => {
           const isBusy = busyPlayerId === member.playerId;
@@ -1042,34 +1042,121 @@ function AdminView({ rules, pendingDepartureCount, openWarnings }) {
 }
 
 function AdminNotificationsView({ rules, pendingDepartures, onDepartureReviewed, openWarnings, updateWarningAction }) {
-  const currentMembers = currentMembersList();
+  const [filter, setFilter] = useState("all");
+  const { records, loadState } = useMemberAdminRecords();
   const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
-  const excusedMembers = currentMembers.filter((member) => member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate).length;
+  const excusedMembers = Object.values(records).filter((record) => record.absenceUntil && evaluationDate && record.absenceUntil >= evaluationDate).length;
+  const allGroupedNews = useMemo(() => {
+    const grouped = new Map();
+    openWarnings.forEach((warning) => {
+      const key = `${warning.playerId}:${warning.date}`;
+      const existing = grouped.get(key) ?? { playerId: warning.playerId, member: warning.member, date: warning.date, warnings: [] };
+      existing.warnings.push(warning);
+      grouped.set(key, existing);
+    });
+    return [...grouped.values()]
+      .map((item) => ({
+        ...item,
+        excused: Boolean(records[item.playerId]?.absenceUntil && records[item.playerId].absenceUntil >= item.date),
+        absenceUntil: records[item.playerId]?.absenceUntil ?? null,
+      }))
+      .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
+  }, [openWarnings, records]);
+  const groupedNews = allGroupedNews.filter((item) => filter === "all" || item.warnings.some((warning) => warning.type === filter));
+  const newsByDate = groupedNews.reduce((groups, item) => {
+    const current = groups.get(item.date) ?? [];
+    current.push(item);
+    groups.set(item.date, current);
+    return groups;
+  }, new Map());
+  const filters = [
+    { id: "all", label: "All", count: new Set(openWarnings.map((warning) => `${warning.playerId}:${warning.date}`)).size },
+    ...ADMIN_WARNING_GROUPS.map((group) => ({
+      ...group,
+      label: group.title,
+      count: new Set(openWarnings.filter((warning) => warning.type === group.type).map((warning) => `${warning.playerId}:${warning.date}`)).size,
+    })),
+  ];
   return (
     <div className="admin-notifications-page">
-      <section className="admin-status-strip admin-notification-summary" aria-label="Notification summary">
-        <div><span>Open notifications</span><strong>{openWarnings.length + pendingDepartures.length}</strong></div>
-        <div><span>Rule alerts</span><strong>{openWarnings.length}</strong></div>
-        <div><span>Roster changes</span><strong>{pendingDepartures.length}</strong></div>
-        <div><span>Announced leave</span><strong>{excusedMembers}</strong></div>
+      <section className="admin-news-summary" aria-label="Notification summary">
+        <div><strong>{pendingDepartures.length}</strong><span>Departure checks</span></div>
+        <div><strong>{allGroupedNews.filter((item) => !item.excused).length}</strong><span>Members to review</span></div>
+        <div><strong>{excusedMembers}</strong><span>Excused absences</span></div>
       </section>
-      {pendingDepartures.length > 0 ? <MembershipReview membersToReview={pendingDepartures} onReviewed={onDepartureReviewed} /> : null}
-      <section className="panel admin-notification-feed">
-        <PanelHeading title="Member alerts" subtitle="Acknowledge an alert when an officer has reviewed the member situation." />
-        <div className="admin-notification-groups">
-          {ADMIN_WARNING_GROUPS.map((group) => {
-            const groupWarnings = openWarnings.filter((warning) => warning.type === group.type);
-            return (
-              <section id={group.type} className="admin-notification-group" key={group.type}>
-                <header><span><strong>{group.title}</strong><small>{group.detail}</small></span><em className={groupWarnings.length > 0 ? "warning" : ""}>{groupWarnings.length}</em></header>
-                {groupWarnings.length > 0 ? groupWarnings.map((warning) => <AdminWarningRow warning={warning} onUpdate={updateWarningAction} key={`${warning.playerId}-${warning.id}`} />) : <p>No current alert.</p>}
-              </section>
-            );
-          })}
-        </div>
+
+      {pendingDepartures.length > 0 ? (
+        <section className="admin-priority-section">
+          <header><span className="admin-priority-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M8.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M17 8l5 5M22 8l-5 5" /></svg></span><div><h2>Departure confirmation</h2><p>These members were missing from the latest complete guild import. One officer decision closes the notification.</p></div><strong>{pendingDepartures.length}</strong></header>
+          <MembershipReview membersToReview={pendingDepartures} onReviewed={onDepartureReviewed} compact />
+        </section>
+      ) : null}
+
+      <section className="panel admin-news-feed">
+        <header className="admin-news-heading">
+          <div><h2>Guild news</h2><p>Rule alerts are grouped once per member and captured day.</p></div>
+          <div className="admin-news-filters" aria-label="Filter notifications">
+            {filters.map((item) => <button className={filter === item.id || filter === item.type ? "active" : ""} type="button" key={item.id ?? item.type} onClick={() => setFilter(item.id ?? item.type)}><span>{item.label}</span><strong>{item.count}</strong></button>)}
+          </div>
+        </header>
+        {loadState.loading ? <p className="admin-news-empty">Loading private absence data…</p> : null}
+        {!loadState.loading && groupedNews.length === 0 ? <p className="admin-news-empty">No notification in this category.</p> : null}
+        {!loadState.loading ? <div className="admin-news-days">
+          {[...newsByDate.entries()].map(([date, items]) => (
+            <section className="admin-news-day" key={date}>
+              <header><strong>{notificationDayLabel(date, evaluationDate)}</strong><time>{formatFullDate(date)}</time><span>{items.length} member{items.length === 1 ? "" : "s"}</span></header>
+              <div className="admin-news-list">
+                {items.map((item) => <AdminNewsRow item={item} onUpdate={updateWarningAction} key={`${item.playerId}:${item.date}`} />)}
+              </div>
+            </section>
+          ))}
+        </div> : null}
       </section>
     </div>
   );
+}
+
+function AdminNewsRow({ item, onUpdate }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function ignoreAll() {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.all(item.warnings.map((warning) => onUpdate(warning, { ...warning.action, status: "ignored", note: "No follow-up needed." })));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to ignore these alerts.");
+      setSaving(false);
+    }
+  }
+  return (
+    <article className={`admin-news-row ${item.excused ? "excused" : ""}`}>
+      <span className="admin-news-avatar" aria-hidden="true">{item.member.name.slice(0, 1).toUpperCase()}</span>
+      <div className="admin-news-copy">
+        <strong>{item.member.name}</strong>
+        {item.excused ? <p>Excused absence until {formatFullDate(item.absenceUntil)}. Rule alerts are muted for this period.</p> : <p>{notificationSummary(item.warnings)}</p>}
+        <div className="admin-news-badges">
+          {item.excused ? <span className="excused"><WarningTypeIcon type="absence" />Excused</span> : item.warnings.map((warning) => <span className={warning.type} key={warning.type}><WarningTypeIcon type={warning.type} />{warning.label}</span>)}
+        </div>
+        {error ? <small className="admin-warning-error" role="alert">{error}</small> : null}
+      </div>
+      <div className="admin-news-actions">
+        <a className="secondary-button compact-action" href={`/admin/members/${encodeURIComponent(memberKey(item.member))}`}>View member</a>
+        {!item.excused ? <button className="secondary-button compact-action" type="button" disabled={saving} onClick={ignoreAll}>{saving ? "Ignoring…" : "Ignore"}</button> : null}
+      </div>
+    </article>
+  );
+}
+
+function notificationSummary(warnings) {
+  return warnings.map((warning) => warning.detail).join(" · ");
+}
+
+function notificationDayLabel(date, currentDate) {
+  if (date === currentDate) return "Latest capture";
+  if (date === addDaysIso(currentDate, -1)) return "Previous day";
+  return new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
 }
 
 function AdminTileIcon({ type }) {
@@ -3114,51 +3201,82 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
 
 function RulesView({ rules, setRules }) {
   const ruleRows = [
-    ["maxInactiveDays", "Inactive member", "Days without activity", "days", "High alert", "monitoring"],
-    ["minContribution7d", "Weekly donation", "Minimum donation over seven days", "points", "Medium alert", "monitoring"],
-    ["minPowerGrowth14dPercent", "Weekly power progression", "Minimum power growth over seven days", "%", "Medium alert", "monitoring"],
-    ["minBossTries", "Boss participation", "Minimum tries per event day", "tries", "High alert", "monitoring"],
-    ["newMemberGraceDays", "New member grace", "Days before rules start applying", "days", "Rule pause", "guild"],
+    ["maxInactiveDays", "Inactive member", "Days without activity before an alert", "days", "High alert", "monitoring", "inactive"],
+    ["minContribution7d", "Weekly donation", "Minimum donation expected over seven days", "points", "Medium alert", "monitoring", "donation"],
+    ["minPowerGrowth14dPercent", "Weekly power progression", "Minimum power growth expected each week", "%", "Medium alert", "monitoring", "progress"],
+    ["minBossTries", "Boss participation", "Minimum tries expected per event day", "tries", "High alert", "monitoring", "boss"],
+    ["newMemberGraceDays", "New member grace", "Days before monitoring rules start applying", "days", "Rule pause", "guild", "members"],
   ];
-  const groups = [
-    ["Monitoring thresholds", "Values that generate automatic officer alerts.", "monitoring"],
-    ["Guild settings", "Context used when evaluating the roster.", "guild"],
-  ];
+  const renderRule = ([key, name, label, unit, effect, , icon]) => (
+    <label className="rule-setting-row" key={key}>
+      <RuleSettingIcon type={icon} />
+      <span className="rule-setting-copy">
+        <strong>{name}</strong>
+        <small>{label}</small>
+      </span>
+      <span className={`rule-setting-effect ${effect === "High alert" ? "high" : effect === "Medium alert" ? "medium" : "pause"}`}>{effect}</span>
+      <span className="rule-setting-control">
+        <input
+          className="rule-input"
+          type="number"
+          min="0"
+          step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
+          value={rules[key]}
+          aria-label={`${name} threshold in ${unit}`}
+          onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
+        />
+        <span>{unit}</span>
+      </span>
+    </label>
+  );
   return (
     <div className="rules-page">
-      <section className="panel rules-intro">
-        <PanelHeading title="How these rules work" subtitle="They generate officer alerts only. They never remove members or perform actions automatically." />
-        <span className="rules-save-note">Changes are saved locally as soon as a value is edited.</span>
+      <section className="panel rules-intro" aria-labelledby="rules-intro-title">
+        <span className="rules-intro-icon"><AdminTileIcon type="rules" /></span>
+        <div>
+          <h2 id="rules-intro-title">Guild monitoring rules</h2>
+          <p>These thresholds create officer alerts. They never remove members or take action automatically.</p>
+        </div>
+        <span className="rules-save-note"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg>Saved automatically</span>
       </section>
-      {groups.map(([title, subtitle, group]) => (
-        <section className="panel rules-group" key={group}>
-          <PanelHeading title={title} subtitle={subtitle} />
+
+      <div className="rules-layout">
+        <section className="panel rules-group rules-monitoring">
+          <div className="rules-group-heading">
+            <div><h2>Monitoring thresholds</h2><p>Values that generate automatic officer alerts.</p></div>
+            <span>4 active rules</span>
+          </div>
           <div className="rules-list">
-            {ruleRows.filter((row) => row[5] === group).map(([key, name, label, unit, effect]) => (
-              <label className="rule-setting-row" key={key}>
-                <span className="rule-setting-copy">
-                  <strong>{name}</strong>
-                  <small>{label}</small>
-                </span>
-                <span className="rule-setting-effect">{effect}</span>
-                <span className="rule-setting-control">
-                  <input
-                    className="rule-input"
-                    type="number"
-                    min="0"
-                    step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
-                    value={rules[key]}
-                    onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
-                  />
-                  <span>{unit}</span>
-                </span>
-              </label>
-            ))}
+            {ruleRows.filter((row) => row[5] === "monitoring").map(renderRule)}
           </div>
         </section>
-      ))}
+
+        <section className="panel rules-group rules-guild-context">
+          <div className="rules-group-heading">
+            <div><h2>Guild settings</h2><p>Context used while evaluating the roster.</p></div>
+          </div>
+          <div className="rules-list">
+            {ruleRows.filter((row) => row[5] === "guild").map(renderRule)}
+          </div>
+          <div className="rules-context-note">
+            <strong>Protected onboarding</strong>
+            <p>New members remain visible in the roster, but automatic rule warnings stay paused during their grace period.</p>
+          </div>
+        </section>
+      </div>
     </div>
   );
+}
+
+function RuleSettingIcon({ type }) {
+  const paths = {
+    inactive: <><path d="M20 15.2A8 8 0 0 1 8.8 4 8 8 0 1 0 20 15.2Z" /><path d="M12 8v4l2 2" /></>,
+    donation: <><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v5c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 11v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" /></>,
+    progress: <><path d="m4 16 5-5 4 4 7-8" /><path d="M15 7h5v5" /></>,
+    boss: <><path d="m6 3 12 12M18 3 6 15M8 13l3 3-4 4-3-3 4-4ZM16 13l-3 3 4 4 3-3-4-4Z" /></>,
+    members: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9" /></>,
+  };
+  return <span className="rule-setting-icon" aria-hidden="true"><svg viewBox="0 0 24 24">{paths[type]}</svg></span>;
 }
 
 function ChartPanel({ className = "", title, subtitle, badge, action, values, label, value, positive, xLabels = [], showPoints = false, pointValueMode = "all", accessibleSummary = "", referenceValue = null, referenceLabel = "" }) {
