@@ -2,8 +2,6 @@
 
 This index routes readers to the current source of truth. English is canonical
 for repository, architecture, configuration, operations, and API contracts.
-French documents under `guides/fr/` are operator-oriented guides and must link
-back to the canonical contract they explain.
 
 ## Start here
 
@@ -29,7 +27,7 @@ back to the canonical contract they explain.
 | Document | Audience | Status | Purpose |
 | --- | --- | --- | --- |
 | [`../ocr/README.md`](../ocr/README.md) | OCR operator | Current | Local capture, review, local simulation, and publication |
-| [`guides/fr/discord-warnings.md`](guides/fr/discord-warnings.md) | French-speaking bot operator | Current guide | Practical warning API examples; `api.md` remains canonical |
+| [`guides/discord-warnings.md`](guides/discord-warnings.md) | Bot operator | Current guide | Practical warning API examples; `api.md` remains canonical |
 
 ## Documentation contract
 

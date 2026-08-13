@@ -3,6 +3,35 @@
 Run production commands from the repository root on the application server. The
 canonical environment file is `web/.env.prod`.
 
+## First installation and private GHCR access
+
+Copy the release checkout or download its release archive, then create the
+private Web configuration. The Makefile is the only operational interface in
+this repository.
+
+```bash
+cp web/.env.prod.example web/.env.prod
+chmod 600 web/.env.prod
+make doctor
+```
+
+Public packages can be pulled anonymously. While this GitHub repository or
+its packages are private, authenticate Docker with a GitHub fine-grained token
+that has **Packages: Read** access to this repository (or a classic token with
+only `read:packages`). Do not put that token in `web/.env.prod`, `ocr/.env`, a
+Compose file, or an image.
+
+```bash
+printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_LOGIN --password-stdin
+unset GHCR_READ_TOKEN
+make prepare
+make start
+```
+
+The Docker credential helper, not the application environment file, stores the
+registry credential. Log out with `docker logout ghcr.io` when this host should
+no longer pull private packages.
+
 ## Start and readiness
 
 ```bash
@@ -118,14 +147,24 @@ explicitly approved.
 ## OCR workstation lifecycle
 
 ```bash
-docker compose --env-file ocr/.env -f ocr/compose.yml up -d --build --wait ui
-docker compose --env-file ocr/.env -f ocr/compose.yml ps
-docker compose --env-file ocr/.env -f ocr/compose.yml logs --tail=100 ui
-docker compose --env-file ocr/.env -f ocr/compose.yml down
+cp ocr/.env.example ocr/.env
+cp ocr/targets.example.json ocr/targets.json
+make doctor
+make ocr-prepare
+make ocr-start
+make ocr-status
+make ocr-logs
+make ocr-stop
 ```
 
 Stopping the OCR container preserves captures, outbox files, and images while
 releasing its CPU, memory, and processes.
+
+To update the independently operated OCR product, set
+`ARCHERO_OCR_IMAGE_TAG` to the intended release in its private `ocr/.env`,
+then run `make ocr-update`. Roll back by restoring the previous tag and running
+the same command. The OCR workstation must use an ingestion key dedicated to
+its target Web/API environment.
 
 ## Incident checklist
 
