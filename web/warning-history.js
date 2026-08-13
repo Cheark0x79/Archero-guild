@@ -75,7 +75,7 @@ function warningsForRow(row, previousRows, rules, member) {
         value: growth,
         threshold: rules.minPowerGrowth14dPercent,
         baselineDate: baseline.date,
-        detail: `${growth}% power growth since ${baseline.date}; minimum ${rules.minPowerGrowth14dPercent}%.`,
+        detail: `${growth}% power growth over seven days; minimum ${rules.minPowerGrowth14dPercent}%.`,
       });
     }
   }
@@ -102,7 +102,7 @@ function powerBaseline(previousRows, currentDate) {
     .find((row) => {
       const rowTime = dateTime(row.date);
       return rowTime != null
-        && currentTime - rowTime >= 14 * DAY_MS
+        && currentTime - rowTime >= 7 * DAY_MS
         && numberOrNull(row.power) != null;
     }) ?? null;
 }

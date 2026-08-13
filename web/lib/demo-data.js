@@ -94,6 +94,12 @@ function makeRoster(random, dates) {
       status,
       joinedAt: shiftDate(dates[0], -(index % 12)),
       ...(status !== "active" ? { leftAt: shiftDate(dates.at(-1), -(index - 34)) } : {}),
+      ...(index === 36 ? {
+        departureReview: {
+          status: "pending",
+          detectedAt: dates.at(-1) + "T20:35:00+02:00",
+        },
+      } : {}),
       discordLinked: status === "active" && index % 3 !== 0,
       ...(status === "active" && index % 5 === 0 ? { discordName: `demo_user_${String(index + 1).padStart(2, "0")}` } : {}),
       demoPowerBase: 540_000 + index * 73_000 + Math.floor(random() * 95_000),

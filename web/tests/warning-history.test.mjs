@@ -54,3 +54,16 @@ test("warning history respects the new member grace period", () => {
 
   assert.deepEqual(history[0].warnings, []);
 });
+
+test("power progression uses a seven-day baseline", () => {
+  const rows = [
+    { date: "2026-07-01", power: 1_000_000, contribution7d: 900, bossAttacks: 2, lastActivityDays: 0 },
+    { date: "2026-07-08", power: 1_005_000, contribution7d: 900, bossAttacks: 2, lastActivityDays: 0 },
+  ];
+
+  const events = warningHistoryEvents(rows, rules);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "low_progression");
+  assert.match(events[0].detail, /over seven days/);
+});

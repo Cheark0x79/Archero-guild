@@ -47,6 +47,19 @@ export async function saveMemberAdminRecord(root, playerId, value) {
   return record;
 }
 
+export async function moveMemberAdminRecord(root, currentPlayerId, playerId) {
+  if (!PLAYER_ID_PATTERN.test(currentPlayerId) || !PLAYER_ID_PATTERN.test(playerId) || currentPlayerId === playerId) return;
+  const records = await readMemberAdminRecords(root);
+  if (!records[currentPlayerId]) return;
+  const destination = recordsPath(root);
+  const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
+  const nextRecords = { ...records, [playerId]: records[currentPlayerId] };
+  delete nextRecords[currentPlayerId];
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.writeFile(temporary, `${JSON.stringify(nextRecords, null, 2)}\n`, { flag: "wx" });
+  await fs.rename(temporary, destination);
+}
+
 function recordsPath(root) {
   return path.join(root, "data", "member-admin.json");
 }

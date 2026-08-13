@@ -65,11 +65,15 @@ test("only login, authentication assets, and health are public", () => {
 
 test("admin pages and data mutation APIs require the admin role", () => {
   assert.equal(isAdminPath("/admin"), true);
+  assert.equal(isAdminPath("/admin/membership"), true);
+  assert.equal(isAdminPath("/admin/notifications"), true);
+  assert.equal(isAdminPath("/admin/members"), true);
   assert.equal(isAdminPath("/admin/rules"), true);
   assert.equal(isAdminPath("/activity"), true);
   assert.equal(isAdminPath("/admin/activity"), true);
   assert.equal(isAdminPath("/test"), true);
   assert.equal(isAdminPath("/api/member-admin"), true);
+  assert.equal(isAdminPath("/api/member-share"), true);
   assert.equal(isAdminPath("/api/warning-actions"), true);
   assert.equal(isAdminPath("/dashboard"), false);
   assert.equal(isAdminPath("/api/dashboard-data"), false);
@@ -81,9 +85,13 @@ test("the route access matrix distinguishes public, viewer, and admin paths", ()
   assert.equal(accessLevelForPath("/admin"), ADMIN_ACCESS);
   assert.equal(roleCanAccessPath("/members", USER_ROLE), true);
   assert.equal(roleCanAccessPath("/admin", USER_ROLE), false);
+  assert.equal(roleCanAccessPath("/admin/membership", USER_ROLE), false);
+  assert.equal(roleCanAccessPath("/admin/members", USER_ROLE), false);
   assert.equal(roleCanAccessPath("/test", USER_ROLE), false);
   assert.equal(roleCanAccessPath("/api/member-admin", USER_ROLE), false);
+  assert.equal(roleCanAccessPath("/api/member-share", USER_ROLE), false);
   assert.equal(roleCanAccessPath("/admin/rules", ADMIN_ROLE), true);
+  assert.equal(roleCanAccessPath("/admin/membership", ADMIN_ROLE), true);
   assert.equal(roleCanAccessPath("/dashboard", null), false);
 });
 
@@ -96,7 +104,7 @@ test("viewer navigation excludes every admin page while admin navigation is expl
   assert.equal(sessionRoleLabel(USER_ROLE), "Viewer");
 
   const platformAdminNavigation = navigationItemsForRole(ADMIN_ROLE);
-  assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/activity", "/admin/rules", "/api-docs"]);
+  assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/members", "/admin/notifications", "/admin/rules", "/api-docs"]);
   assert.deepEqual(platformAdminNavigation.test, []);
     const testAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { testToolsEnabled: true });
     assert.deepEqual(testAdminNavigation.test.map((item) => item[2]), ["/test"]);

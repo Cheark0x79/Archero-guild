@@ -33,6 +33,7 @@ export function isAdminPath(pathname) {
     || pathname === "/admin"
     || pathname.startsWith("/admin/")
     || pathname === "/api/member-admin"
+    || pathname === "/api/member-share"
     || pathname === "/api/warning-actions"
     || pathname === "/api/data"
     || pathname.startsWith("/api/data/");

@@ -8,6 +8,7 @@ __pycache__/
 screenshots/
 logs/
 /data/
+/web/data/
 backups/
 .pytest_cache/
 result

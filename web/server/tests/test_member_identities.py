@@ -10,6 +10,7 @@ from unittest.mock import patch
 from archero_guild.storage.member_identities import (
     _GUILD_MEMBER_IDENTITY_UPSERT,
     assign_identity,
+    edit_member_identity,
     list_identity_links,
     normalize_name,
     rename_unmatched_member,
@@ -48,6 +49,12 @@ class MemberIdentityTests(unittest.TestCase):
 
             set_member_status("900000199", "left", observed_name="MapleFox", data_path=path)
             self.assertEqual(list_identity_links(data_path=path)[0]["status"], "left")
+
+            edited = edit_member_identity("900000199", "900000200", "Maple Fox", data_path=path)
+            self.assertEqual(edited["playerId"], "900000200")
+            links = list_identity_links(data_path=path)
+            self.assertTrue(all(link["playerId"] == "900000200" for link in links))
+            self.assertIn("maple fox", {link["normalizedName"] for link in links})
 
     def test_manual_ocr_name_correction_validates_its_target(self) -> None:
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):

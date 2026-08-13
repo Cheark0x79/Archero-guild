@@ -8,7 +8,8 @@ export const publicNavItems = [
 
 const adminNavItems = [
   ["admin", "Overview", "/admin"],
-  ["activity", "Member activity", "/admin/activity"],
+  ["admin-members", "Member management", "/admin/members"],
+  ["notifications", "Notifications", "/admin/notifications"],
   ["settings", "Rules", "/admin/rules"],
   ["api-docs", "API reference", "/api-docs"],
 ];
