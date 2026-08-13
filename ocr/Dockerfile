@@ -1,8 +1,16 @@
+ARG APP_VERSION=development
+
 FROM python:3.12-slim
+
+ARG APP_VERSION
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    ARCHERO_AGENT_VERSION=$APP_VERSION
+
+LABEL org.opencontainers.image.title="Archero Guild OCR" \
+      org.opencontainers.image.version=$APP_VERSION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

@@ -119,15 +119,19 @@ instead, run:
 make build
 ```
 
-Published releases produce a multi-architecture container image:
+Published releases produce two independent multi-architecture container images:
 
 ```bash
-docker pull ghcr.io/cheark0x79/archero-guild:<version>
+docker pull ghcr.io/cheark0x79/archero-guild-web:<version>
+docker pull ghcr.io/cheark0x79/archero-guild-ocr:<version>
 ```
 
-The image is built for `linux/amd64` and `linux/arm64`. Deployment-specific
-Compose overrides, ingress, DNS, and credentials belong in a separate private
-operations repository.
+Both images are built for `linux/amd64` and `linux/arm64`. The Web/API image
+contains no Tesseract or raw-capture mount. The OCR image runs only on the
+trusted workstation and has no direct PostgreSQL access. The historical
+`ghcr.io/cheark0x79/archero-guild:0.2.0` image remains the Web/API artifact for
+that release. Deployment-specific Compose overrides, ingress, DNS, and
+credentials belong in a separate private operations repository.
 
 ## Configuration and persistent state
 

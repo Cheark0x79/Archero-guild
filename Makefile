@@ -1,16 +1,22 @@
 ENV_FILE ?= web/.env.prod
-WEB_IMAGE ?= ghcr.io/cheark0x79/archero-guild
+WEB_IMAGE ?= ghcr.io/cheark0x79/archero-guild-web
 VERSION = $(shell cat VERSION)
 IMAGE_TAG ?= $(VERSION)
 COMPOSE = ARCHERO_WEB_IMAGE=$(WEB_IMAGE) ARCHERO_IMAGE_TAG=$(IMAGE_TAG) docker compose --env-file $(ENV_FILE) -f web/compose.yml
 OCR_ENV_FILE ?= ocr/.env
 OCR_COMPOSE = docker compose --env-file $(OCR_ENV_FILE) -f ocr/compose.yml
 OCR_TEST_IMAGE ?= archero-guild-ocr:test
+OCR_IMAGE ?= archero-guild-ocr
 
-.PHONY: build start stop update backup status logs test doctor ocr-start ocr-stop ocr-status ocr-logs
+.PHONY: build build-web build-ocr start stop update backup status logs test doctor ocr-start ocr-stop ocr-status ocr-logs
 
-build:
+build: build-web build-ocr
+
+build-web:
 	docker build -f web/Dockerfile --build-arg APP_VERSION=$(VERSION) -t archero-guild-web:$(VERSION) .
+
+build-ocr:
+	docker build -f ocr/Dockerfile --build-arg APP_VERSION=$(VERSION) -t $(OCR_IMAGE):$(VERSION) .
 
 start:
 	$(COMPOSE) pull app
