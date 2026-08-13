@@ -13,6 +13,10 @@ test("production packaging preserves the database and operational safeguards", (
   const dockerfile = fs.readFileSync(path.join(projectRoot, "web", "Dockerfile"), "utf8");
   const ocrCompose = fs.readFileSync(path.join(projectRoot, "ocr", "compose.yml"), "utf8");
   const ocrDockerfile = fs.readFileSync(path.join(projectRoot, "ocr", "Dockerfile"), "utf8");
+  const publishWorkflow = fs.readFileSync(
+    path.join(projectRoot, ".github", "workflows", "publish-container.yml"),
+    "utf8",
+  );
   const middleware = fs.readFileSync(path.join(projectRoot, "web", "middleware.js"), "utf8");
   const fallbackPage = fs.readFileSync(path.join(projectRoot, "web", "app", "[...fallback]", "page.jsx"), "utf8");
   const backupScript = fs.readFileSync(path.join(projectRoot, "web", "scripts", "backup.sh"), "utf8");
@@ -28,7 +32,7 @@ test("production packaging preserves the database and operational safeguards", (
   assert.match(makefile, /^backup:/m);
   assert.match(makefile, /pull app/);
   assert.match(makefile, /up -d --no-deps --no-build --wait --wait-timeout 90 app/);
-  assert.match(compose, /image: \$\{ARCHERO_WEB_IMAGE:-ghcr\.io\/cheark0x79\/archero-guild\}:\$\{ARCHERO_IMAGE_TAG:-latest\}/);
+  assert.match(compose, /image: \$\{ARCHERO_WEB_IMAGE:-ghcr\.io\/cheark0x79\/archero-guild-web\}:\$\{ARCHERO_IMAGE_TAG:-latest\}/);
   assert.doesNotMatch(compose, /^\s+build:/m);
   assert.doesNotMatch(compose, /cloudflare|cloudflared|tunnel/i);
   assert.match(compose, /APP_VERSION: \$\{ARCHERO_IMAGE_TAG:-latest\}/);
@@ -52,7 +56,11 @@ test("production packaging preserves the database and operational safeguards", (
   assert.match(dockerfile, /ARG DEPLOYMENT_ENV=production/);
   assert.doesNotMatch(dockerfile, /tesseract-ocr/);
   assert.match(ocrCompose, /127\.0\.0\.1:\$\{ARCHERO_OCR_UI_PORT:-5190\}:5190/);
+  assert.match(ocrCompose, /image: \$\{ARCHERO_OCR_IMAGE:-ghcr\.io\/cheark0x79\/archero-guild-ocr\}:\$\{ARCHERO_OCR_IMAGE_TAG:-latest\}/);
   assert.match(ocrDockerfile, /tesseract-ocr/);
+  assert.match(publishWorkflow, /product: web/);
+  assert.match(publishWorkflow, /product: ocr/);
+  assert.match(publishWorkflow, /ghcr\.io\/\$\{GITHUB_REPOSITORY,,\}-\$\{\{ matrix\.product \}\}/);
   assert.match(makefile, /sh \.\/web\/scripts\/backup\.sh/);
   assert.match(backupScript, /pg_dump/);
   assert.match(backupScript, /pg_restore --list/);

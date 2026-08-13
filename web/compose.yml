@@ -2,7 +2,7 @@ name: archero-guild
 
 services:
   app:
-    image: ${ARCHERO_WEB_IMAGE:-ghcr.io/cheark0x79/archero-guild}:${ARCHERO_IMAGE_TAG:-latest}
+    image: ${ARCHERO_WEB_IMAGE:-ghcr.io/cheark0x79/archero-guild-web}:${ARCHERO_IMAGE_TAG:-latest}
     restart: unless-stopped
     init: true
     cpus: "1.50"

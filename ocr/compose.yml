@@ -2,6 +2,7 @@ name: archero-ocr-agent
 
 services:
   ui:
+    image: ${ARCHERO_OCR_IMAGE:-ghcr.io/cheark0x79/archero-guild-ocr}:${ARCHERO_OCR_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: ocr/Dockerfile

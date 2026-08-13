@@ -1,4 +1,4 @@
-name: Publish container
+name: Publish containers
 
 on:
   release:
@@ -17,6 +17,14 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: web
+            dockerfile: web/Dockerfile
+          - product: ocr
+            dockerfile: ocr/Dockerfile
     steps:
       - name: Check out the released revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -31,7 +39,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           test "$version" = "$(cat VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.product }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -57,17 +65,17 @@ jobs:
             type=semver,pattern={{major}},value=${{ github.event.release.tag_name }}
             type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
-      - name: Build and publish image
+      - name: Build and publish ${{ matrix.product }} image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: web/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.release.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.product }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.product }}
           provenance: mode=max
