@@ -1,5 +1,9 @@
 .git
 .github
+.impeccable
+.impeccable-root-owned
+PRODUCT.md
+DESIGN.md
 .env
 .env.*
 **/__pycache__

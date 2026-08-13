@@ -1,6 +1,0 @@
-{
-  "promptFile": "dashboard-composition-f-shinigami-overview.prompt.txt",
-  "approved": true,
-  "approvedAt": "2026-08-09T04:20:00+02:00",
-  "approvalNotes": "Approved guild-centric composition. Final Quick status override: show only Roster and Latest boss result from the latest dated capture; omit Today's boss, Latest capture, and any Expedition placeholder until its content is defined. Implementation must reuse exact repository boss assets."
-}

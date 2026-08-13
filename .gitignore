@@ -17,3 +17,7 @@ result-*
 web/.next/
 web/node_modules/
 web/.env*.local
+.impeccable/
+.impeccable-root-owned/
+PRODUCT.md
+DESIGN.md
