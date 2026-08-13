@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { hasDashboardActionHeader, runObserverModule } from "../actions.js";
+import { moveMemberAdminRecord } from "../../../../lib/member-admin.js";
+import { hasDashboardActionHeader, projectRoot, runObserverModule } from "../actions.js";
 
 export async function GET() {
   const result = await runObserverModule("archero_guild.storage.member_identities", ["list"]);
@@ -16,6 +17,23 @@ export async function POST(request) {
   }
   try {
     const payload = await request.json();
+    if (payload?.action === "edit") {
+      const currentPlayerId = typeof payload?.currentPlayerId === "string" ? payload.currentPlayerId.trim() : "";
+      const playerId = typeof payload?.playerId === "string" ? payload.playerId.trim() : "";
+      const observedName = typeof payload?.observedName === "string" ? payload.observedName.trim() : "";
+      if (!/^\d{6,20}$/.test(currentPlayerId)) throw new Error("current player ID must contain 6 to 20 digits");
+      if (!/^\d{6,20}$/.test(playerId)) throw new Error("player ID must contain 6 to 20 digits");
+      if (!observedName || observedName.length > 120) throw new Error("observed name is required");
+      const result = await runObserverModule(
+        "archero_guild.storage.member_identities",
+        ["edit", currentPlayerId, playerId, observedName],
+      );
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: result.error || "identity update failed" }, { status: result.status || 500 });
+      }
+      await moveMemberAdminRecord(projectRoot(), currentPlayerId, playerId);
+      return NextResponse.json({ ok: true, member: result.data?.member });
+    }
     if (payload?.action === "rename-unmatched") {
       const captureDate = typeof payload?.captureDate === "string" ? payload.captureDate.trim() : "";
       const source = typeof payload?.source === "string" ? payload.source.trim() : "";
@@ -44,6 +62,21 @@ export async function POST(request) {
       );
       if (!result.ok) {
         return NextResponse.json({ ok: false, error: result.error || "member status save failed" }, { status: result.status || 500 });
+      }
+      return NextResponse.json({ ok: true, member: result.data?.member });
+    }
+    if (payload?.action === "departure-review") {
+      const playerId = typeof payload?.playerId === "string" ? payload.playerId.trim() : "";
+      const decision = typeof payload?.decision === "string" ? payload.decision.trim() : "";
+      const observedName = typeof payload?.observedName === "string" ? payload.observedName.trim() : "";
+      if (!/^\d{6,20}$/.test(playerId)) throw new Error("player ID must contain 6 to 20 digits");
+      if (!["confirm", "restore"].includes(decision)) throw new Error("invalid departure review decision");
+      const result = await runObserverModule(
+        "archero_guild.storage.member_identities",
+        ["departure-review", playerId, decision, observedName],
+      );
+      if (!result.ok) {
+        return NextResponse.json({ ok: false, error: result.error || "departure review save failed" }, { status: result.status || 500 });
       }
       return NextResponse.json({ ok: true, member: result.data?.member });
     }

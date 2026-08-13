@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { normalizeMemberAdminRecord, readMemberAdminRecords, saveMemberAdminRecord } from "../lib/member-admin.js";
+import { moveMemberAdminRecord, normalizeMemberAdminRecord, readMemberAdminRecords, saveMemberAdminRecord } from "../lib/member-admin.js";
 
 test("normalizes private member administration data", () => {
   assert.deepEqual(
@@ -48,6 +48,19 @@ test("persists private records by player ID", async () => {
     assert.equal(records["900000110"].absenceReason, "Travel");
     assert.equal(records["900000110"].warnings[0].reason, "Manual warning");
     assert.equal(records["900000110"].notes[0].note, "Private note");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("moves private records when a player ID changes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "archero-member-admin-move-"));
+  try {
+    await saveMemberAdminRecord(root, "900000110", { warnings: ["Manual warning"] });
+    await moveMemberAdminRecord(root, "900000110", "900000111");
+    const records = await readMemberAdminRecords(root);
+    assert.equal(records["900000110"], undefined);
+    assert.equal(records["900000111"].warnings[0].reason, "Manual warning");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -87,9 +87,15 @@ class StoragePersistenceTests(unittest.TestCase):
         query, parameters = cursor.calls[0]
         self.assertIn("status = 'active'", query)
         self.assertIn("last_seen_at <= %s::timestamptz", query)
+        self.assertIn("'status', 'pending'", query)
         self.assertEqual(
             parameters,
-            ("2026-07-29T12:00:00+02:00", "2026-07-29T12:00:00+02:00", ["123", "456"]),
+            (
+                "2026-07-29T12:00:00+02:00",
+                "2026-07-29T12:00:00+02:00",
+                "2026-07-29T12:00:00+02:00",
+                ["123", "456"],
+            ),
         )
 
 

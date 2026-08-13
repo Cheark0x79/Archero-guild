@@ -129,9 +129,23 @@ def _guild_roster(connection) -> list[dict[str, Any]]:
             "leftAt": _iso(row["left_on"]),
             "previousNames": _previous_names(row["current_name"], names_by_member[row["user_id"]]),
             "searchAliases": _search_aliases(row["metadata"]),
+            "departureReview": _departure_review(row["metadata"]),
         }
         for row in rows
     ]
+
+
+def _departure_review(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    review = metadata.get("membershipReview")
+    if not isinstance(review, dict) or review.get("status") not in {"pending", "confirmed"}:
+        return None
+    return {
+        key: _iso(review.get(key))
+        for key in ("status", "detectedAt", "reviewedAt")
+        if review.get(key) is not None
+    }
 
 
 def _previous_names(current_name: str, names: list[str]) -> list[str]:

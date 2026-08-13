@@ -14,6 +14,7 @@ from archero_guild.storage.export_json import database_url_from_env
 
 _PLAYER_ID_PATTERN = re.compile(r"^\d{6,20}$")
 _MEMBER_STATUSES = {"active", "left", "kicked"}
+_DEPARTURE_REVIEW_DECISIONS = {"confirm", "restore"}
 _GUILD_MEMBER_IDENTITY_UPSERT = """
     INSERT INTO guild_members (user_id, current_name, status)
     VALUES (%s, %s, 'active')
@@ -61,6 +62,29 @@ def assign_identity(
     return link
 
 
+def edit_member_identity(
+    current_player_id: str,
+    player_id: str,
+    observed_name: str,
+    *,
+    data_path: Path = Path("data/member-identities.json"),
+) -> dict[str, str]:
+    name = " ".join(observed_name.strip().split())
+    if not _PLAYER_ID_PATTERN.fullmatch(current_player_id):
+        raise ValueError("current player ID must contain 6 to 20 digits")
+    if not _PLAYER_ID_PATTERN.fullmatch(player_id):
+        raise ValueError("player ID must contain 6 to 20 digits")
+    if not name or len(name) > 120:
+        raise ValueError("observed name is required and must be at most 120 characters")
+
+    dsn = database_url_from_env()
+    if dsn:
+        _edit_database_identity(dsn, current_player_id, player_id, name)
+    else:
+        _edit_local_identity(data_path, current_player_id, player_id, name)
+    return {"previousPlayerId": current_player_id, "playerId": player_id, "observedName": name}
+
+
 def set_member_status(
     player_id: str,
     status: str,
@@ -79,6 +103,30 @@ def set_member_status(
     else:
         _set_local_status(data_path, player_id, status, observed_name)
     return {"playerId": player_id, "status": status}
+
+
+def review_member_departure(
+    player_id: str,
+    decision: str,
+    *,
+    observed_name: str = "",
+    data_path: Path = Path("data/member-identities.json"),
+) -> dict[str, Any]:
+    if not _PLAYER_ID_PATTERN.fullmatch(player_id):
+        raise ValueError("player ID must contain 6 to 20 digits")
+    if decision not in _DEPARTURE_REVIEW_DECISIONS:
+        raise ValueError("decision must be confirm or restore")
+
+    dsn = database_url_from_env()
+    if dsn:
+        _review_database_departure(dsn, player_id, decision)
+    else:
+        _review_local_departure(data_path, player_id, decision, observed_name)
+    return {
+        "playerId": player_id,
+        "status": "active" if decision == "restore" else "left",
+        "departureReview": None if decision == "restore" else {"status": "confirmed"},
+    }
 
 
 def rename_unmatched_member(capture_date: str, source: str, observed_name: str) -> dict[str, str]:
@@ -218,6 +266,70 @@ def _assign_database_link(dsn: str, link: dict[str, str]) -> None:
             )
 
 
+def _edit_database_identity(dsn: str, current_player_id: str, player_id: str, name: str) -> None:
+    import psycopg
+
+    normalized_name = normalize_name(name)
+    with psycopg.connect(dsn) as connection:
+        _ensure_database_table(connection)
+        with connection.transaction():
+            source = connection.execute(
+                "SELECT 1 FROM guild_members WHERE user_id = %s FOR UPDATE",
+                (current_player_id,),
+            ).fetchone()
+            if not source:
+                raise ValueError(f"unknown player ID: {current_player_id}")
+            if player_id != current_player_id:
+                duplicate = connection.execute(
+                    "SELECT 1 FROM guild_members WHERE user_id = %s",
+                    (player_id,),
+                ).fetchone()
+                if duplicate:
+                    raise ValueError(f"player ID already exists: {player_id}")
+                connection.execute(
+                    """
+                    INSERT INTO guild_members (
+                        user_id, current_name, display_name, discord_name, discord_linked,
+                        status, joined_on, left_on, first_seen_at, last_seen_at, metadata
+                    )
+                    SELECT %s, %s, display_name, discord_name, discord_linked,
+                           status, joined_on, left_on, first_seen_at, last_seen_at, metadata
+                    FROM guild_members WHERE user_id = %s
+                    """,
+                    (player_id, name, current_player_id),
+                )
+                for table in ("member_names", "member_identity_links", "member_metrics", "boss_daily_results"):
+                    connection.execute(
+                        f"UPDATE {table} SET user_id = %s WHERE user_id = %s",
+                        (player_id, current_player_id),
+                    )
+                connection.execute("DELETE FROM guild_members WHERE user_id = %s", (current_player_id,))
+            else:
+                connection.execute(
+                    "UPDATE guild_members SET current_name = %s WHERE user_id = %s",
+                    (name, player_id),
+                )
+            connection.execute(
+                """
+                INSERT INTO member_names (user_id, name, first_seen_at, last_seen_at)
+                VALUES (%s, %s, now(), now())
+                ON CONFLICT (user_id, name) DO UPDATE SET last_seen_at = now()
+                """,
+                (player_id, name),
+            )
+            connection.execute(
+                """
+                INSERT INTO member_identity_links (normalized_name, observed_name, user_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (normalized_name) DO UPDATE SET
+                    observed_name = EXCLUDED.observed_name,
+                    user_id = EXCLUDED.user_id,
+                    updated_at = now()
+                """,
+                (normalized_name, name, player_id),
+            )
+
+
 def _set_database_status(dsn: str, player_id: str, status: str) -> None:
     import psycopg
 
@@ -232,6 +344,46 @@ def _set_database_status(dsn: str, player_id: str, status: str) -> None:
             """,
             (status, status, status, player_id),
         )
+        if result.rowcount != 1:
+            raise ValueError(f"unknown player ID: {player_id}")
+
+
+def _review_database_departure(dsn: str, player_id: str, decision: str) -> None:
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        if decision == "restore":
+            result = connection.execute(
+                """
+                UPDATE guild_members
+                SET status = 'active',
+                    left_on = NULL,
+                    last_seen_at = now(),
+                    metadata = COALESCE(metadata, '{}'::jsonb) - 'membershipReview'
+                WHERE user_id = %s
+                """,
+                (player_id,),
+            )
+        else:
+            result = connection.execute(
+                """
+                UPDATE guild_members
+                SET status = 'left',
+                    left_on = COALESCE(left_on, CURRENT_DATE),
+                    metadata = jsonb_set(
+                        COALESCE(metadata, '{}'::jsonb),
+                        '{membershipReview}',
+                        jsonb_build_object(
+                            'status', 'confirmed',
+                            'detectedAt', COALESCE(metadata #>> '{membershipReview,detectedAt}', now()::text),
+                            'reviewedAt', now()
+                        ),
+                        true
+                    )
+                WHERE user_id = %s
+                """,
+                (player_id,),
+            )
         if result.rowcount != 1:
             raise ValueError(f"unknown player ID: {player_id}")
 
@@ -274,6 +426,21 @@ def _assign_local_link(path: Path, link: dict[str, str]) -> None:
     _write_local_links(path, list(links.values()))
 
 
+def _edit_local_identity(path: Path, current_player_id: str, player_id: str, name: str) -> None:
+    links = _read_local_links(path)
+    found = False
+    for link in links:
+        if link.get("playerId") == current_player_id:
+            link["playerId"] = player_id
+            found = True
+    if not found:
+        raise ValueError(f"unknown player ID: {current_player_id}")
+    normalized_name = normalize_name(name)
+    links = [link for link in links if link.get("normalizedName") != normalized_name]
+    links.append({"normalizedName": normalized_name, "observedName": name, "playerId": player_id})
+    _write_local_links(path, links)
+
+
 def _set_local_status(path: Path, player_id: str, status: str, observed_name: str) -> None:
     links = _read_local_links(path)
     matching = [item for item in links if item.get("playerId") == player_id]
@@ -291,6 +458,31 @@ def _set_local_status(path: Path, player_id: str, status: str, observed_name: st
         matching = [links[-1]]
     for link in matching:
         link["status"] = status
+    _write_local_links(path, links)
+
+
+def _review_local_departure(path: Path, player_id: str, decision: str, observed_name: str) -> None:
+    links = _read_local_links(path)
+    matching = [item for item in links if item.get("playerId") == player_id]
+    if not matching:
+        name = " ".join(observed_name.strip().split())
+        if not name:
+            raise ValueError(f"unknown player ID: {player_id}")
+        links.append(
+            {
+                "normalizedName": normalize_name(name),
+                "observedName": name,
+                "playerId": player_id,
+            }
+        )
+        matching = [links[-1]]
+    for link in matching:
+        if decision == "restore":
+            link["status"] = "active"
+            link.pop("departureReview", None)
+        else:
+            link["status"] = "left"
+            link["departureReview"] = {"status": "confirmed"}
     _write_local_links(path, links)
 
 
@@ -325,10 +517,18 @@ def main(argv: list[str] | None = None) -> int:
     assign_parser = subparsers.add_parser("assign")
     assign_parser.add_argument("observed_name")
     assign_parser.add_argument("player_id")
+    edit_parser = subparsers.add_parser("edit")
+    edit_parser.add_argument("current_player_id")
+    edit_parser.add_argument("player_id")
+    edit_parser.add_argument("observed_name")
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("player_id")
     status_parser.add_argument("status", choices=sorted(_MEMBER_STATUSES))
     status_parser.add_argument("observed_name", nargs="?", default="")
+    review_parser = subparsers.add_parser("departure-review")
+    review_parser.add_argument("player_id")
+    review_parser.add_argument("decision", choices=sorted(_DEPARTURE_REVIEW_DECISIONS))
+    review_parser.add_argument("observed_name", nargs="?", default="")
     rename_parser = subparsers.add_parser("rename-unmatched")
     rename_parser.add_argument("capture_date")
     rename_parser.add_argument("source")
@@ -339,11 +539,27 @@ def main(argv: list[str] | None = None) -> int:
         payload: object = {"links": list_identity_links()}
     elif args.command == "assign":
         payload = {"link": assign_identity(args.observed_name, args.player_id)}
+    elif args.command == "edit":
+        payload = {
+            "member": edit_member_identity(
+                args.current_player_id,
+                args.player_id,
+                args.observed_name,
+            )
+        }
     elif args.command == "status":
         payload = {
             "member": set_member_status(
                 args.player_id,
                 args.status,
+                observed_name=args.observed_name,
+            )
+        }
+    elif args.command == "departure-review":
+        payload = {
+            "member": review_member_departure(
+                args.player_id,
+                args.decision,
                 observed_name=args.observed_name,
             )
         }

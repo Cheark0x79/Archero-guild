@@ -212,9 +212,13 @@ const BOSS_ROTATION = [
 const routeMeta = {
   dashboard: ["Dashboard", "Guild overview and collective progression."],
   members: ["Members", "Search, status, and individual progression."],
-  boss: ["Boss", "Guild boss damage comparison, daily rankings, and records."],
+  boss: ["Boss", "Compare weekly damage and explore guild records."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
-  admin: ["Admin", "Operational tools and local rules."],
+  admin: ["Admin overview", "Operational status and administration tasks."],
+  "admin-members": ["Member management", "Private notes, absences, identities, and roster status."],
+  "admin-member": ["Edit member", "Warnings, notes, announced absence, and guild status."],
+  membership: ["Guild membership", "Review roster changes detected by complete guild imports."],
+  notifications: ["Notifications", "Guild changes and member alerts that need an officer decision."],
   test: ["Test", "Synthetic fixtures and isolated environment controls."],
   member: ["Member detail", "History, progression, boss activity, notes, and alerts."],
   rankings: ["Records", "Quick rankings from current data."],
@@ -285,7 +289,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   }, [initialSessionRole]);
 
   const activeRoute = initialRoute === "member" ? "member" : routeMeta[initialRoute] ? initialRoute : "dashboard";
-  const selectedMemberCandidate = activeRoute === "member" ? findMemberByKey(memberKeyParam) : null;
+  const selectedMemberCandidate = ["member", "admin-member"].includes(activeRoute) ? findMemberByKey(memberKeyParam) : null;
   const selectedMember = selectedMemberCandidate;
   const [routeTitle, subtitle] = routeMeta[activeRoute];
   const title = activeRoute === "dashboard" && captures.guildName
@@ -294,6 +298,20 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
   const showSyntheticBadge = activeRoute === "dashboard"
     && process.env.NEXT_PUBLIC_TEST_DATA_ADMIN === "1"
     && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV);
+  const pendingDepartures = sessionRole === "admin"
+    ? guildRoster.filter((member) => member.status === "left" && member.departureReview?.status === "pending")
+    : [];
+  const openAdminWarnings = sessionRole === "admin" ? currentAdminWarnings(rules, warningActions) : [];
+  const adminNotificationCount = pendingDepartures.length + openAdminWarnings.length;
+
+  function applyDepartureReview(playerId, reviewedMember) {
+    guildRoster = guildRoster.map((member) => (
+      member.playerId === playerId ? { ...member, ...reviewedMember } : member
+    ));
+    members = buildCurrentMembers();
+    dashboardDataCache = null;
+    setDataVersion((version) => version + 1);
+  }
 
   async function updateWarningAction(event, nextAction) {
     const response = await fetch("/api/warning-actions", {
@@ -339,6 +357,13 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           </div>
           <div className="topbar-right">
             {activeRoute === "members" ? <div id="topbar-actions" className="topbar-actions" /> : null}
+            {activeRoute === "admin" ? (
+              <a className="admin-notification-link" href="/admin/notifications">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+                <span>Notifications</span>
+                <strong>{adminNotificationCount}</strong>
+              </a>
+            ) : null}
             <div className="topbar-meta" aria-label="Data freshness">
               {showSyntheticBadge ? <span className="environment-badge">Synthetic test data</span> : null}
               <span>{activeRoute === "dashboard" ? "Last capture" : "Last update"}</span>
@@ -363,7 +388,30 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         )}
         {!dataLoading && activeRoute === "boss" && <BossView />}
         {!dataLoading && activeRoute === "data" && <DataView />}
-        {!dataLoading && activeRoute === "admin" && <AdminView dataVersion={dataVersion} />}
+        {!dataLoading && activeRoute === "admin" && (
+          <AdminView
+            rules={rules}
+            pendingDepartureCount={pendingDepartures.length}
+            openWarnings={openAdminWarnings}
+          />
+        )}
+        {!dataLoading && activeRoute === "admin-members" && <AdminMembersView dataVersion={dataVersion} rules={rules} openWarnings={openAdminWarnings} />}
+        {!dataLoading && activeRoute === "admin-member" && selectedMember && <AdminMemberEditView member={selectedMember} rules={rules} warningActions={warningActions} updateWarningAction={updateWarningAction} />}
+        {!dataLoading && activeRoute === "admin-member" && !selectedMember && (
+          <section className="panel"><PanelHeading title="Member not found" subtitle="This member is not present in the current or historical roster." /><a className="secondary-button" href="/admin/members">Back to member management</a></section>
+        )}
+        {!dataLoading && activeRoute === "membership" && (
+          <MembershipAdminView membersToReview={pendingDepartures} onReviewed={applyDepartureReview} />
+        )}
+        {!dataLoading && activeRoute === "notifications" && (
+          <AdminNotificationsView
+            rules={rules}
+            pendingDepartures={pendingDepartures}
+            onDepartureReviewed={applyDepartureReview}
+            openWarnings={openAdminWarnings}
+            updateWarningAction={updateWarningAction}
+          />
+        )}
         {!dataLoading && activeRoute === "test" && <TestEnvironmentView />}
         {!dataLoading && activeRoute === "member" && selectedMember && (
           <MemberDetail
@@ -373,7 +421,6 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
             setRanges={setDetailRanges}
             sessionRole={sessionRole}
             warningActions={warningActions}
-            updateWarningAction={updateWarningAction}
           />
         )}
         {!dataLoading && activeRoute === "member" && !selectedMember && (
@@ -396,6 +443,116 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         {!dataLoading && activeRoute === "settings" && <RulesView rules={rules} setRules={setRules} />}
       </main>
     </div>
+  );
+}
+
+function MembershipAdminView({ membersToReview, onReviewed }) {
+  return (
+    <div className="admin-management membership-admin-page">
+      <section className="panel membership-policy">
+        <PanelHeading
+          title="Current roster reconciliation"
+          subtitle="A complete guild import is the source of truth for current membership."
+        />
+        <div className="membership-policy-flow" aria-label="Membership reconciliation behavior">
+          <span>Missing members are hidden immediately</span>
+          <span>Historical data stays available</span>
+          <span>Admins confirm or restore the member here</span>
+        </div>
+      </section>
+      {membersToReview.length > 0 ? (
+        <MembershipReview membersToReview={membersToReview} onReviewed={onReviewed} />
+      ) : (
+        <section className="panel membership-review-empty">
+          <h2>No departures to review</h2>
+          <p>The current roster matches the latest complete guild import.</p>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function MembershipReview({ membersToReview, onReviewed }) {
+  const [busyPlayerId, setBusyPlayerId] = useState("");
+  const [error, setError] = useState("");
+
+  async function review(member, decision) {
+    if (busyPlayerId) return;
+    setBusyPlayerId(member.playerId);
+    setError("");
+    try {
+      const response = await fetch("/api/data/member-identities", {
+        method: "POST",
+        headers: dataActionHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({
+          action: "departure-review",
+          playerId: member.playerId,
+          observedName: member.name,
+          decision,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.member) {
+        throw new Error(payload?.error ?? "The membership decision could not be saved.");
+      }
+      onReviewed(member.playerId, payload.member);
+      setBusyPlayerId("");
+    } catch (reviewError) {
+      setBusyPlayerId("");
+      setError(reviewError instanceof Error ? reviewError.message : "The membership decision could not be saved.");
+    }
+  }
+
+  return (
+    <section className="membership-review" aria-labelledby="membership-review-title">
+      <div className="membership-review-heading">
+        <div>
+          <h2 id="membership-review-title">Review guild departures</h2>
+          <p>
+            {membersToReview.length === 1
+              ? "One member was missing from the latest complete guild import."
+              : `${membersToReview.length} members were missing from the latest complete guild import.`}
+            {" "}They are already hidden from current rankings and API lists.
+          </p>
+        </div>
+        <span className="membership-review-count">{membersToReview.length} pending</span>
+      </div>
+      <div className="membership-review-list">
+        {membersToReview.map((member) => {
+          const isBusy = busyPlayerId === member.playerId;
+          return (
+            <div className="membership-review-row" key={member.playerId}>
+              <div className="membership-review-member">
+                <strong>{member.name}</strong>
+                <span>
+                  {member.playerId}
+                  {member.departureReview?.detectedAt ? ` · Detected ${formatDateTime(member.departureReview.detectedAt)}` : ""}
+                </span>
+              </div>
+              <div className="membership-review-actions">
+                <button
+                  className="secondary-button compact-action"
+                  type="button"
+                  disabled={Boolean(busyPlayerId)}
+                  onClick={() => review(member, "restore")}
+                >
+                  {isBusy ? "Saving…" : "Keep active"}
+                </button>
+                <button
+                  className="primary-button compact-action"
+                  type="button"
+                  disabled={Boolean(busyPlayerId)}
+                  onClick={() => review(member, "confirm")}
+                >
+                  {isBusy ? "Saving…" : "Confirm departure"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {error ? <p className="membership-review-error" role="alert">{error} Try again.</p> : null}
+    </section>
   );
 }
 
@@ -800,24 +957,168 @@ function DataActionButton({ title, detail, disabled, onClick }) {
   );
 }
 
-function AdminView({ dataVersion }) {
-  const [query, setQuery] = useState("");
-  const [selectedKey, setSelectedKey] = useState("");
+function currentAdminWarnings(rules, warningActions) {
+  const currentMembers = currentMembersList();
+  const latestWarnings = new Map();
+  currentMembers.forEach((member) => {
+    if (!member.playerId) return;
+    const memberHistory = dailyHistory(member);
+    const latestDate = memberHistory.at(-1)?.date;
+    warningHistoryEvents(memberHistory, rules, member).filter((warning) => warning.date === latestDate).forEach((warning) => {
+      const key = `${memberKey(member)}:${warning.type}`;
+      const current = latestWarnings.get(key);
+      if (!current || warning.date > current.date) {
+        latestWarnings.set(key, {
+          ...warning,
+          member,
+          playerId: member.playerId,
+          action: warningActions[automaticWarningKey(member.playerId, warning.date, warning.type)] ?? defaultWarningAction(),
+        });
+      }
+    });
+  });
+  const openWarnings = [...latestWarnings.values()]
+    .filter((warning) => warning.action.status === "pending")
+    .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
+  return openWarnings;
+}
+
+const ADMIN_WARNING_GROUPS = [
+  { type: "game_absence", title: "Inactive", detail: "Members without recent activity.", icon: "inactive" },
+  { type: "low_contribution", title: "Weekly donation", detail: "Members below the weekly target.", icon: "donation" },
+  { type: "low_progression", title: "Power progress", detail: "Members below the seven-day target.", icon: "progress" },
+  { type: "missed_boss", title: "Boss participation", detail: "Members below the daily tries rule.", icon: "boss" },
+];
+
+function AdminView({ rules, pendingDepartureCount, openWarnings }) {
+  const currentMembers = currentMembersList();
+  const membersToReview = new Set(openWarnings.map((warning) => memberKey(warning.member))).size;
+  const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
+  const excusedMembers = currentMembers.filter((member) => member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate).length;
+  const memberCapacity = numericValue(captures.guildStats?.memberCapacity);
+  const adminSpaces = [
+    { href: "/admin/members", title: "Member management", detail: "Notes, absences, status and manual warnings.", icon: "members" },
+    { href: "/admin/notifications", title: "Notifications", detail: "Departures, inactivity and guild updates.", icon: "notifications", status: `${openWarnings.length + pendingDepartureCount} new`, warning: openWarnings.length + pendingDepartureCount > 0 },
+    { href: "/admin/rules", title: "Guild rules", detail: "Thresholds used for automatic warnings.", icon: "rules" },
+    { href: "/data", title: "Data & imports", detail: "Review captures and correct imported values.", icon: "data" },
+  ];
+  return (
+    <div className="admin-overview">
+      <section className="admin-status-strip" aria-label="Administration summary">
+        <div><span>Current roster</span><strong>{formatRatio(currentMembers.length, memberCapacity)}</strong></div>
+        <div><span>Members to review</span><strong>{membersToReview}</strong></div>
+        <div><span>Announced leave</span><strong>{excusedMembers}</strong></div>
+        <div><span>Pending departures</span><strong>{pendingDepartureCount}</strong></div>
+      </section>
+      <section className="admin-visual-section">
+        <div className="admin-section-heading"><div><h2>Member follow-up</h2><p>Open a category to see only the members concerned.</p></div><a href="/admin/notifications">View all</a></div>
+        <div className="admin-followup-grid">
+          {ADMIN_WARNING_GROUPS.map((group) => {
+            const count = openWarnings.filter((warning) => warning.type === group.type).length;
+            return (
+              <a className={`admin-followup-tile ${count > 0 ? "has-alerts" : ""}`} href={`/admin/notifications#${group.type}`} key={group.type}>
+                <AdminTileIcon type={group.icon} />
+                <strong>{count}</strong>
+                <span>{group.title}<AdminArrow /></span>
+              </a>
+            );
+          })}
+        </div>
+      </section>
+      <section className="admin-visual-section">
+        <div className="admin-section-heading"><div><h2>Admin spaces</h2><p>Each area has one clear purpose.</p></div></div>
+        <div className="admin-space-grid">
+          {adminSpaces.map((space) => (
+            <a className="admin-space-tile" href={space.href} key={space.href}>
+              <AdminTileIcon type={space.icon} />
+              <span><strong>{space.title}</strong><small>{space.detail}</small></span>
+              {space.status ? <em className={space.warning ? "warning" : ""}>{space.status}</em> : <AdminArrow />}
+            </a>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminNotificationsView({ rules, pendingDepartures, onDepartureReviewed, openWarnings, updateWarningAction }) {
+  const currentMembers = currentMembersList();
+  const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
+  const excusedMembers = currentMembers.filter((member) => member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate).length;
+  return (
+    <div className="admin-notifications-page">
+      <section className="admin-status-strip admin-notification-summary" aria-label="Notification summary">
+        <div><span>Open notifications</span><strong>{openWarnings.length + pendingDepartures.length}</strong></div>
+        <div><span>Rule alerts</span><strong>{openWarnings.length}</strong></div>
+        <div><span>Roster changes</span><strong>{pendingDepartures.length}</strong></div>
+        <div><span>Announced leave</span><strong>{excusedMembers}</strong></div>
+      </section>
+      {pendingDepartures.length > 0 ? <MembershipReview membersToReview={pendingDepartures} onReviewed={onDepartureReviewed} /> : null}
+      <section className="panel admin-notification-feed">
+        <PanelHeading title="Member alerts" subtitle="Acknowledge an alert when an officer has reviewed the member situation." />
+        <div className="admin-notification-groups">
+          {ADMIN_WARNING_GROUPS.map((group) => {
+            const groupWarnings = openWarnings.filter((warning) => warning.type === group.type);
+            return (
+              <section id={group.type} className="admin-notification-group" key={group.type}>
+                <header><span><strong>{group.title}</strong><small>{group.detail}</small></span><em className={groupWarnings.length > 0 ? "warning" : ""}>{groupWarnings.length}</em></header>
+                {groupWarnings.length > 0 ? groupWarnings.map((warning) => <AdminWarningRow warning={warning} onUpdate={updateWarningAction} key={`${warning.playerId}-${warning.id}`} />) : <p>No current alert.</p>}
+              </section>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminTileIcon({ type }) {
+  const paths = {
+    inactive: <><path d="M20 15.2A8 8 0 0 1 8.8 4 8 8 0 1 0 20 15.2Z" /></>,
+    donation: <><ellipse cx="12" cy="6" rx="7" ry="3" /><path d="M5 6v5c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 11v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" /></>,
+    progress: <><path d="m4 16 5-5 4 4 7-8" /><path d="M15 7h5v5" /></>,
+    boss: <><path d="m6 3 12 12M18 3 6 15M8 13l3 3-4 4-3-3 4-4ZM16 13l-3 3 4 4 3-3-4-4Z" /></>,
+    members: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" /></>,
+    notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+    rules: <><path d="M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4" /></>,
+    data: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></>,
+  };
+  return <span className="admin-tile-icon"><svg viewBox="0 0 24 24" aria-hidden="true">{paths[type]}</svg></span>;
+}
+
+function AdminArrow() {
+  return <svg className="admin-tile-arrow" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 6l4 4-4 4" /></svg>;
+}
+
+function AdminWarningRow({ warning, onUpdate }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function acknowledge() {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onUpdate(warning, { ...warning.action, status: "noted" });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to acknowledge this warning.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <article className="admin-warning-row">
+      <div><strong>{warning.member.name}</strong><span>{warning.detail}</span>{error ? <small className="admin-warning-error" role="alert">{error}</small> : null}</div>
+      <div className="admin-warning-actions">
+        <a className="secondary-button compact-action" href={`/members/${encodeURIComponent(memberKey(warning.member))}`}>View</a>
+        <button className="secondary-button compact-action" type="button" disabled={saving} onClick={acknowledge}>{saving ? "Saving…" : "Acknowledge"}</button>
+      </div>
+    </article>
+  );
+}
+
+function useMemberAdminRecords() {
   const [records, setRecords] = useState({});
   const [loadState, setLoadState] = useState({ loading: true, error: "" });
-  const adminMembers = useMemo(
-    () => [...members].sort((left, right) => left.name.localeCompare(right.name)),
-    [dataVersion],
-  );
-  const normalizedQuery = normalizedMemberName(query);
-  const filteredMembers = adminMembers.filter((member) =>
-    !normalizedQuery
-    || normalizedMemberName(`${member.name} ${member.playerId ?? ""}`).includes(normalizedQuery),
-  );
-  const selectedMember = adminMembers.find((member) => memberKey(member) === selectedKey)
-    ?? filteredMembers[0]
-    ?? null;
-
   useEffect(() => {
     let active = true;
     fetch("/api/member-admin", { cache: "no-store" })
@@ -832,106 +1133,100 @@ function AdminView({ dataVersion }) {
       .catch((error) => {
         if (active) setLoadState({ loading: false, error: error instanceof Error ? error.message : "Unable to load member administration." });
       });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
+  return { records, setRecords, loadState };
+}
 
-  function updateRecord(playerId, record) {
-    setRecords((current) => ({ ...current, [playerId]: record }));
-  }
-
-  const absenceCount = Object.values(records).filter((record) => record?.absenceUntil && record.absenceUntil >= todayLabel()).length;
-  const warningCount = Object.values(records).reduce((total, record) => total + (record?.warnings?.length ?? 0), 0);
-  const noteCount = Object.values(records).reduce((total, record) => total + (record?.notes?.length ?? 0), 0);
-  const missingIdCount = adminMembers.filter((member) => !member.playerId).length;
+function AdminMembersView({ dataVersion, rules, openWarnings }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const { records, loadState } = useMemberAdminRecords();
+  const adminMembers = useMemo(
+    () => [...members],
+    [dataVersion],
+  );
+  const normalizedQuery = normalizedMemberName(query);
+  const today = todayLabel();
+  const decoratedMembers = adminMembers.map((member) => {
+    const record = member.playerId ? records[member.playerId] : null;
+    const automaticWarnings = openWarnings.filter((warning) => warning.playerId === member.playerId);
+    const manualWarningCount = record?.warnings?.length ?? 0;
+    const evaluation = evaluateMember(member, rules);
+    return {
+      member,
+      record,
+      evaluation,
+      automaticWarnings,
+      warningCount: automaticWarnings.length + manualWarningCount,
+      isAbsent: Boolean(record?.absenceUntil && record.absenceUntil >= today),
+    };
+  });
+  const filteredMembers = decoratedMembers
+    .filter(({ member, warningCount, isAbsent }) => {
+      const matchesQuery = !normalizedQuery || normalizedMemberName(`${member.name} ${member.playerId ?? ""}`).includes(normalizedQuery);
+      const matchesFilter = filter === "all"
+        || (filter === "warnings" && warningCount > 0)
+        || (filter === "absence" && isAbsent)
+        || (filter === "former" && isFormerStatus(member.status))
+        || (filter === "missing-id" && !member.playerId);
+      return matchesQuery && matchesFilter;
+    })
+    .sort((left, right) => right.warningCount - left.warningCount || left.member.name.localeCompare(right.member.name));
+  const currentMembers = decoratedMembers.filter(({ member }) => !isFormerStatus(member.status));
+  const warningMembers = decoratedMembers.filter(({ warningCount }) => warningCount > 0).length;
+  const absentMembers = decoratedMembers.filter(({ isAbsent }) => isAbsent).length;
+  const formerMembers = decoratedMembers.filter(({ member }) => isFormerStatus(member.status)).length;
 
   return (
-    <div className="admin-management">
-      <section className="panel admin-workspace-intro">
-        <PanelHeading title="Officer workspace" subtitle="Member follow-up, guild rules, and operational tools are separated by purpose." />
-        <div className="admin-workspace-links">
-          <a href="/admin/activity"><strong>Member activity</strong><span>Review inactivity and automatic alerts</span></a>
-          <a href="/admin/rules"><strong>Guild rules</strong><span>Adjust evaluation thresholds</span></a>
-          <a href="/records"><strong>Guild records</strong><span>Open the legacy ranking view</span></a>
-        </div>
-      </section>
-      <div className="admin-summary-grid">
-        <article className="metric-card">
-          <span>Announced absences</span>
-          <strong>{absenceCount}</strong>
-          <small>Currently active</small>
-        </article>
-        <article className="metric-card">
-          <span>Manual warnings</span>
-          <strong>{warningCount}</strong>
-          <small>Private admin records</small>
-        </article>
-        <article className="metric-card">
-          <span>Officer notes</span>
-          <strong>{noteCount}</strong>
-          <small>Private admin records</small>
-        </article>
-        <article className="metric-card">
-          <span>Missing IDs</span>
-          <strong>{missingIdCount}</strong>
-          <small>Identity links to define</small>
-        </article>
-      </div>
-
+    <div className="admin-members-page">
       {loadState.error ? <div className="data-warning" role="alert">{loadState.error}</div> : null}
-
-      <div className="admin-member-layout">
-        <section className="panel admin-member-directory">
-          <PanelHeading title="Member administration" subtitle="Select a person to edit private officer-only data." />
-          <label className="admin-member-search">
-            <span>Search by name or player ID</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Name or ID"
-            />
-          </label>
-          <div className="admin-member-list">
-            {filteredMembers.map((member) => {
-              const record = member.playerId ? records[member.playerId] : null;
-              const active = memberKey(member) === memberKey(selectedMember ?? {});
-              return (
-                <button
-                  className={`admin-member-button ${active ? "active" : ""}`}
-                  type="button"
-                  key={memberKey(member)}
-                  onClick={() => setSelectedKey(memberKey(member))}
-                >
-                  <span>
-                    <strong>{member.name}</strong>
-                    <small>{member.playerId ?? "Missing player ID"}</small>
-                  </span>
-                  <span className="admin-member-badges">
-                    {record?.absenceUntil && record.absenceUntil >= todayLabel() ? <small>Absent</small> : null}
-                    {(record?.warnings?.length ?? 0) > 0 ? <small>{record.warnings.length} warning(s)</small> : null}
-                  </span>
-                </button>
-              );
-            })}
+      <section className="admin-status-strip" aria-label="Member administration summary">
+        <div><span>Current members</span><strong>{currentMembers.length}</strong></div>
+        <div><span>With warnings</span><strong>{warningMembers}</strong></div>
+        <div><span>Announced leave</span><strong>{absentMembers}</strong></div>
+        <div><span>Former members</span><strong>{formerMembers}</strong></div>
+      </section>
+      <section className="panel admin-member-directory-panel">
+        <PanelHeading title="Member management" subtitle="Warnings and officer context first. Performance remains on the public member profile." />
+        <div className="admin-member-toolbar">
+          <label className="search-field"><span>Search</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name or player ID" /></label>
+          <label className="select-field"><span>Show</span><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">All members</option><option value="warnings">With warnings</option><option value="absence">Announced leave</option><option value="former">Left or kicked</option><option value="missing-id">Missing player ID</option></select></label>
+        </div>
+        {loadState.loading ? <p className="muted">Loading private member data...</p> : null}
+        {!loadState.loading ? (
+          <div className="admin-member-rows">
+            {filteredMembers.map(({ member, record, evaluation, warningCount, automaticWarnings, isAbsent }) => (
+              <a href={`/admin/members/${encodeURIComponent(memberKey(member))}`} className="admin-member-row" key={memberKey(member)}>
+                <span className="admin-member-identity"><strong>{member.name}</strong><small>{member.playerId ?? "Missing player ID"} · {roleLabel(member.role)}</small></span>
+                <span className="admin-member-context">
+                  {warningCount > 0 ? <em className="warning">{warningCount} warning{warningCount === 1 ? "" : "s"}</em> : <em>Clear</em>}
+                  {isAbsent ? <em>Leave until {record.absenceUntil}</em> : null}
+                  {automaticWarnings.length > 0 ? <small>{automaticWarnings.map((warning) => warning.label).join(" · ")}</small> : null}
+                </span>
+                <StatusPill label={evaluation.status} severity={evaluation.severity} />
+                <AdminArrow />
+              </a>
+            ))}
             {filteredMembers.length === 0 ? <p className="muted">No member matches this search.</p> : null}
           </div>
-        </section>
+        ) : null}
+      </section>
+    </div>
+  );
+}
 
-        <section className="panel admin-member-editor">
-          {loadState.loading ? <p className="muted">Loading private member data...</p> : null}
-          {!loadState.loading && selectedMember ? (
-            <AdminMemberEditor
-              key={memberKey(selectedMember)}
-              member={selectedMember}
-              record={selectedMember.playerId ? records[selectedMember.playerId] : null}
-              onSaved={updateRecord}
-            />
-          ) : null}
-          {!loadState.loading && !selectedMember ? <p className="muted">Select a member to begin.</p> : null}
-        </section>
-      </div>
+function AdminMemberEditView({ member, rules, warningActions, updateWarningAction }) {
+  const { records, setRecords, loadState } = useMemberAdminRecords();
+  const record = member.playerId ? records[member.playerId] : null;
+  return (
+    <div className="admin-member-edit-page">
+      <a className="admin-back-link" href="/admin/members"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5" /></svg>Member management</a>
+      {loadState.error ? <div className="data-warning" role="alert">{loadState.error}</div> : null}
+      <section className="panel admin-member-edit-panel">
+        {loadState.loading ? <p className="muted">Loading private member data...</p> : null}
+        {!loadState.loading ? <AdminMemberEditor member={member} record={record} rules={rules} warningActions={warningActions} updateWarningAction={updateWarningAction} onSaved={(playerId, savedRecord) => setRecords((current) => ({ ...current, [playerId]: savedRecord }))} /> : null}
+      </section>
     </div>
   );
 }
@@ -1016,17 +1311,54 @@ function TestDataPanel() {
   );
 }
 
-function AdminMemberEditor({ member, record, onSaved }) {
-  const [playerIdDraft, setPlayerIdDraft] = useState("");
+function AdminMemberEditor({ member, record, rules, warningActions, updateWarningAction, onSaved }) {
+  const [nameDraft, setNameDraft] = useState(member.name);
+  const [playerIdDraft, setPlayerIdDraft] = useState(member.playerId ?? "");
+  const [editingField, setEditingField] = useState("");
+  const [currentStatus, setCurrentStatus] = useState(member.status ?? "active");
   const [absenceUntil, setAbsenceUntil] = useState(record?.absenceUntil ?? "");
   const [absenceReason, setAbsenceReason] = useState(record?.absenceReason ?? "");
-  const [warningsText, setWarningsText] = useState((record?.warnings ?? []).map((warning) => warning.reason).join("\n"));
-  const [notesText, setNotesText] = useState((record?.notes ?? []).map((note) => note.note).join("\n"));
+  const [warnings, setWarnings] = useState(record?.warnings ?? []);
+  const [notes, setNotes] = useState(record?.notes ?? []);
+  const [followUpType, setFollowUpType] = useState("warning");
+  const [followUpDraft, setFollowUpDraft] = useState("");
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [ignoredWarningKeys, setIgnoredWarningKeys] = useState(() => new Set());
   const [saveState, setSaveState] = useState({ saving: false, error: "", success: "" });
+  const automaticWarnings = warningHistoryEvents(dailyHistory(member), rules, member)
+    .map((warning) => ({
+      ...warning,
+      playerId: member.playerId,
+      action: warningActions[automaticWarningKey(member.playerId, warning.date, warning.type)] ?? defaultWarningAction(),
+    }))
+    .sort((left, right) => right.date.localeCompare(left.date));
+  const initials = member.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  const openWarningCount = automaticWarnings.filter((warning) => (
+    !warningActionClosed(warning.action?.status)
+    && !ignoredWarningKeys.has(automaticWarningKey(warning.playerId, warning.date, warning.type))
+  )).length + warnings.length;
 
-  async function assignPlayerId(event) {
-    event.preventDefault();
+  useEffect(() => {
+    if (!followUpOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    function closeOnEscape(event) {
+      if (event.key === "Escape") setFollowUpOpen(false);
+    }
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [followUpOpen]);
+
+  async function saveIdentity() {
+    const observedName = nameDraft.trim();
     const playerId = playerIdDraft.trim();
+    if (!observedName) {
+      setSaveState({ saving: false, error: "Member name cannot be empty.", success: "" });
+      return;
+    }
     if (!/^\d{6,20}$/.test(playerId)) {
       setSaveState({ saving: false, error: "Player ID must contain 6 to 20 digits.", success: "" });
       return;
@@ -1036,12 +1368,14 @@ function AdminMemberEditor({ member, record, onSaved }) {
       const response = await fetch("/api/data/member-identities", {
         method: "POST",
         headers: dataActionHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ observedName: member.name, playerId }),
+        body: JSON.stringify(member.playerId
+          ? { action: "edit", currentPlayerId: member.playerId, observedName, playerId }
+          : { observedName, playerId }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload?.link) throw new Error(payload?.error ?? "Identity save failed.");
+      if (!response.ok || (!payload?.link && !payload?.member)) throw new Error(payload?.error ?? "Identity save failed.");
       dashboardDataCache = null;
-      window.location.reload();
+      window.location.assign(`/admin/members/${encodeURIComponent(playerId)}`);
     } catch (error) {
       setSaveState({ saving: false, error: error instanceof Error ? error.message : "Identity save failed.", success: "" });
     }
@@ -1058,23 +1392,21 @@ function AdminMemberEditor({ member, record, onSaved }) {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.member) throw new Error(payload?.error ?? "Member status save failed.");
-      dashboardDataCache = null;
-      window.location.reload();
+      setCurrentStatus(status);
+      setSaveState({ saving: false, error: "", success: `Status changed to ${displayLabel(status)}.` });
     } catch (error) {
       setSaveState({ saving: false, error: error instanceof Error ? error.message : "Member status save failed.", success: "" });
     }
   }
 
-  async function savePrivateData(event) {
-    event.preventDefault();
+  async function savePrivateData(nextValues, success) {
     if (!member.playerId) return;
     setSaveState({ saving: true, error: "", success: "" });
-    const at = todayLabel();
     const nextRecord = {
-      absenceUntil: absenceUntil || null,
-      absenceReason,
-      warnings: annotationLines(warningsText).map((reason) => ({ reason, at })),
-      notes: annotationLines(notesText).map((note) => ({ note, at })),
+      absenceUntil: nextValues.absenceUntil || null,
+      absenceReason: nextValues.absenceReason,
+      warnings: nextValues.warnings,
+      notes: nextValues.notes,
     };
     try {
       const response = await fetch("/api/member-admin", {
@@ -1085,7 +1417,12 @@ function AdminMemberEditor({ member, record, onSaved }) {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.record) throw new Error(payload?.error ?? "Private member data save failed.");
       onSaved(member.playerId, payload.record);
-      setSaveState({ saving: false, error: "", success: "Member administration saved." });
+      setAbsenceUntil(payload.record.absenceUntil ?? "");
+      setAbsenceReason(payload.record.absenceReason ?? "");
+      setWarnings(payload.record.warnings ?? []);
+      setNotes(payload.record.notes ?? []);
+      setSaveState({ saving: false, error: "", success });
+      setFollowUpOpen(false);
     } catch (error) {
       setSaveState({ saving: false, error: error instanceof Error ? error.message : "Private member data save failed.", success: "" });
     }
@@ -1097,49 +1434,79 @@ function AdminMemberEditor({ member, record, onSaved }) {
     setAbsenceUntil(localIsoDate(date));
   }
 
+  async function addFollowUp(event) {
+    event.preventDefault();
+    if (followUpType === "absence") {
+      if (!absenceUntil) return;
+      await savePrivateData({ absenceUntil, absenceReason, warnings, notes }, "Absence saved.");
+    } else {
+      const text = followUpDraft.trim();
+      if (!text) return;
+      const nextWarnings = followUpType === "warning" ? [...warnings, { reason: text, at: todayLabel() }] : warnings;
+      const nextNotes = followUpType === "note" ? [...notes, { note: text, at: todayLabel() }] : notes;
+      await savePrivateData({ absenceUntil, absenceReason, warnings: nextWarnings, notes: nextNotes }, `${displayLabel(followUpType)} added.`);
+      setFollowUpDraft("");
+    }
+  }
+
+  async function removeManualItem(kind, index) {
+    const nextWarnings = kind === "warning" ? warnings.filter((_, itemIndex) => itemIndex !== index) : warnings;
+    const nextNotes = kind === "note" ? notes.filter((_, itemIndex) => itemIndex !== index) : notes;
+    await savePrivateData({ absenceUntil, absenceReason, warnings: nextWarnings, notes: nextNotes }, `${displayLabel(kind)} removed.`);
+  }
+
+  async function ignoreWarning(warning) {
+    if (saveState.saving) return;
+    setSaveState({ saving: true, error: "", success: "" });
+    try {
+      await updateWarningAction(warning, { status: "ignored", note: "No follow-up needed." });
+      setIgnoredWarningKeys((current) => new Set(current).add(automaticWarningKey(warning.playerId, warning.date, warning.type)));
+      setSaveState({ saving: false, error: "", success: `${warning.label} ignored.` });
+    } catch (error) {
+      setSaveState({ saving: false, error: error instanceof Error ? error.message : "Warning update failed.", success: "" });
+    }
+  }
+
   return (
     <>
-      <header className="admin-editor-heading">
-        <div>
-          <h2>{member.name}</h2>
-          <p>{member.playerId ?? "Identity not defined"} · {roleLabel(member.role)}</p>
+      <header className="admin-member-profile-head">
+        <span className="admin-member-avatar" aria-hidden="true">{initials}</span>
+        <div className="admin-member-profile-copy">
+          {editingField === "name" ? (
+            <input className="admin-inline-edit name" autoFocus value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveIdentity(); if (event.key === "Escape") { setNameDraft(member.name); setEditingField(""); } }} />
+          ) : (
+            <h2 title="Double-click to edit" onDoubleClick={() => setEditingField("name")}>{nameDraft}</h2>
+          )}
+          <div className="admin-member-meta">
+            <span>Player ID</span>
+            {editingField === "id" ? (
+              <input className="admin-inline-edit id" autoFocus inputMode="numeric" value={playerIdDraft} onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))} onKeyDown={(event) => { if (event.key === "Enter") saveIdentity(); if (event.key === "Escape") { setPlayerIdDraft(member.playerId ?? ""); setEditingField(""); } }} />
+            ) : (
+              <strong title="Double-click to edit" onDoubleClick={() => setEditingField("id")}>{playerIdDraft || "Not defined"}</strong>
+            )}
+            <span>{roleLabel(member.role)}</span>
+            <span>Joined {member.joinedAt ?? "unknown"}</span>
+          </div>
         </div>
-        <a className="secondary-button compact-action" href={`/members/${encodeURIComponent(memberKey(member))}`}>
-          View profile
-        </a>
+        <div className="admin-member-head-actions">
+          {editingField ? <><button className="primary-button compact-action" type="button" onClick={saveIdentity} disabled={saveState.saving}>Save</button><button className="secondary-button compact-action" type="button" onClick={() => setEditingField("")}>Cancel</button></> : null}
+          <a className="secondary-button compact-action" href={`/members/${encodeURIComponent(memberKey(member))}`}>View profile</a>
+        </div>
       </header>
 
       {!member.playerId ? (
-        <form className="admin-control-block" onSubmit={assignPlayerId}>
-          <div>
-            <strong>Define player ID</strong>
-            <p>Link this detected name to its permanent Archero identity.</p>
-          </div>
-          <div className="admin-inline-controls">
-            <input
-              inputMode="numeric"
-              pattern="[0-9]{6,20}"
-              value={playerIdDraft}
-              onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
-              placeholder="119000000"
-            />
-            <button className="primary-button" type="submit" disabled={saveState.saving}>Assign ID</button>
-          </div>
-        </form>
+        <div className="admin-empty-state"><strong>Define a Player ID to manage this member.</strong><button className="primary-button" type="button" onClick={() => setEditingField("id")}>Add Player ID</button></div>
       ) : (
         <>
-          <div className="admin-control-block">
-            <div>
-              <strong>Guild status</strong>
-              <p>Manual confirmation overrides incomplete capture assumptions.</p>
-            </div>
-            <div className="member-status-actions">
+          <div className="admin-member-status-row">
+            <span>Guild status</span>
+            <div className="member-status-segmented" aria-label="Guild status">
               {["active", "left", "kicked"].map((status) => (
                 <button
-                  className="secondary-button"
+                  className={currentStatus === status ? "active" : ""}
                   type="button"
                   key={status}
-                  disabled={saveState.saving || member.status === status}
+                  disabled={saveState.saving || currentStatus === status}
                   onClick={() => updateStatus(status)}
                 >
                   {displayLabel(status)}
@@ -1148,64 +1515,73 @@ function AdminMemberEditor({ member, record, onSaved }) {
             </div>
           </div>
 
-          <form className="admin-private-form" onSubmit={savePrivateData}>
-            <div className="admin-control-block">
-              <div>
-                <strong>Announced absence</strong>
-                <p>Record how long the member expects to be unavailable.</p>
+          <div className="admin-member-module-grid">
+            <section className="admin-member-module">
+              <header><div><h3>Warnings</h3><p>Current and previous rule alerts.</p></div><span className="admin-module-count">{openWarningCount}</span></header>
+              <div className="admin-warning-list">
+                {warnings.slice().reverse().map((warning, reverseIndex) => {
+                  const index = warnings.length - 1 - reverseIndex;
+                  return <div className="admin-warning-line" key={`manual-${warning.at}-${index}`}><WarningTypeIcon type="manual" /><span><strong>Manual warning</strong><small>{warning.reason}</small></span><time>{warning.at}</time><button className="admin-row-action" type="button" onClick={() => removeManualItem("warning", index)}>Remove</button></div>;
+                })}
+                {automaticWarnings.map((warning) => {
+                  const closed = warningActionClosed(warning.action?.status) || ignoredWarningKeys.has(automaticWarningKey(warning.playerId, warning.date, warning.type));
+                  return <div className={`admin-warning-line ${closed ? "resolved" : ""}`} key={warning.id}><WarningTypeIcon type={warning.type} /><span><strong>{warning.label}</strong><small>{warning.detail}</small></span><time>{warning.date}</time>{closed ? <span className="admin-warning-state">Ignored</span> : <button className="admin-row-action" type="button" disabled={saveState.saving} onClick={() => ignoreWarning(warning)}>Ignore</button>}</div>;
+                })}
+                {automaticWarnings.length + warnings.length === 0 ? <p className="admin-module-empty">No warning for this member.</p> : null}
               </div>
-              <label>
-                <span>Until</span>
-                <input type="date" value={absenceUntil} onChange={(event) => setAbsenceUntil(event.target.value)} />
-              </label>
-              <div className="admin-quick-days">
-                {[7, 14, 30].map((days) => (
-                  <button className="secondary-button compact-action" type="button" key={days} onClick={() => setAbsenceDays(days)}>
-                    {days} days
-                  </button>
-                ))}
-                <button className="secondary-button compact-action" type="button" onClick={() => { setAbsenceUntil(""); setAbsenceReason(""); }}>
-                  Clear
-                </button>
+            </section>
+
+            <section className="admin-member-module">
+              <header><div><h3>Officer notes</h3><p>Private context and announced absence.</p></div><button className="primary-button compact-action" type="button" onClick={() => setFollowUpOpen(true)}>Add</button></header>
+              <div className="admin-notes-list">
+                {absenceUntil ? <div className="admin-note-line absence"><WarningTypeIcon type="absence" /><span><strong>Absent until {absenceUntil}</strong><small>{absenceReason || "No context provided."}</small></span><button className="admin-row-action" type="button" onClick={() => savePrivateData({ absenceUntil: "", absenceReason: "", warnings, notes }, "Absence removed.")}>Remove</button></div> : null}
+                {notes.slice().reverse().map((note, reverseIndex) => {
+                  const index = notes.length - 1 - reverseIndex;
+                  return <div className="admin-note-line" key={`${note.at}-${index}`}><WarningTypeIcon type="note" /><span><strong>{note.note}</strong><small>{note.at}</small></span><button className="admin-row-action" type="button" onClick={() => removeManualItem("note", index)}>Remove</button></div>;
+                })}
+                {notes.length === 0 && !absenceUntil ? <p className="admin-module-empty">No private note yet.</p> : null}
               </div>
-              <label>
-                <span>Reason or context</span>
-                <input value={absenceReason} onChange={(event) => setAbsenceReason(event.target.value)} placeholder="Holiday, exams, travel..." />
-              </label>
-            </div>
-
-            <div className="admin-control-block">
-              <label>
-                <strong>Manual warnings</strong>
-                <span>One private warning per line.</span>
-                <textarea value={warningsText} onChange={(event) => setWarningsText(event.target.value)} placeholder="Reason for a manual warning" rows={4} />
-              </label>
-            </div>
-
-            <div className="admin-control-block">
-              <label>
-                <strong>Officer notes</strong>
-                <span>One private note per line.</span>
-                <textarea value={notesText} onChange={(event) => setNotesText(event.target.value)} placeholder="Private context for officers" rows={4} />
-              </label>
-            </div>
-
-            <div className="admin-save-row">
-              <div>
-                {saveState.error ? <span className="form-error" role="alert">{saveState.error}</span> : null}
-                {saveState.success ? <span className="form-success" role="status">{saveState.success}</span> : null}
-              </div>
-              <button className="primary-button" type="submit" disabled={saveState.saving}>
-                {saveState.saving ? "Saving..." : "Save member"}
-              </button>
-            </div>
-          </form>
+            </section>
+          </div>
         </>
       )}
 
-      {saveState.error && !member.playerId ? <span className="form-error" role="alert">{saveState.error}</span> : null}
+      <div className="admin-member-save-feedback" aria-live="polite">
+        {saveState.error ? <span className="form-error" role="alert">{saveState.error}</span> : null}
+        {saveState.success ? <span className="form-success" role="status">{saveState.success}</span> : null}
+      </div>
+
+      {followUpOpen ? createPortal(<div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFollowUpOpen(false); }}>
+        <section className="admin-follow-up-modal" role="dialog" aria-modal="true" aria-labelledby="follow-up-title">
+          <header><div><h2 id="follow-up-title">Add member follow-up</h2><p>Choose the type, then record the useful context.</p></div><button className="icon-button" type="button" onClick={() => setFollowUpOpen(false)} aria-label="Close follow-up dialog">×</button></header>
+          <form className="admin-follow-up-form" onSubmit={addFollowUp}>
+            <div className="admin-follow-up-tabs">
+              {["warning", "note", "absence"].map((type) => <button className={followUpType === type ? "active" : ""} type="button" key={type} onClick={() => setFollowUpType(type)}>{displayLabel(type)}</button>)}
+            </div>
+            {followUpType === "absence" ? <>
+              <label><span>Until</span><input type="date" value={absenceUntil} onChange={(event) => setAbsenceUntil(event.target.value)} /></label>
+              <div className="admin-quick-days">{[7, 14, 30].map((days) => <button className="secondary-button compact-action" type="button" key={days} onClick={() => setAbsenceDays(days)}>{days} days</button>)}</div>
+              <label><span>Context</span><textarea value={absenceReason} onChange={(event) => setAbsenceReason(event.target.value)} placeholder="Holiday, exams, travel…" /></label>
+            </> : <label><span>{followUpType === "warning" ? "Warning reason" : "Private note"}</span><textarea autoFocus value={followUpDraft} onChange={(event) => setFollowUpDraft(event.target.value)} placeholder={followUpType === "warning" ? "What needs attention?" : "Useful context for officers…"} /></label>}
+            <div className="admin-modal-actions"><button className="secondary-button" type="button" onClick={() => setFollowUpOpen(false)}>Cancel</button><button className="primary-button" type="submit" disabled={saveState.saving || (followUpType === "absence" ? !absenceUntil : !followUpDraft.trim())}>{saveState.saving ? "Saving…" : `Add ${followUpType}`}</button></div>
+          </form>
+        </section>
+      </div>, document.body) : null}
     </>
   );
+}
+
+function WarningTypeIcon({ type }) {
+  const paths = {
+    game_absence: <><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></>,
+    absence: <><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></>,
+    missed_boss: <><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2.5" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></>,
+    low_contribution: <><path d="M5 7h14v11H5zM8 7V5h8v2" /><path d="M8 12h8M8 15h5" /></>,
+    low_progression: <><path d="m5 17 4-4 3 2 6-7" /><path d="M14 8h4v4" /></>,
+    note: <><path d="M6 4h12v16H6z" /><path d="M9 8h6M9 12h6M9 16h4" /></>,
+    manual: <><path d="M12 4 4 20h16z" /><path d="M12 9v4M12 16h.01" /></>,
+  };
+  return <span className={`admin-warning-icon ${type}`} aria-hidden="true"><svg viewBox="0 0 24 24">{paths[type] ?? paths.manual}</svg></span>;
 }
 
 function CaptureDialog({ dialog, busyAction, adbConnected, onCancel, onConfirm, onValidate, onReject }) {
@@ -1344,11 +1720,12 @@ function dataActionHeaders(extra = {}) {
 }
 
 function Dashboard({ rules }) {
+  const [guildPowerRange, setGuildPowerRange] = useState("1m");
   const [donationRange, setDonationRange] = useState("1w");
   const [powerRange, setPowerRange] = useState("1w");
   const summary = buildSummary(members, rules);
   const guildStats = objectOrDefault(captures.guildStats, {});
-  const guildPowerStats = dashboardRangeRows(buildDailyGuildPowerStats().slice(-30), "month", "total");
+  const guildPowerStats = dashboardRangeRows(buildDailyGuildPowerStats(), guildPowerRange, "total");
   const guildPowerSeries = guildPowerStats.map((day) => day.total);
   const guildPowerDates = dashboardRangeLabels(guildPowerStats);
   const powerStats = dashboardRangeRows(buildDailyPowerStats(), powerRange, "median");
@@ -1358,7 +1735,7 @@ function Dashboard({ rules }) {
   const donationSeries = donationStats.map((day) => day.total);
   const donationDates = dashboardRangeLabels(donationStats);
   const memberCount = numericValue(guildStats.memberCount, summary.currentMembers);
-  const memberCapacity = numericValue(guildStats.memberCapacity, rules.memberCapacity);
+  const memberCapacity = numericValue(guildStats.memberCapacity);
   const freeSlots = typeof memberCount === "number" && typeof memberCapacity === "number"
     ? Math.max(0, memberCapacity - memberCount)
     : null;
@@ -1432,7 +1809,8 @@ function Dashboard({ rules }) {
         <ChartPanel
           className="guild-power-panel"
           title="Guild power"
-          subtitle="Seven checkpoints · Last 30 captured days"
+          subtitle={dashboardRangeSubtitle(guildPowerRange)}
+          action={<DashboardRangeSelector value={guildPowerRange} onChange={setGuildPowerRange} label="Guild power range" />}
           values={guildPowerSeries}
           xLabels={guildPowerDates}
           label="Guild power"
@@ -1446,6 +1824,7 @@ function Dashboard({ rules }) {
 
       <div className="guild-trends-grid">
         <ChartPanel
+          className="guild-trend-panel"
           title="Median member power"
           subtitle={dashboardRangeSubtitle(powerRange)}
           action={<DashboardRangeSelector value={powerRange} onChange={setPowerRange} label="Median member power range" />}
@@ -1458,6 +1837,7 @@ function Dashboard({ rules }) {
           showPoints
         />
         <ChartPanel
+          className="guild-trend-panel"
           title="Weekly donations"
           subtitle={donationRangeSubtitle(donationRange, donationStats.length)}
           action={<DonationRangeSelector value={donationRange} onChange={setDonationRange} />}
@@ -1574,7 +1954,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
   const selectedMembersDateIndex = Math.max(0, historyDates.indexOf(selectedMembersDate));
   const datedMembers = members.map((member) => memberSnapshotForDate(member, selectedMembersDate));
   const currentDatedMembers = datedMembers.filter((member) => !isFormerStatus(member.status));
-  const memberCapacity = numericValue(captures.guildStats?.memberCapacity, rules.memberCapacity);
+  const memberCapacity = numericValue(captures.guildStats?.memberCapacity);
   const requiredBossTries = numericValue(rules.minBossTries, rules.bossRequiredOnEventDay ? 1 : 0);
   const weeklyDonationTarget = numericValue(rules.minContribution7d, null);
   const memberOverview = currentDatedMembers.reduce(
@@ -1736,8 +2116,7 @@ function BossView() {
   const [selectedPlayers, setSelectedPlayers] = useState(() => bossPlayerSelection(bossData.players, 10));
   const [bossFilter, setBossFilter] = useState(() => bossData.activeBoss.key);
   const [bossSection, setBossSection] = useState("weekly");
-  const [byBossKey, setByBossKey] = useState(() => bossData.activeBoss.key);
-  const [comparePlayerIds, setComparePlayerIds] = useState(() => bossData.players.slice(0, 2).map((player) => player.playerId));
+  const [playerQuery, setPlayerQuery] = useState("");
   const selectedBossKey = bossFilter === "all" ? null : bossFilter;
   const selectedBoss = selectedBossKey ? bossForKey(selectedBossKey) : null;
   const selectedDates = (selectedBossKey ? bossData.dates.filter((date) => bossData.bossesByDate.get(date)?.key === selectedBossKey) : bossData.dates).slice(-7);
@@ -1747,8 +2126,7 @@ function BossView() {
     .map((player) => ({ ...player, points: player.points.filter((point) => selectedDateSet.has(point.date) && (!selectedBossKey || point.bossKey === selectedBossKey)) }))
     .filter((player) => player.points.length > 0);
   const selectedLabel = selectedBoss ? selectedBoss.name : "All bosses";
-  const byBossRecord = bossData.bestByBossRecords.find(({ boss }) => boss.key === byBossKey)
-    ?? { boss: bossForKey(byBossKey), rows: [] };
+  const visiblePlayers = bossData.players.filter((player) => normalizedMemberName(player.name).includes(normalizedMemberName(playerQuery)));
 
   function togglePlayer(playerId) {
     setSelectedPlayers((current) => {
@@ -1786,26 +2164,20 @@ function BossView() {
     <div className="boss-page">
       <div className="boss-section-tabs" role="tablist" aria-label="Boss views">
         <button className={bossSection === "weekly" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "weekly"} onClick={() => setBossSection("weekly")}>
-          Weekly
+          Weekly performance
         </button>
         <button className={bossSection === "alltime" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "alltime"} onClick={() => setBossSection("alltime")}>
-          All-time ranking
-        </button>
-        <button className={bossSection === "byBoss" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "byBoss"} onClick={() => setBossSection("byBoss")}>
-          By boss
-        </button>
-        <button className={bossSection === "history" ? "active" : ""} type="button" role="tab" aria-selected={bossSection === "history"} onClick={() => setBossSection("history")}>
-          History ranking
+          Rankings
         </button>
       </div>
 
       {bossSection === "weekly" ? (
         <>
-          <section className="panel boss-context-panel">
+          <section className="panel boss-context-panel boss-scope-panel">
             <div className="boss-current-card">
               <BossIcon boss={bossData.activeBoss} />
               <div>
-                <span className="eyebrow">Boss today</span>
+                <span>Latest captured boss</span>
                 <h2>{bossData.activeBoss.name}</h2>
                 <p>
                   {bossData.activeBoss.dayLabel} - ATK {bossData.activeBoss.stats.atk} - DEF {bossData.activeBoss.stats.def} - SPD {bossData.activeBoss.stats.spd}
@@ -1818,34 +2190,34 @@ function BossView() {
             <BossRotationStrip activeKey={selectedBossKey} todayKey={bossData.activeBoss.key} onSelectBoss={selectBoss} />
           </section>
 
-          <section className="panel boss-chart-panel">
-            <PanelHeading
-              title="Guild boss damage"
-              subtitle={`${selectedSeries.length}/${bossData.players.length} members visible for ${selectedLabel} across ${selectedDates.length} captured day(s).`}
-              action={
-                <div className="boss-chart-actions">
-                  <button className="secondary-button compact-action" type="button" onClick={() => selectTop(10)}>
-                    Top 10
-                  </button>
-                  <button className="secondary-button compact-action" type="button" onClick={() => selectTop(20)}>
-                    Top 20
-                  </button>
-                  <button className="secondary-button compact-action" type="button" onClick={selectAll}>
-                    All
-                  </button>
-                  <button className="secondary-button compact-action" type="button" onClick={clearAll}>
-                    None
-                  </button>
-                </div>
-              }
-            />
-            <BossMultiLineChart dates={selectedDates} series={selectedSeries} />
-          </section>
+          <div className="boss-weekly-workspace">
+            <section className="panel boss-chart-panel">
+              <PanelHeading
+                title="Guild damage trend"
+                subtitle={`${selectedSeries.length} member${selectedSeries.length === 1 ? "" : "s"} · ${selectedLabel} · ${selectedDates.length} captured day${selectedDates.length === 1 ? "" : "s"}`}
+              />
+              <BossMultiLineChart dates={selectedDates} series={selectedSeries} />
+            </section>
 
-          <section className="panel boss-selector-panel">
-            <PanelHeading title="Members" subtitle="Check members to display them in the graph." />
-            <div className="boss-player-grid">
-              {bossData.players.map((player) => (
+            <aside className="panel boss-selector-panel">
+              <div className="boss-selector-heading">
+                <div>
+                  <h2>Members</h2>
+                  <p>{selectedPlayers.size} selected</p>
+                </div>
+                <div className="boss-chart-actions">
+                  <button type="button" onClick={() => selectTop(10)}>Top 10</button>
+                  <button type="button" onClick={() => selectTop(20)}>Top 20</button>
+                  <button type="button" onClick={selectAll}>All</button>
+                  <button type="button" onClick={clearAll}>None</button>
+                </div>
+              </div>
+              <label className="boss-member-search">
+                <span className="sr-only">Search members</span>
+                <input type="search" value={playerQuery} onChange={(event) => setPlayerQuery(event.target.value)} placeholder="Search members" />
+              </label>
+              <div className="boss-player-grid">
+              {visiblePlayers.map((player) => (
                 <label className="boss-player-toggle" key={player.playerId}>
                   <input type="checkbox" checked={selectedPlayers.has(player.playerId)} onChange={() => togglePlayer(player.playerId)} />
                   <span className="boss-color-dot" style={{ background: player.color }} aria-hidden="true" />
@@ -1858,52 +2230,15 @@ function BossView() {
                   </button>
                 </label>
               ))}
-            </div>
-          </section>
+              {visiblePlayers.length === 0 ? <p className="muted boss-player-empty">No member matches this search.</p> : null}
+              </div>
+            </aside>
+          </div>
         </>
       ) : null}
 
       {bossSection === "alltime" ? (
-        <BossAllTimePanel rows={bossData.bestDayRecords} />
-      ) : null}
-
-      {bossSection === "byBoss" ? (
-        <div className="boss-by-boss-view">
-          <section className="panel boss-context-panel">
-            <PanelHeading title="Choose a boss" subtitle="One readable guild scoreboard at a time." />
-            <BossRotationStrip activeKey={byBossKey} todayKey={bossData.activeBoss.key} onSelectBoss={setByBossKey} />
-          </section>
-          <section className="panel">
-            <PanelHeading title="Compare members" subtitle={`Personal bests against ${byBossRecord.boss.name}.`} />
-            <div className="boss-member-comparison-controls">
-              {[0, 1].map((slot) => (
-                <label key={slot}>
-                  <span>Member {slot + 1}</span>
-                  <select value={comparePlayerIds[slot] ?? ""} onChange={(event) => setComparePlayerIds((current) => current.map((value, index) => index === slot ? event.target.value : value))}>
-                    {bossData.players.map((player) => <option value={player.playerId} key={player.playerId}>{player.name}</option>)}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="boss-member-comparison">
-              {comparePlayerIds.map((playerId) => {
-                const player = bossData.players.find((candidate) => candidate.playerId === playerId);
-                const record = byBossRecord.rows.find((row) => row.playerId === playerId);
-                return (
-                  <article key={playerId}>
-                    <span>{player?.name ?? "Member"}</span>
-                    <strong>{record ? formatBossDamageText(record.damage) : "No record"}</strong>
-                    <small>{record?.date ?? byBossRecord.boss.name}</small>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-          <BossRankingPanel title={`${byBossRecord.boss.name} scoreboard`} subtitle="Guild personal bests for the selected boss." rows={byBossRecord.rows} valueKey="damage" showDate limit={bossData.players.length} wide />
-        </div>
-      ) : null}
-      {bossSection === "history" ? (
-        <BossDailyRankingPanel days={bossData.dailyRankings} />
+        <BossAllTimePanel allRows={bossData.bestDayRecords} records={bossData.bestByBossRecords} />
       ) : null}
     </div>
   );
@@ -2029,15 +2364,21 @@ function BossRankingPanel({ title, subtitle, rows, valueKey, showDate = false, s
   );
 }
 
-function BossAllTimePanel({ rows }) {
+function BossAllTimePanel({ allRows, records }) {
   const [exporting, setExporting] = useState(false);
+  const [bossKey, setBossKey] = useState("all");
+  const selectedRecord = records.find(({ boss }) => boss.key === bossKey) ?? null;
+  const rows = bossKey === "all"
+    ? allRows
+    : (selectedRecord?.rows ?? []).map((row) => ({ ...row, boss: selectedRecord.boss }));
+  const scopeLabel = selectedRecord?.boss.name ?? "All bosses";
   const podium = rows.slice(0, 3);
   const remaining = rows.slice(3);
 
   async function exportRankingImage() {
     setExporting(true);
     try {
-      await exportBossAllTimeRanking(rows);
+      await exportBossAllTimeRanking(rows, scopeLabel, bossKey);
     } finally {
       setExporting(false);
     }
@@ -2046,12 +2387,21 @@ function BossAllTimePanel({ rows }) {
   return (
     <section className="panel boss-alltime-panel">
       <PanelHeading
-        title="All-time ranking"
-        subtitle="Best single-day boss score for each guild member."
+        title={bossKey === "all" ? "All-time ranking" : `${scopeLabel} ranking`}
+        subtitle={bossKey === "all" ? "Each member's best single-day score across every boss." : `Each member's personal best against ${scopeLabel}.`}
         action={
-          <button className="secondary-button compact-action" type="button" disabled={exporting || rows.length === 0} onClick={exportRankingImage}>
-            {exporting ? "Exporting..." : "Export image"}
-          </button>
+          <div className="boss-ranking-actions">
+            <label className="boss-ranking-filter">
+              <span>Boss</span>
+              <select value={bossKey} onChange={(event) => setBossKey(event.target.value)}>
+                <option value="all">All bosses</option>
+                {records.map(({ boss }) => <option value={boss.key} key={boss.key}>{boss.name}</option>)}
+              </select>
+            </label>
+            <button className="secondary-button compact-action" type="button" disabled={exporting || rows.length === 0} onClick={exportRankingImage}>
+              {exporting ? "Exporting..." : "Export image"}
+            </button>
+          </div>
         }
       />
       <div className="boss-podium">
@@ -2096,14 +2446,31 @@ function BossAllTimePanel({ rows }) {
                 <td>{formatBossDamageText(row.damage)}</td>
               </tr>
             ))}
+            {rows.length === 0 ? <tr><td colSpan="5" className="table-empty-state">No score recorded for this boss.</td></tr> : null}
           </tbody>
         </table>
+      </div>
+      <div className="boss-ranking-mobile-list" aria-label="Ranking positions 4 and below">
+        {remaining.map((row, index) => (
+          <article key={`alltime-mobile-${row.playerId}-${row.date}`}>
+            <span className="rank-number">{index + 4}</span>
+            <div>
+              <strong>{row.name}</strong>
+              <small>
+                <BossIcon boss={row.boss} />
+                <span>{row.bossName} · {row.date}</span>
+              </small>
+            </div>
+            <strong>{formatBossDamageText(row.damage)}</strong>
+          </article>
+        ))}
+        {rows.length === 0 ? <p className="muted">No score recorded for this boss.</p> : null}
       </div>
     </section>
   );
 }
 
-async function exportBossAllTimeRanking(rows) {
+async function exportBossAllTimeRanking(rows, scopeLabel = "All bosses", bossKey = "all") {
   const exportRows = rows.map((row, index) => ({ ...row, rank: index + 1 }));
   const width = 1800;
   const margin = 64;
@@ -2123,7 +2490,7 @@ async function exportBossAllTimeRanking(rows) {
 
   const images = await loadBossExportImages(exportRows);
   drawExportBackground(ctx, width, height);
-  drawExportHeader(ctx, exportRows.length);
+  drawExportHeader(ctx, exportRows.length, scopeLabel);
 
   const podium = exportRows.slice(0, 3);
   const podiumCards = [
@@ -2136,7 +2503,7 @@ async function exportBossAllTimeRanking(rows) {
   }
 
   drawExportTable(ctx, exportRows, images, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
-  downloadCanvas(canvas, `archero-boss-all-time-ranking-${currentIsoDate()}.png`);
+  downloadCanvas(canvas, `archero-boss-ranking-${bossKey}-${currentIsoDate()}.png`);
 }
 
 async function loadBossExportImages(rows) {
@@ -2170,10 +2537,10 @@ function drawExportBackground(ctx, width, height) {
   ctx.stroke();
 }
 
-function drawExportHeader(ctx, rowCount) {
+function drawExportHeader(ctx, rowCount, scopeLabel = "All bosses") {
   drawText(ctx, "Archero Guild", 64, 74, { size: 26, weight: 800, color: "#435062" });
-  drawText(ctx, "All-time boss ranking", 64, 124, { size: 48, weight: 900, color: "#111a25" });
-  drawText(ctx, `Best single-day boss score for ${rowCount} guild member${rowCount > 1 ? "s" : ""}.`, 64, 164, { size: 24, weight: 600, color: "#4b5b6d" });
+  drawText(ctx, scopeLabel === "All bosses" ? "All-time boss ranking" : `${scopeLabel} ranking`, 64, 124, { size: 48, weight: 900, color: "#111a25" });
+  drawText(ctx, `${scopeLabel} · ${rowCount} guild member${rowCount > 1 ? "s" : ""}.`, 64, 164, { size: 24, weight: 600, color: "#4b5b6d" });
   drawText(ctx, currentIsoDate(), 1736, 124, { size: 22, weight: 800, color: "#435062", align: "right" });
 }
 
@@ -2461,7 +2828,6 @@ function MemberDetail({
   setRanges,
   sessionRole,
   warningActions,
-  updateWarningAction,
 }) {
   const rawEvaluation = evaluateMember(member, rules);
   const history = evaluateWarningHistory(dailyHistory(member), rules, member);
@@ -2485,65 +2851,59 @@ function MemberDetail({
       }
     : rawEvaluation;
   const weeklyHistory = filterHistoryByRange(history, "1w");
-  const needs = latestAutomaticWarnings.length > 0
-    ? actionableWarnings.map((warning) => ({ label: warning.label, severity: warning.severity, detail: warning.detail }))
-    : evaluation.flags.map((flag) => ({ label: flag, severity: evaluation.severity, detail: needDetail(flag, member, rules) }));
-  const [playerIdDraft, setPlayerIdDraft] = useState("");
-  const [identitySaveState, setIdentitySaveState] = useState({ saving: false, error: "" });
-  const [statusSaveState, setStatusSaveState] = useState({ saving: false, error: "" });
+  const [shareState, setShareState] = useState({ creating: false, url: "", error: "", notice: "" });
+
+  useEffect(() => {
+    if (!shareState.notice) return undefined;
+    const timer = window.setTimeout(() => {
+      setShareState((current) => ({ ...current, notice: "" }));
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [shareState.notice]);
 
   function setRange(chart, range) {
     setRanges((current) => ({ ...current, [chart]: range }));
   }
 
-  async function assignPlayerId(event) {
-    event.preventDefault();
-    const playerId = playerIdDraft.trim();
-    if (!/^\d{6,20}$/.test(playerId)) {
-      setIdentitySaveState({ saving: false, error: "Player ID must contain 6 to 20 digits." });
-      return;
-    }
-    setIdentitySaveState({ saving: true, error: "" });
+  async function createShareLink() {
+    if (!member.playerId || shareState.creating) return;
+    setShareState({ creating: true, url: "", error: "", notice: "" });
     try {
-      const response = await fetch("/api/data/member-identities", {
+      const response = await fetch("/api/member-share", {
         method: "POST",
         headers: dataActionHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ observedName: member.name, playerId }),
+        body: JSON.stringify({ playerId: member.playerId }),
       });
       const payload = await response.json();
-      if (!response.ok || !payload?.link) throw new Error(payload?.error || "Identity save failed.");
-      identityLinks = [
-        ...identityLinks.filter((link) => link.normalizedName !== payload.link.normalizedName),
-        payload.link,
-      ];
-      members = buildCurrentMembers();
-      dashboardDataCache = null;
-      window.location.assign(`/members/${encodeURIComponent(playerId)}`);
+      if (!response.ok || !payload?.url) throw new Error(payload?.error || "Share link creation failed.");
+      try {
+        await navigator.clipboard.writeText(payload.url);
+        setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
+      } catch {
+        setShareState({
+          creating: false,
+          url: payload.url,
+          error: "Automatic copy was blocked. Copy the link manually below.",
+          notice: "",
+        });
+      }
     } catch (error) {
-      setIdentitySaveState({ saving: false, error: error instanceof Error ? error.message : "Identity save failed." });
+      setShareState({
+        creating: false,
+        url: "",
+        error: error instanceof Error ? error.message : "Share link creation failed.",
+        notice: "",
+      });
     }
   }
 
-  async function updateMemberStatus(status) {
-    if (!member.playerId || statusSaveState.saving) return;
-    setStatusSaveState({ saving: true, error: "" });
+  async function copyShareLink() {
+    if (!shareState.url) return;
     try {
-      const response = await fetch("/api/data/member-identities", {
-        method: "POST",
-        headers: dataActionHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({
-          action: "status",
-          playerId: member.playerId,
-          observedName: member.name,
-          status,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload?.member) throw new Error(payload?.error || "Member status save failed.");
-      dashboardDataCache = null;
-      window.location.reload();
-    } catch (error) {
-      setStatusSaveState({ saving: false, error: error instanceof Error ? error.message : "Member status save failed." });
+      await navigator.clipboard.writeText(shareState.url);
+      setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
+    } catch {
+      setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the link manually." }));
     }
   }
 
@@ -2553,13 +2913,36 @@ function MemberDetail({
         <a className="secondary-button" href="/members">
           Back to members
         </a>
-        {sessionRole === "admin" ? <StatusPill label={evaluation.status} severity={evaluation.severity} /> : null}
+        {sessionRole === "admin" ? (
+          <div className="detail-action-group">
+            {member.playerId ? (
+              <button className="secondary-button" type="button" onClick={createShareLink} disabled={shareState.creating}>
+                {shareState.creating ? "Creating link…" : "Create and copy link"}
+              </button>
+            ) : null}
+            <StatusPill label={evaluation.status} severity={evaluation.severity} />
+          </div>
+        ) : null}
       </div>
+      {shareState.notice ? <div className="share-link-toast" role="status">{shareState.notice}</div> : null}
+      {shareState.url ? (
+        <div className="share-link-result" role="alert">
+          <div>
+            <strong>Copy the temporary link</strong>
+            <span>{shareState.error}</span>
+          </div>
+          <div className="share-link-copy">
+            <input aria-label="Temporary member share link" readOnly value={shareState.url} onFocus={(event) => event.currentTarget.select()} />
+            <button className="primary-button" type="button" onClick={copyShareLink}>Copy link</button>
+            <button className="secondary-button" type="button" onClick={() => setShareState({ creating: false, url: "", error: "", notice: "" })}>Close</button>
+          </div>
+        </div>
+      ) : null}
+      {shareState.error && !shareState.url ? <div className="share-link-error" role="alert">{shareState.error}</div> : null}
       <div className="member-detail-grid">
         <section className="panel detail-hero wide">
           <div className="member-profile-intro">
             <div>
-              <span className="eyebrow">Current snapshot</span>
               <h2>Member performance</h2>
               <p>Latest captured guild contribution and progression.</p>
             </div>
@@ -2576,78 +2959,6 @@ function MemberDetail({
             <span><strong>Joined guild</strong>{member.joinedAt ?? "Not recorded"}</span>
           </div>
         </section>
-        {sessionRole === "admin" ? (
-          <details className="panel wide member-officer-tools">
-            <summary>
-              <span>
-                <strong>Officer tools</strong>
-                <small>Current checks and guild membership management</small>
-              </span>
-              <span className="officer-summary-state">
-                {needs.length > 0 ? `${needs.length} issue${needs.length === 1 ? "" : "s"}` : "No current issue"}
-              </span>
-            </summary>
-            <div className="member-officer-content">
-              <section className="member-officer-needs">
-                <PanelHeading title="Current checks" subtitle="Automatic checks against the current rules" />
-                <div className="need-list">
-                  {needs.length === 0 ? (
-                    <p className="muted">No current rule issue.</p>
-                  ) : (
-                    needs.map((need) => (
-                      <div className="need-row" key={need.label}>
-                        <StatusPill label={need.label} severity={need.severity} />
-                        <span>{need.detail}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-              {!member.playerId ? (
-                <form className="identity-assignment" onSubmit={assignPlayerId}>
-                  <div>
-                    <strong>Unmatched OCR member</strong>
-                    <span>Assign the permanent Archero player ID. Existing history with the same observed name will be linked.</span>
-                  </div>
-                  <label>
-                    <span>Player ID</span>
-                    <input
-                      inputMode="numeric"
-                      pattern="[0-9]{6,20}"
-                      value={playerIdDraft}
-                      onChange={(event) => setPlayerIdDraft(event.target.value.replace(/\D/g, ""))}
-                      placeholder="119000000"
-                      aria-describedby={identitySaveState.error ? "identity-save-error" : undefined}
-                    />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={identitySaveState.saving}>
-                    {identitySaveState.saving ? "Saving..." : "Assign ID"}
-                  </button>
-                  {identitySaveState.error ? <small className="form-error" id="identity-save-error" role="alert">{identitySaveState.error}</small> : null}
-                </form>
-              ) : (
-                <div className="identity-assignment member-status-assignment">
-                  <div>
-                    <strong>Guild membership</strong>
-                    <span>Confirm departures manually so an incomplete screenshot never removes somebody automatically.</span>
-                  </div>
-                  <div className="member-status-actions">
-                    {[
-                      ["active", "Active"],
-                      ["left", "Left"],
-                      ["kicked", "Kicked"],
-                    ].map(([status, label]) => (
-                      <button className="secondary-button" type="button" disabled={statusSaveState.saving || member.status === status} onClick={() => updateMemberStatus(status)} key={status}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {statusSaveState.error ? <small className="form-error" role="alert">{statusSaveState.error}</small> : null}
-                </div>
-              )}
-            </div>
-          </details>
-        ) : null}
         <section className="panel">
           <PanelHeading title="Power progression" subtitle="Up to seven evenly spaced captured values" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.progression)} dataKey="power" formatter={formatPowerDetail} emptyText="No power history captured yet." />
@@ -2661,15 +2972,6 @@ function MemberDetail({
           <PanelHeading title="Daily history" subtitle="Captured days in the current week." />
           <HistoryTable rows={weeklyHistory} />
         </section>
-        {sessionRole === "admin" ? (
-          <AutomaticWarningHistory
-            events={automaticWarnings}
-            title="Automatic warning history"
-            canManage
-            collapsible
-            onUpdate={updateWarningAction}
-          />
-        ) : null}
       </div>
     </>
   );
@@ -2766,11 +3068,11 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
     .sort((left, right) => (right.member.lastActivityDays ?? -1) - (left.member.lastActivityDays ?? -1));
   return (
     <div className="admin-activity-view">
-      <div className="admin-summary-grid">
-        <article className="metric-card"><span>Current members</span><strong>{currentMembers.length}</strong><small>Tracked roster</small></article>
-        <article className="metric-card"><span>Online today</span><strong>{currentMembers.filter((member) => member.lastActivityDays === 0).length}</strong><small>Latest observation</small></article>
-        <article className="metric-card"><span>Needs review</span><strong>{currentMembers.filter((member) => evaluateMember(member, rules).severity !== "positive").length}</strong><small>Automatic rules</small></article>
-      </div>
+      <section className="admin-status-strip" aria-label="Member activity summary">
+        <div><span>Current members</span><strong>{currentMembers.length}</strong></div>
+        <div><span>Online today</span><strong>{currentMembers.filter((member) => member.lastActivityDays === 0).length}</strong></div>
+        <div><span>Needs review</span><strong>{currentMembers.filter((member) => evaluateMember(member, rules).severity !== "positive").length}</strong></div>
+      </section>
       <section className="panel">
         <PanelHeading title="Member activity" subtitle="Find inactive members and open their profile for context." />
         <div className="toolbar compact-toolbar">
@@ -2786,7 +3088,7 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
           ))}
         </div>
       </section>
-      <div className="dashboard-grid">
+      <div className="admin-activity-secondary">
       <section className="panel">
         <PanelHeading title="Roster history" subtitle="Human review to confirm by an officer" />
         <EventList events={changes} />
@@ -2801,6 +3103,7 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
           title="Automatic warning history"
           showMember
           canManage
+          collapsible
           onUpdate={updateWarningAction}
         />
       ) : null}
@@ -2811,50 +3114,61 @@ function HistoryView({ rules, sessionRole, warningActions, updateWarningAction }
 
 function RulesView({ rules, setRules }) {
   const ruleRows = [
-    ["maxInactiveDays", "Absent", "Days without activity", "High alert"],
-    ["minContribution7d", "Low donation", "Minimum 7-day donation", "Medium alert"],
-    ["minPowerGrowth14dPercent", "Low progression", "Minimum 14-day power growth %", "Medium alert"],
-    ["minBossTries", "Missed boss", "Minimum boss tries per event day", "High alert"],
-    ["newMemberGraceDays", "New member", "Grace period in days", "Rule pause"],
-    ["memberCapacity", "Capacity", "Guild member slots", "Free slot tracking"],
+    ["maxInactiveDays", "Inactive member", "Days without activity", "days", "High alert", "monitoring"],
+    ["minContribution7d", "Weekly donation", "Minimum donation over seven days", "points", "Medium alert", "monitoring"],
+    ["minPowerGrowth14dPercent", "Weekly power progression", "Minimum power growth over seven days", "%", "Medium alert", "monitoring"],
+    ["minBossTries", "Boss participation", "Minimum tries per event day", "tries", "High alert", "monitoring"],
+    ["newMemberGraceDays", "New member grace", "Days before rules start applying", "days", "Rule pause", "guild"],
+  ];
+  const groups = [
+    ["Monitoring thresholds", "Values that generate automatic officer alerts.", "monitoring"],
+    ["Guild settings", "Context used when evaluating the roster.", "guild"],
   ];
   return (
     <div className="rules-page">
       <section className="panel rules-intro">
-        <span className="eyebrow">Evaluation policy</span>
-        <h2>Guild rules</h2>
-        <p>These thresholds explain automatic officer alerts. They do not remove members or perform actions by themselves.</p>
+        <PanelHeading title="How these rules work" subtitle="They generate officer alerts only. They never remove members or perform actions automatically." />
+        <span className="rules-save-note">Changes are saved locally as soon as a value is edited.</span>
       </section>
-      <div className="settings-grid">
-        {ruleRows.map(([key, name, label, effect], index) => (
-          <section className="panel rule-card" key={key}>
-            <span className="rule-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
-            <label className="rule-row">
-              <strong>{name}</strong>
-              <span>{label}</span>
-              <input
-                className="rule-input"
-                type="number"
-                min="0"
-                step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
-                value={rules[key]}
-                onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
-              />
-              <span className="muted">{effect}</span>
-            </label>
-          </section>
-        ))}
-      </div>
+      {groups.map(([title, subtitle, group]) => (
+        <section className="panel rules-group" key={group}>
+          <PanelHeading title={title} subtitle={subtitle} />
+          <div className="rules-list">
+            {ruleRows.filter((row) => row[5] === group).map(([key, name, label, unit, effect]) => (
+              <label className="rule-setting-row" key={key}>
+                <span className="rule-setting-copy">
+                  <strong>{name}</strong>
+                  <small>{label}</small>
+                </span>
+                <span className="rule-setting-effect">{effect}</span>
+                <span className="rule-setting-control">
+                  <input
+                    className="rule-input"
+                    type="number"
+                    min="0"
+                    step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
+                    value={rules[key]}
+                    onChange={(event) => setRules((current) => ({ ...current, [key]: Number(event.target.value) }))}
+                  />
+                  <span>{unit}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
 
 function ChartPanel({ className = "", title, subtitle, badge, action, values, label, value, positive, xLabels = [], showPoints = false, pointValueMode = "all", accessibleSummary = "", referenceValue = null, referenceLabel = "" }) {
   const pointRadius = values.length > 12 ? 2.5 : 3.5;
-  const chartHeight = className.split(/\s+/).includes("guild-power-panel") ? 140 : 160;
+  const isGuildPowerPanel = className.split(/\s+/).includes("guild-power-panel");
+  const isGuildTrendPanel = className.split(/\s+/).includes("guild-trend-panel");
+  const chartHeight = isGuildPowerPanel ? 140 : isGuildTrendPanel ? 217 : 160;
   const chartVariants = [
-    { className: "chart-svg-wide", width: 720, height: chartHeight },
-    { className: "chart-svg-compact", width: 390, height: chartHeight },
+    { className: "chart-svg-wide", width: isGuildTrendPanel ? 530 : 720, height: chartHeight },
+    { className: "chart-svg-compact", width: 390, height: isGuildTrendPanel ? 160 : chartHeight },
   ];
   return (
     <section className={`panel chart-panel ${className}`.trim()}>
@@ -2897,7 +3211,7 @@ function ChartPanel({ className = "", title, subtitle, badge, action, values, la
                     points.map((point, index) => (
                       <g key={`${index}-${xLabels[index] ?? ""}-${values[index]}`}>
                         <circle className="chart-point" cx={point.x} cy={point.y} r={pointRadius} />
-                        {shouldShowPointValue(index, points.length, pointValueMode) && (
+                        {shouldShowPointValue(index, points.length, variant.className === "chart-svg-compact" ? "compact" : pointValueMode) && (
                           <text className="chart-value-label" x={point.x} y={chartPointValueY(point.y, index)} textAnchor={chartPointTextAnchor(index, points.length)}>
                             {formatCompact(values[index])}
                           </text>
@@ -2940,6 +3254,7 @@ function chartPointValueY(pointY, index) {
 function shouldShowPointValue(index, pointCount, mode) {
   if (mode === "none") return false;
   if (mode === "last") return index === pointCount - 1;
+  if (mode === "compact") return index === 0 || index === pointCount - 1 || index % 2 === 0;
   if (mode === "auto") return pointCount <= 7 || index === pointCount - 1;
   return true;
 }
@@ -3053,7 +3368,6 @@ function HistoryTable({ rows }) {
             <th>Boss damage</th>
             <th>Activity</th>
             <th>Warnings</th>
-            <th>Source</th>
           </tr>
         </thead>
         <tbody>
@@ -3081,9 +3395,6 @@ function HistoryTable({ rows }) {
                       ))
                     : <span className="muted">—</span>}
                 </div>
-              </td>
-              <td data-label="Source">
-                <span className="muted">{row.source}</span>
               </td>
             </tr>
           ))}
@@ -3263,8 +3574,7 @@ function DashboardRangeSelector({ value, onChange, label = "Dashboard chart rang
     <div className="range-selector" role="group" aria-label={label}>
       {[
         ["1w", "1W"],
-        ["4w", "4W"],
-        ["8w", "8W"],
+        ["1m", "1M"],
         ["all", "All"],
       ].map(([range, label]) => (
         <button
@@ -3286,8 +3596,7 @@ function DonationRangeSelector({ value, onChange }) {
     <div className="range-selector" role="group" aria-label="Weekly donations range">
       {[
         ["1w", "1W", "1 week"],
-        ["4w", "1M", "1 month"],
-        ["8w", "2M", "2 months"],
+        ["1m", "1M", "1 month"],
         ["all", "All", "All history"],
       ].map(([range, shortLabel, title]) => (
         <button
@@ -3705,7 +4014,7 @@ function weeklyDonationBuckets() {
 }
 
 function dashboardRangeRows(rows, range, valueKey) {
-  const chartRange = range === "1w" ? "week" : range === "4w" ? "month" : range === "8w" ? "twoMonths" : range;
+  const chartRange = range === "1w" ? "week" : range === "1m" ? "month" : range;
   return chartPointsForRange(
     rows.map((row) => ({ ...row, value: row[valueKey] })),
     chartRange,
@@ -3715,7 +4024,7 @@ function dashboardRangeRows(rows, range, valueKey) {
 
 function dashboardDonationRangeRows(rows, range) {
   if (range === "1w") return latestDonationWeekPoints(rows);
-  const weekCount = range === "4w" ? 4 : range === "8w" ? 8 : null;
+  const weekCount = range === "1m" ? 4 : null;
   return completedSundayPoints(
     rows.map((row) => ({ ...row, total: row.cumulative, value: row.cumulative })),
     weekCount,
@@ -3771,14 +4080,13 @@ function dashboardRangeLabels(rows) {
 
 function dashboardRangeSubtitle(range) {
   if (range === "1w") return "Last 7 captured days";
-  if (range === "4w") return "7 checkpoints · 4 weeks";
-  if (range === "8w") return "7 checkpoints · 8 weeks";
+  if (range === "1m") return "7 checkpoints · 1 month";
   return "7 checkpoints · Full history";
 }
 
 function donationRangeSubtitle(range, pointCount) {
   if (range === "1w") return "Daily amount earned · Current captured week";
-  const windowLabel = range === "4w" ? "1 month" : range === "8w" ? "2 months" : "Full history";
+  const windowLabel = range === "1m" ? "1 month" : "Full history";
   return `${pointCount} Sunday checkpoint${pointCount === 1 ? "" : "s"} before reset · ${windowLabel}`;
 }
 
@@ -4366,7 +4674,7 @@ function needDetail(flag, member, rules) {
   if (flag === "Missed boss") return `${member.bossAttacks ?? 0} boss tries recorded, below the ${rules.minBossTries} minimum.`;
   if (flag === "Low contribution") return `${formatNumber(member.contribution7d ?? 0)} donations, below the ${formatNumber(rules.minContribution7d)} rule.`;
   if (flag === "Game absence") return `Last activity is ${activityLabel(member.lastActivityDays, member.activityText)}.`;
-  if (flag === "Low progression") return `${member.power14dPercent}% power growth over 14 days.`;
+  if (flag === "Low progression") return `${member.power14dPercent}% power growth over the configured review period.`;
   if (flag === "Not in current guild") return "This record is kept for history but excluded from current guild metrics.";
   if (flag === "Excused absence") return member.absenceReason || "Officer-marked absence.";
   return flag;

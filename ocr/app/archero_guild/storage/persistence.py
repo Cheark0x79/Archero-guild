@@ -136,7 +136,9 @@ def _upsert_roster(cursor, roster: Sequence[RosterEntry], seen_at: str) -> None:
             ON CONFLICT (user_id) DO UPDATE SET
                 current_name = EXCLUDED.current_name,
                 last_seen_at = EXCLUDED.last_seen_at,
-                status = 'active'
+                status = 'active',
+                left_on = NULL,
+                metadata = COALESCE(guild_members.metadata, '{}'::jsonb) - 'membershipReview'
             """,
             (entry.player_id, entry.name, seen_at, seen_at),
         )
@@ -174,12 +176,21 @@ def _reconcile_active_roster(cursor, active_user_ids: Sequence[str], seen_at: st
         """
         UPDATE guild_members
         SET status = 'left',
-            left_on = %s::timestamptz::date
+            left_on = %s::timestamptz::date,
+            metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{membershipReview}',
+                jsonb_build_object(
+                    'status', 'pending',
+                    'detectedAt', %s::timestamptz
+                ),
+                true
+            )
         WHERE status = 'active'
           AND last_seen_at <= %s::timestamptz
           AND NOT (user_id = ANY(%s))
         """,
-        (seen_at, seen_at, list(active_user_ids)),
+        (seen_at, seen_at, seen_at, list(active_user_ids)),
     )
 
 

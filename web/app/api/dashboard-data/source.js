@@ -336,6 +336,9 @@ export function normalizeDatabasePayload(data) {
 async function decorateDashboardPayload(payload, includeWarningActions) {
   if (!payload?.data || typeof payload.data !== "object") return payload;
   const memberAdminRecords = await readMemberAdminRecords(projectRoot());
+  const identityLinks = payload.source === "local"
+    ? await localIdentityLinks()
+    : arrayOrEmpty(payload.data.identityLinks);
   const warningActions = selectWarningActions(
     includeWarningActions ? await readWarningActions(projectRoot()) : {},
     includeWarningActions,
@@ -344,13 +347,35 @@ async function decorateDashboardPayload(payload, includeWarningActions) {
     ...payload,
     data: {
       ...payload.data,
-      guildRoster: rosterWithAbsences(payload.data.guildRoster, memberAdminRecords),
-      identityLinks: payload.source === "local"
-        ? await localIdentityLinks()
-        : arrayOrEmpty(payload.data.identityLinks),
+      guildRoster: rosterWithAbsences(
+        payload.source === "local"
+          ? rosterWithIdentityOverrides(payload.data.guildRoster, identityLinks)
+          : payload.data.guildRoster,
+        memberAdminRecords,
+      ),
+      identityLinks,
       warningActions,
     },
   };
+}
+
+function rosterWithIdentityOverrides(roster, links) {
+  const linksByPlayerId = new Map(
+    arrayOrEmpty(links)
+      .filter((link) => link?.playerId)
+      .map((link) => [link.playerId, link]),
+  );
+  return arrayOrEmpty(roster).map((member) => {
+    const link = linksByPlayerId.get(member?.playerId);
+    if (!link?.status) return member;
+    return {
+      ...member,
+      status: link.status,
+      departureReview: link.status === "active"
+        ? null
+        : link.departureReview ?? member.departureReview,
+    };
+  });
 }
 
 export function selectWarningActions(actions, includeWarningActions) {
