@@ -25,4 +25,40 @@ jobs:
       - name: Run the complete test suite
         run: make test
       - name: Build the Web/API container
-        run: make build
+        run: make build VERSION=${{ github.sha }}
+      - name: Report Web/API image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: archero-guild-web:${{ github.sha }}
+          format: table
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
+      - name: Block critical Web/API image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: archero-guild-web:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
+      - name: Report OCR image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: archero-guild-ocr:${{ github.sha }}
+          format: table
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
+      - name: Block critical OCR image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: archero-guild-ocr:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
