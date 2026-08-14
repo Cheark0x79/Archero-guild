@@ -7,6 +7,7 @@ services:
       context: ..
       dockerfile: ocr/Dockerfile
     init: true
+    user: "${ARCHERO_OCR_UID:-1000}:${ARCHERO_OCR_GID:-1000}"
     working_dir: /app
     entrypoint: ["python", "-m", "archero_guild.ocr.local_app"]
     environment:

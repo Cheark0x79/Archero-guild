@@ -81,6 +81,8 @@ specific published release.
 | `ARCHERO_OCR_IMAGE` | Optional, default `ghcr.io/cheark0x79/archero-guild-ocr` | Published OCR workstation image; override only for an intentional mirror or local build |
 | `ARCHERO_OCR_IMAGE_TAG` | Optional, default `latest` | OCR image release; the example pins the repository `VERSION` for reproducible workstation updates |
 | `ARCHERO_OCR_UI_PORT` | Optional, default `5190` | Loopback review UI port |
+| `ARCHERO_OCR_UID` | Optional, default `1000` | UID used for writable OCR workstation host mounts; use `id -u` on WSL when it differs |
+| `ARCHERO_OCR_GID` | Optional, default `1000` | GID used for writable OCR workstation host mounts; use `id -g` on WSL when it differs |
 | `ARCHERO_CAPTURE_ROOT` | Optional | Host capture directory mounted at `/captures` |
 | `ARCHERO_OUTBOX_ROOT` | Optional | Host reviewed-batch directory mounted at `/outbox` |
 | `ARCHERO_OCR_TARGETS_FILE` | Required path | Private target JSON writable only by the local OCR service |
