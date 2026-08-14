@@ -15,6 +15,11 @@ cp ocr/.env.example ocr/.env
 cp ocr/targets.example.json ocr/targets.json
 ```
 
+On WSL, set `ARCHERO_OCR_UID` and `ARCHERO_OCR_GID` in `ocr/.env` to the
+values printed by `id -u` and `id -g` when they differ from `1000`. The OCR
+container never runs as root; these values keep its capture, outbox, and target
+mounts writable by the workstation operator.
+
 The initial file contains only `Local test (offline)`. Start the UI, then use
 `Add destination` to save a name, application URL and dedicated ingestion key.
 Both real files are ignored by Git.

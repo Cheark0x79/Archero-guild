@@ -119,6 +119,18 @@ instead, run:
 make build
 ```
 
+For a published OCR workstation image, use the same canonical launcher after
+copying the example files:
+
+```bash
+make ocr-prepare
+make ocr-start
+make ocr-status
+```
+
+`make build` is the source-checkout path; it is not required to operate either
+published image.
+
 Published releases produce two independent multi-architecture container images:
 
 ```bash
@@ -155,8 +167,7 @@ Start with the [documentation index](docs/README.md):
 - [Public API](docs/api.md)
 - [Canonical OpenAPI contract](docs/openapi.yaml)
 
-English is canonical for repository and API contracts. French operator guides
-are kept under `docs/guides/fr/`.
+English is canonical for repository documentation and API contracts.
 
 ## Project policies
 

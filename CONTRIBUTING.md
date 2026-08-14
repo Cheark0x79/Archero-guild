@@ -30,6 +30,26 @@ Use the example environment files as templates. Keep local files such as
 `web/.env.development.local`, `web/.env.prod`, `ocr/.env`, and
 `ocr/targets.json` untracked.
 
+## Branches, worktrees, and releases
+
+- `main` is the protected integration branch and always represents the next
+  releasable version.
+- Create focused work from `main` in an isolated worktree under
+  `~/workspace/worktrees/archero-guild/<branch-slug>`. Use a purpose-named
+  branch such as `feat/ingestion-audit`, `fix/import-validation`, or
+  `docs/operator-runbook`; never use an agent or tool name in a branch.
+- Open a pull request into `main`, require CI, and merge only after review.
+  Do not develop directly in another contributor's worktree.
+- Cut a `release/<version>` branch only when release stabilization needs
+  changes that should not block ordinary work. Tag the reviewed release commit
+  as `v<version>`; the publish workflow validates it against `VERSION`.
+- Create a `hotfix/<topic>` branch from the affected release tag when an
+  urgent released defect needs a minimal correction. Open a PR to `main`, then
+  backport or retag only after the fix is reviewed and tested.
+- Keep each concurrent task in its own worktree and Compose project. Stop its
+  containers before removing a clean, pushed worktree; never delete volumes as
+  part of ordinary worktree cleanup.
+
 ## Pull requests
 
 - Explain the problem and the chosen solution.
@@ -40,3 +60,5 @@ Use the example environment files as templates. Keep local files such as
 - Call out migrations, compatibility risks, and manual operator steps.
 
 Contributions are accepted under the repository's MIT License.
+
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).

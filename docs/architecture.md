@@ -10,7 +10,15 @@ one versioned JSON contract.
 | Web/API | Next.js, Python export adapter, PostgreSQL | Configurable host port `5181`, bound to loopback by default | PostgreSQL | Server operator |
 | OCR workstation | Python, Tesseract, local review UI | Loopback port `5190` only | Web ingestion API over HTTPS | Trusted workstation operator |
 
-The production image contains no Tesseract or raw screenshot mount. The OCR
+| Image | Includes | Deliberately excluded |
+| --- | --- | --- |
+| `archero-guild-web` | Next.js dashboard/API, Python PostgreSQL export adapter, public OpenAPI copy, and the application data directory | Tesseract, OCR UI, raw-capture mounts, OCR targets, and a PostgreSQL server |
+| `archero-guild-ocr` | Local review UI, OCR pipeline, Tesseract language packs, ingestion-schema copy, and synthetic local fixtures | PostgreSQL client configuration, database credentials, Web dashboard sessions, and raw captures baked into the image |
+
+The Web/API deployment supplies PostgreSQL as a separate internal service and
+bind-mounts only its operator-owned `data/` directory. The trusted OCR
+workstation supplies its own raw-capture, outbox, roster-cache, and private
+target-file mounts. Neither image contains those operational files. The OCR
 workstation has no direct PostgreSQL access or device/emulator integration.
 
 ## Data flow

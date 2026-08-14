@@ -62,6 +62,7 @@ Database mode never falls back to demonstration data.
 | `ARCHERO_DASHBOARD_PORT` | Optional, default `5181` | Host loopback port |
 | `ARCHERO_BIND_ADDRESS` | Optional, default `127.0.0.1` | Host bind address; change only when deliberate LAN or proxy access is required |
 | `ARCHERO_WEB_IMAGE` | Optional, default `ghcr.io/cheark0x79/archero-guild-web` | Published Web/API image; override only for an intentional mirror or custom build |
+| `ARCHERO_IMAGE_TAG` | Optional, default `latest` | Published Web/API image tag; `make` defaults it to the pinned repository `VERSION` |
 | `POSTGRES_DB` | Optional, default `archero_observer` | PostgreSQL database name |
 | `POSTGRES_USER` | Optional, default `archero` | PostgreSQL role |
 | `POSTGRES_PASSWORD` | Required secret | Dedicated database password |
@@ -78,8 +79,10 @@ specific published release.
 | --- | --- | --- |
 | `ARCHERO_AGENT_VERSION` | Optional, default `development` | Version reported with an import batch |
 | `ARCHERO_OCR_IMAGE` | Optional, default `ghcr.io/cheark0x79/archero-guild-ocr` | Published OCR workstation image; override only for an intentional mirror or local build |
-| `ARCHERO_OCR_IMAGE_TAG` | Optional, default `latest` | OCR image release; pin this to the release version for reproducible workstation updates |
+| `ARCHERO_OCR_IMAGE_TAG` | Optional, default `latest` | OCR image release; the example pins the repository `VERSION` for reproducible workstation updates |
 | `ARCHERO_OCR_UI_PORT` | Optional, default `5190` | Loopback review UI port |
+| `ARCHERO_OCR_UID` | Optional, default `1000` | UID used for writable OCR workstation host mounts; use `id -u` on WSL when it differs |
+| `ARCHERO_OCR_GID` | Optional, default `1000` | GID used for writable OCR workstation host mounts; use `id -g` on WSL when it differs |
 | `ARCHERO_CAPTURE_ROOT` | Optional | Host capture directory mounted at `/captures` |
 | `ARCHERO_OUTBOX_ROOT` | Optional | Host reviewed-batch directory mounted at `/outbox` |
 | `ARCHERO_OCR_TARGETS_FILE` | Required path | Private target JSON writable only by the local OCR service |

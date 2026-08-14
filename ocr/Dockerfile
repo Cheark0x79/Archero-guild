@@ -12,6 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 LABEL org.opencontainers.image.title="Archero Guild OCR" \
       org.opencontainers.image.version=$APP_VERSION
 
+COPY ocr/requirements.txt /tmp/requirements.txt
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -20,8 +22,11 @@ RUN apt-get update \
       tesseract-ocr-chi-tra \
       tesseract-ocr-eng \
       tesseract-ocr-rus \
-    && pip install --no-cache-dir pillow pytesseract \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 10001 archero \
+    && useradd --uid 10001 --gid archero --create-home --shell /usr/sbin/nologin archero
 
 WORKDIR /app
 COPY ocr/app/archero_guild ./archero_guild
@@ -29,4 +34,5 @@ COPY docs/contracts ./docs/contracts
 COPY ocr/ui ./ocr/ui
 COPY web/sample-data.js ./web/sample-data.js
 
+USER archero
 ENTRYPOINT ["python", "-m", "archero_guild.ocr.local_app"]
