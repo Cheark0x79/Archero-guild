@@ -14,6 +14,7 @@ from archero_guild.ocr.local_app import (
     LocalOcrHandler,
     build_demo_batch,
     configured_target_public,
+    capture_image_path,
     day_payload,
     delete_remote_target,
     learn_identity_alias_from_edit,
@@ -505,6 +506,16 @@ class LocalOcrAppTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(LocalOcrError, "select between 1"):
                 selected_capture_paths(Path(directory), "2026-07-28", [])
+
+    def test_capture_path_rejects_a_symlink_that_escapes_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside_directory:
+            root = Path(directory)
+            guild = root / "2026-07-28" / "guild"
+            guild.parent.mkdir(parents=True)
+            guild.symlink_to(Path(outside_directory), target_is_directory=True)
+
+            with self.assertRaisesRegex(LocalOcrError, "escapes"):
+                capture_image_path(root, "2026-07-28", "guild-members", "members-001.png")
 
     def test_extraction_rejects_mixed_guild_and_boss_images(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

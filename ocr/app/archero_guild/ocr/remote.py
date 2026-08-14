@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import urllib.error
 import urllib.request
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +65,7 @@ def build_day_batch(
     member_paths: list[Path] | None = None,
     boss_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
-    day_root = screenshots_root / capture_date
+    day_root = _safe_capture_day_root(screenshots_root, capture_date)
     member_paths = sorted(member_paths) if member_paths is not None else sorted((day_root / "guild").glob("*.png"))
     boss_paths = sorted(boss_paths) if boss_paths is not None else sorted((day_root / "boss").glob("*.png"))
     if not member_paths and not boss_paths:
@@ -84,6 +87,23 @@ def build_day_batch(
         capture_date=capture_date,
         agent_version=agent_version,
     )
+
+
+def _safe_capture_day_root(screenshots_root: Path, capture_date: str) -> Path:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", capture_date):
+        raise RemoteOcrError("capture date must use YYYY-MM-DD format")
+    try:
+        if date.fromisoformat(capture_date).isoformat() != capture_date:
+            raise ValueError
+    except ValueError as exc:
+        raise RemoteOcrError("capture date is invalid") from exc
+
+    root_path = os.path.realpath(screenshots_root)
+    day_root = os.path.realpath(os.path.join(root_path, capture_date))
+    root_prefix = root_path if root_path.endswith(os.sep) else f"{root_path}{os.sep}"
+    if not day_root.startswith(root_prefix):
+        raise RemoteOcrError("capture date escapes the screenshots directory")
+    return Path(day_root)
 
 
 def run_day(

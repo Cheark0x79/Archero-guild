@@ -367,7 +367,7 @@ function highlightCode(code) {
 }
 
 function highlightLine(line, lineIndex) {
-  const pattern = /(\/\/.*$|#.*$|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|`(?:\\.|[^`])*`|\b(?:const|await|import|from|fetch|requests|curl|null|true|false)\b|\b\d[\d_.]*\b)/g;
+  const pattern = /(\/\/.*$|#.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:const|await|import|from|fetch|requests|curl|null|true|false)\b|\b\d[\d_.]*\b)/g;
   const parts = [];
   let cursor = 0;
   let match;
