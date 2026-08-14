@@ -8,6 +8,9 @@ permissions:
 
 jobs:
   review:
+    # Dependency review requires GitHub Advanced Security for private repos;
+    # it is available to this project once the repository is public.
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
