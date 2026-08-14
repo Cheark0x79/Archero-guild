@@ -425,7 +425,7 @@ def store_uploaded_images(
         width, height = _validate_png(content)
         validated.append((content, width, height))
 
-    destination = screenshots_root / capture_date / subdirectory
+    destination = _safe_child_path(screenshots_root, capture_date, subdirectory)
     destination.mkdir(parents=True, exist_ok=True)
     if replace_existing:
         archive_capture_session(screenshots_root, capture_date, kind)
@@ -456,7 +456,7 @@ def archive_capture_session(
     if kind not in CAPTURE_KINDS:
         raise LocalOcrError("capture kind must be guild-members or guild-boss")
     subdirectory, prefix = CAPTURE_KINDS[kind]
-    directory = screenshots_root / capture_date / subdirectory
+    directory = _safe_child_path(screenshots_root, capture_date, subdirectory)
     archived: list[Path] = []
     for image in sorted(directory.glob(f"{prefix}-*.png")) if directory.exists() else []:
         archived.append(move_capture_to_trash(screenshots_root, capture_date, kind, image.name))
@@ -467,7 +467,7 @@ def day_payload(screenshots_root: Path, outbox_root: Path, capture_date: str) ->
     _validate_date(capture_date)
     images = []
     for kind, (subdirectory, _) in CAPTURE_KINDS.items():
-        directory = screenshots_root / capture_date / subdirectory
+        directory = _safe_child_path(screenshots_root, capture_date, subdirectory)
         for image in sorted(directory.glob("*.png")) if directory.exists() else []:
             images.append({
                 "kind": kind,
@@ -475,7 +475,7 @@ def day_payload(screenshots_root: Path, outbox_root: Path, capture_date: str) ->
                 "bytes": image.stat().st_size,
                 "url": f"/api/image?date={capture_date}&kind={urllib.parse.quote(kind)}&name={urllib.parse.quote(image.name)}",
             })
-    batch_path = outbox_root / f"{capture_date}.json"
+    batch_path = _safe_child_path(outbox_root, f"{capture_date}.json")
     return {
         "date": capture_date,
         "images": images,
@@ -486,9 +486,9 @@ def day_payload(screenshots_root: Path, outbox_root: Path, capture_date: str) ->
 
 def capture_image_path(screenshots_root: Path, capture_date: str, kind: str, name: str) -> Path:
     _validate_date(capture_date)
-    if kind not in CAPTURE_KINDS or not re.fullmatch(r"[A-Za-z0-9._-]+\.png", name):
+    if kind not in CAPTURE_KINDS or not _is_safe_png_name(name):
         raise LocalOcrError("invalid image path")
-    return screenshots_root / capture_date / CAPTURE_KINDS[kind][0] / name
+    return _safe_child_path(screenshots_root, capture_date, CAPTURE_KINDS[kind][0], name)
 
 
 def selected_capture_paths(
@@ -537,10 +537,10 @@ def move_capture_to_trash(
     if not source.exists():
         raise LocalOcrError("the screenshot no longer exists")
     subdirectory = CAPTURE_KINDS[kind][0]
-    trash = screenshots_root / ".trash" / capture_date / subdirectory
+    trash = _safe_child_path(screenshots_root, ".trash", capture_date, subdirectory)
     trash.mkdir(parents=True, exist_ok=True)
     stamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    destination = trash / f"{stamp}-{name}"
+    destination = _safe_child_path(trash, f"{stamp}-{name}")
     source.replace(destination)
     return destination
 
@@ -1643,6 +1643,24 @@ def _validate_date(value: str) -> None:
         raise LocalOcrError("date is invalid") from exc
     if parsed.isoformat() != value:
         raise LocalOcrError("date is invalid")
+
+
+def _safe_child_path(root: Path, *parts: str) -> Path:
+    """Resolve a storage path and reject paths that escape its configured root."""
+    root_path = os.path.realpath(root)
+    candidate = os.path.realpath(os.path.join(root_path, *parts))
+    root_prefix = root_path if root_path.endswith(os.sep) else f"{root_path}{os.sep}"
+    if not candidate.startswith(root_prefix):
+        raise LocalOcrError("requested path escapes the configured storage directory")
+    return Path(candidate)
+
+
+def _is_safe_png_name(name: str) -> bool:
+    return (
+        1 <= len(name) <= 255
+        and name.endswith(".png")
+        and all(character.isascii() and (character.isalnum() or character in "._-") for character in name)
+    )
 
 
 def _validate_png(content: bytes) -> tuple[int, int]:

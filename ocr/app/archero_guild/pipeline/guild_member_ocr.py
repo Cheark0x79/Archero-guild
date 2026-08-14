@@ -526,7 +526,7 @@ def parse_power(value: str) -> int | None:
         .replace("I", "1")
         .replace(",", ".")
     )
-    matches = list(re.finditer(r"(\d+(?:\.\d+)?)\s*([KkMm])", normalized))
+    matches = list(re.finditer(r"(\d{1,9}(?:\.\d{1,6})?)\s{0,8}([KkMm])", normalized))
     if not matches:
         return None
     match = matches[-1]
@@ -543,12 +543,12 @@ def _has_decimal_power_text(value: str) -> bool:
         .replace("I", "1")
         .replace(",", ".")
     )
-    return bool(re.search(r"\d+\.\d+\s*[KkMm]", normalized))
+    return bool(re.search(r"\d{1,9}\.\d{1,6}\s{0,8}[KkMm]", normalized))
 
 
 def parse_integer(value: str) -> int | None:
     normalized = value.replace("O", "0").replace("o", "0")
-    match = re.search(r"\d+", normalized)
+    match = re.search(r"\d{1,9}", normalized)
     return int(match.group(0)) if match else None
 
 
@@ -557,10 +557,10 @@ def parse_activity_days(value: str) -> int | None:
     if "online" in normalized or "onl" in normalized:
         return 0
     normalized = _normalize_activity_ocr(normalized)
-    day_match = re.search(r"(\d+)\s*d", normalized)
+    day_match = re.search(r"(\d{1,9})\s{0,8}d", normalized)
     if day_match:
         return int(day_match.group(1))
-    if re.search(r"\d+\s*[hm]", normalized):
+    if re.search(r"\d{1,9}\s{0,8}[hm]", normalized):
         return 0
     return None
 
@@ -570,8 +570,8 @@ def format_activity_text(raw_value: str, days: int | None) -> str | None:
     if not normalized or "online" in normalized or "onl" in normalized:
         return "Online"
     normalized = _normalize_activity_ocr(normalized)
-    day_match = re.search(r"(\d+)\s*d", normalized)
-    hour_match = re.search(r"(\d+)\s*h", normalized)
+    day_match = re.search(r"(\d{1,9})\s{0,8}d", normalized)
+    hour_match = re.search(r"(\d{1,9})\s{0,8}h", normalized)
     if day_match:
         parts = [f"{int(day_match.group(1))} d"]
         if hour_match:
@@ -579,7 +579,7 @@ def format_activity_text(raw_value: str, days: int | None) -> str | None:
         return " ".join(parts)
     if hour_match:
         return f"{int(hour_match.group(1))} h"
-    minute_match = re.search(r"(\d+)\s*m", normalized)
+    minute_match = re.search(r"(\d{1,9})\s{0,8}m", normalized)
     if minute_match:
         return f"{int(minute_match.group(1))} min"
     return f"{days} days" if days is not None else None

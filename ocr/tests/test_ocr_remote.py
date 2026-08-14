@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from archero_guild.ocr.remote import RemoteOcrError, _read_reviewed_batch, _roster_entries, run_day
+from archero_guild.ocr.remote import RemoteOcrError, _read_reviewed_batch, _roster_entries, _safe_capture_day_root, run_day
 
 
 class RemoteOcrTests(unittest.TestCase):
@@ -26,6 +26,11 @@ class RemoteOcrTests(unittest.TestCase):
     def test_rejects_a_non_array_remote_roster(self) -> None:
         with self.assertRaises(RemoteOcrError):
             _roster_entries({"playerId": "1"})
+
+    def test_rejects_capture_dates_that_escape_the_screenshots_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RemoteOcrError, "YYYY-MM-DD"):
+                _safe_capture_day_root(Path(directory), "../outside")
 
     def test_validation_is_the_safe_default_before_publication(self) -> None:
         batch = {
