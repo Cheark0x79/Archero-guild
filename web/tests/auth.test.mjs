@@ -104,7 +104,7 @@ test("viewer navigation excludes every admin page while admin navigation is expl
   assert.equal(sessionRoleLabel(USER_ROLE), "Viewer");
 
   const platformAdminNavigation = navigationItemsForRole(ADMIN_ROLE);
-  assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/members", "/admin/notifications", "/admin/rules", "/api-docs"]);
+  assert.deepEqual(platformAdminNavigation.admin.map((item) => item[2]), ["/admin", "/admin/members", "/admin/member-history", "/admin/notifications", "/admin/rules", "/api-docs"]);
   assert.deepEqual(platformAdminNavigation.test, []);
     const testAdminNavigation = navigationItemsForRole(ADMIN_ROLE, { testToolsEnabled: true });
     assert.deepEqual(testAdminNavigation.test.map((item) => item[2]), ["/test"]);

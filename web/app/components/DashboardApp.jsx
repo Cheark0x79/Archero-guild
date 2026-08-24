@@ -216,6 +216,7 @@ const routeMeta = {
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
   admin: ["Admin overview", "Operational status and administration tasks."],
   "admin-members": ["Member management", "Private notes, absences, identities, and roster status."],
+  "member-history": ["Member history", "Daily member progression and explainable warning states."],
   "admin-member": ["Edit member", "Warnings, notes, announced absence, and guild status."],
   membership: ["Guild membership", "Review roster changes detected by complete guild imports."],
   notifications: ["Notifications", "Guild changes and member alerts that need an officer decision."],
@@ -396,6 +397,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
           />
         )}
         {!dataLoading && activeRoute === "admin-members" && <AdminMembersView dataVersion={dataVersion} rules={rules} openWarnings={openAdminWarnings} />}
+        {!dataLoading && activeRoute === "member-history" && <MemberHistoryView rules={rules} />}
         {!dataLoading && activeRoute === "admin-member" && selectedMember && <AdminMemberEditView member={selectedMember} rules={rules} warningActions={warningActions} updateWarningAction={updateWarningAction} />}
         {!dataLoading && activeRoute === "admin-member" && !selectedMember && (
           <section className="panel"><PanelHeading title="Member not found" subtitle="This member is not present in the current or historical roster." /><a className="secondary-button" href="/admin/members">Back to member management</a></section>
@@ -1316,6 +1318,26 @@ function AdminMemberEditView({ member, rules, warningActions, updateWarningActio
       </section>
     </div>
   );
+}
+
+function MemberHistoryView({ rules }) {
+  const [selectedKey, setSelectedKey] = useState(() => memberKey(members[0] ?? {}));
+  const [query, setQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [range, setRange] = useState("30");
+  const { records, loadState } = useMemberAdminRecords();
+  const member = members.find((item) => memberKey(item) === selectedKey) ?? members[0];
+  const history = member ? dailyHistory(member).slice().reverse() : [];
+  const visibleHistory = range === "all" ? history : history.slice(0, Number(range));
+  const memberOptions = members.slice().sort((a, b) => a.name.localeCompare(b.name)).filter((item) => normalizedMemberName(`${item.name} ${item.playerId ?? ""}`).includes(normalizedMemberName(query)));
+  const absenceUntil = member?.playerId ? records[member.playerId]?.absenceUntil : "";
+  const warningRows = evaluateWarningHistory(history, rules, member).reduce((map, item) => map.set(item.date, item), new Map());
+  return <div className="member-history-page"><section className="panel member-history-panel"><PanelHeading title="Member daily history" subtitle="Read-only day-by-day progression. Status explains what needs attention." />
+    <div className="member-history-toolbar"><label className="member-history-picker"><span>Member</span><input role="combobox" aria-expanded={pickerOpen} aria-controls="member-history-options" value={pickerOpen ? query : member?.name ?? ""} onFocus={() => { setQuery(""); setPickerOpen(true); }} onChange={(event) => { setQuery(event.target.value); setPickerOpen(true); }} placeholder="Search member" />{pickerOpen ? <div className="member-history-options" id="member-history-options" role="listbox">{memberOptions.map((item) => <button type="button" role="option" aria-selected={memberKey(item) === memberKey(member ?? {})} onMouseDown={(event) => event.preventDefault()} onClick={() => { setSelectedKey(memberKey(item)); setQuery(""); setPickerOpen(false); }} key={memberKey(item)}><strong>{item.name}</strong><small>{item.playerId ?? "No player ID"}</small></button>)}{memberOptions.length === 0 ? <p>No member matches this search.</p> : null}</div> : null}</label><label className="select-field"><span>Period</span><select value={range} onChange={(event) => setRange(event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="all">All history</option></select></label></div>
+    {loadState.loading ? <p className="muted">Loading absence information...</p> : null}
+    <div className="member-history-table"><table><thead><tr><th>Date</th><th>Power</th><th>Contribution</th><th>Boss</th><th>Activity</th><th>Status</th></tr></thead><tbody>{visibleHistory.map((row) => { const evaluation = warningRows.get(row.date); const absent = Boolean(absenceUntil && row.date <= absenceUntil); const inactive = !absent && Number(row.lastActivityDays) > 0; const warnings = evaluation?.warnings ?? []; const critical = !absent && (inactive || warnings.some((item) => item.type === "missed_boss")); const state = absent ? "absence" : critical ? "critical" : warnings.length ? "attention" : "clear"; const labels = absent ? ["Declared absence"] : inactive ? ["Inactive"] : warnings.map((item) => item.label); const weekday = new Date(`${row.date}T12:00:00`).toLocaleDateString("en", { weekday: "short" }); const weekStart = weekday === "Mon"; return <tr className={`member-history-row ${state} ${weekStart ? "week-start" : ""}`} key={row.date}><td>{weekStart ? <span className="member-history-week">New week</span> : null}<strong>{row.date}</strong><small className="member-history-weekday">{weekday}</small></td><td>{formatOptionalCompact(row.power)}</td><td>{formatOptionalNumber(row.donation)}</td><td>{formatOptionalNumber(row.bossAttacks)}</td><td>{row.lastActivityDays === 0 ? "Active" : `${row.lastActivityDays ?? "—"}d ago`}</td><td><span>{labels.length ? labels.join(" · ") : "All clear"}</span></td></tr>; })}</tbody></table></div>
+    {history.length === 0 ? <p className="admin-module-empty">No daily history is available for this member yet.</p> : null}
+  </section></div>;
 }
 
 function TestEnvironmentView() {
