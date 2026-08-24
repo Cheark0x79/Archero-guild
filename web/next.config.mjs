@@ -1,5 +1,6 @@
 const nextConfig = {
   ...(process.env.ARCHERO_NEXT_OUTPUT === "default" ? {} : { output: "standalone" }),
+  ...(process.env.NODE_ENV === "development" ? { allowedDevOrigins: ["127.0.0.1", "localhost"] } : {}),
   poweredByHeader: false,
   async headers() {
     return [

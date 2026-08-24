@@ -70,8 +70,8 @@ def _guild_stats_history(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
         SELECT capture_date, guild_name, guild_id, guild_level, member_count,
-               member_capacity, total_power, donations_value, guild_rank,
-               xp_current, xp_required, raw_payload
+               member_capacity, total_power, expedition_points, expedition_name,
+               expedition_rank, donations_value, guild_rank, xp_current, xp_required, raw_payload
         FROM guild_stat_snapshots
         ORDER BY capture_date
         """
@@ -91,9 +91,9 @@ def _guild_stats_history(connection) -> list[dict[str, Any]]:
             "rank": row.get("guild_rank"),
             "xpCurrent": row.get("xp_current"),
             "xpRequired": row.get("xp_required"),
-            "expeditionPoints": raw_payload.get("expeditionPoints"),
-            "expeditionName": raw_payload.get("expeditionName"),
-            "expeditionRank": raw_payload.get("expeditionRank"),
+            "expeditionPoints": row.get("expedition_points", raw_payload.get("expeditionPoints")),
+            "expeditionName": row.get("expedition_name", raw_payload.get("expeditionName")),
+            "expeditionRank": row.get("expedition_rank", raw_payload.get("expeditionRank")),
         })
     return history
 

@@ -1221,6 +1221,47 @@ h3 {
   line-height: 1.1;
 }
 
+.daily-editor-panel { display: grid; gap: 18px; }
+.daily-editor-panel > * { min-width: 0; }
+.daily-editor-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.daily-editor-heading .panel-heading { width: 0; min-width: 0; flex: 1 1 0; }
+.daily-editor-heading > .primary-button { flex: 0 0 auto; margin-top: 2px; }
+.daily-editor-dates { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.daily-editor-dates button { min-width: 58px; display: grid; gap: 2px; place-items: center; padding: 9px 8px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; }
+.daily-editor-dates button strong { color: var(--text); font-size: 17px; line-height: 1; }
+.daily-editor-dates button span { font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.daily-editor-dates button.active { color: white; background: oklch(52% .17 247); border-color: oklch(52% .17 247); }
+.daily-editor-dates button.active strong { color: white; }
+.daily-editor-summary { display: grid; grid-template-columns: 1.15fr repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface-2); }
+.daily-editor-card { display: grid; align-content: start; gap: 10px; min-width: 0; padding: 17px 16px; border-right: 1px solid var(--line); }
+.daily-editor-card:last-child { border-right: 0; }
+.daily-editor-card > span { color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .01em; }
+.daily-editor-card strong { font-size: 18px; color: var(--text); }
+.daily-editor-card small { color: var(--muted); }
+.daily-editor-card label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 800; }
+.daily-editor-card .editor-number { gap: 3px; }
+.daily-editor-card .editor-number span { color: var(--muted); font-size: 11px; font-weight: 800; }
+.daily-editor-card input { width: 100%; min-width: 0; padding: 5px 6px; color: var(--text); font: inherit; font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.daily-editor-card .editor-number input { padding: 0; color: var(--text); font-size: 23px; line-height: 1.15; letter-spacing: -.035em; background: transparent; border: 0; border-radius: 0; }
+.daily-editor-card .editor-number input:focus { outline: 2px solid oklch(64% .13 245); outline-offset: 3px; border-radius: 3px; }
+.daily-editor-card .editor-pair .editor-number input { font-size: 18px; }
+.editor-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.guild-card { background: color-mix(in oklab, var(--surface-2) 80%, oklch(56% .12 245)); }
+.expedition-card { background: color-mix(in oklab, var(--surface-2) 85%, oklch(72% .13 85)); }
+.daily-editor-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line); }
+.daily-editor-tabs button { padding: 0 2px 11px; color: var(--muted); font: inherit; font-weight: 800; background: transparent; border: 0; border-bottom: 2px solid transparent; }
+.daily-editor-tabs button.active { color: var(--text); border-color: oklch(52% .17 247); }
+.daily-editor-table { overflow-x: auto; }
+.daily-editor-table table { width: 100%; border-collapse: collapse; }
+.daily-editor-table th { padding: 8px; color: var(--muted); font-size: 12px; text-align: left; }
+.daily-editor-table td { padding: 11px 8px; border-top: 1px solid var(--line); }
+.daily-editor-save { display: grid; grid-template-columns: minmax(0, 1.5fr) auto; gap: 16px; align-items: end; padding-top: 16px; border-top: 1px solid var(--line); }
+.daily-editor-save label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.daily-editor-save textarea { min-height: 74px; resize: vertical; }
+.daily-editor-save p { max-width: 38ch; margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.daily-editor-feedback { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+@media (max-width: 760px) { .daily-editor-heading { align-items: stretch; flex-direction: column; } .daily-editor-heading .panel-heading { width: auto; } .daily-editor-heading > .primary-button { width: 100%; } .daily-editor-summary { grid-template-columns: 1fr 1fr; } .daily-editor-card { border-bottom: 1px solid var(--line); } .daily-editor-card:nth-child(2n) { border-right: 0; } .daily-editor-card:last-child { grid-column: span 2; } .daily-editor-save { grid-template-columns: 1fr; } }
+
 .action-tile {
   display: grid;
   gap: 5px;

@@ -214,6 +214,7 @@ const routeMeta = {
   members: ["Members", "Search, status, and individual progression."],
   boss: ["Boss", "Compare weekly damage and explore guild records."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
+  "daily-editor": ["Daily data editor", "Correct verified historical values for one captured day."],
   admin: ["Admin overview", "Operational status and administration tasks."],
   "admin-members": ["Member management", "Private notes, absences, identities, and roster status."],
   "admin-member": ["Edit member", "Warnings, notes, announced absence, and guild status."],
@@ -388,6 +389,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         )}
         {!dataLoading && activeRoute === "boss" && <BossView />}
         {!dataLoading && activeRoute === "data" && <DataView />}
+        {!dataLoading && activeRoute === "daily-editor" && <DailyDataEditor />}
         {!dataLoading && activeRoute === "admin" && (
           <AdminView
             rules={rules}
@@ -554,6 +556,48 @@ function MembershipReview({ membersToReview, onReviewed, compact = false }) {
       {error ? <p className="membership-review-error" role="alert">{error} Try again.</p> : null}
     </section>
   );
+}
+
+function DailyDataEditor() {
+  const history = (captures.guildStatsHistory ?? []).filter((item) => item?.date).slice().sort((left, right) => right.date.localeCompare(left.date));
+  const [date, setDate] = useState(history[0]?.date ?? "");
+  const [tab, setTab] = useState("members");
+  const selected = history.find((item) => item.date === date) ?? null;
+  const memberRows = dailyRawSnapshots.find((item) => item.date === date)?.rows ?? [];
+  const bossRows = dailyBossRawSnapshots.filter((item) => item.date === date).flatMap((item) => item.rows ?? []);
+  const [draft, setDraft] = useState(() => editorDraft(selected));
+  const [state, setState] = useState({ saving: false, message: "" });
+  useEffect(() => { if (!date && history[0]?.date) setDate(history[0].date); }, [date, history]);
+  useEffect(() => { setDraft(editorDraft(history.find((item) => item.date === date) ?? null)); setState({ saving: false, message: "" }); }, [date]);
+  async function save(event) {
+    event.preventDefault();
+    setState({ saving: true, message: "" });
+    try {
+      const response = await fetch("/api/guild-stats", { method: "PUT", headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" }, body: JSON.stringify({ date, ...numericEditorDraft(draft), expeditionName: draft.expeditionName, expeditionRank: draft.expeditionRank }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save this correction.");
+      await loadDashboardData({ force: true });
+      setState({ saving: false, message: "Correction saved and recorded in the audit history." });
+    } catch (error) { setState({ saving: false, message: error instanceof Error ? error.message : "Unable to save this correction." }); }
+  }
+  return <div className="admin-management daily-editor"><section className="panel daily-editor-panel"><div className="daily-editor-heading"><PanelHeading title="Daily data editor" subtitle="Correct all values from one captured day. Changes are kept in the audit history." /><button className="primary-button" type="submit" form="daily-editor-form" disabled={state.saving || !selected}>{state.saving ? "Saving…" : "Save changes"}</button></div>
+    {history.length === 0 ? <p className="admin-module-empty">No daily guild snapshot is available yet.</p> : <form id="daily-editor-form" onSubmit={save}><div className="daily-editor-dates" aria-label="Available capture dates">{history.slice(0, 7).reverse().map((item) => <button type="button" className={item.date === date ? "active" : ""} onClick={() => setDate(item.date)} key={item.date}><strong>{item.date.slice(-2)}</strong><span>{new Date(`${item.date}T12:00:00Z`).toLocaleDateString("en", { weekday: "short" })}</span></button>)}</div>
+      <div className="daily-editor-summary"><section className="daily-editor-card guild-card"><span>Guild level</span><EditorNumber label="Level" field="level" draft={draft} setDraft={setDraft} /><div className="editor-pair"><EditorNumber label="Current XP" field="xpCurrent" draft={draft} setDraft={setDraft} /><EditorNumber label="Required XP" field="xpRequired" draft={draft} setDraft={setDraft} /></div></section><section className="daily-editor-card"><span>Members</span><div className="editor-pair"><EditorNumber label="Current" field="memberCount" draft={draft} setDraft={setDraft} /><EditorNumber label="Capacity" field="memberCapacity" draft={draft} setDraft={setDraft} /></div></section><section className="daily-editor-card"><span>Guild power</span><EditorNumber label="Total power" field="totalPower" draft={draft} setDraft={setDraft} /></section><section className="daily-editor-card"><span>Expedition points</span><EditorNumber label="Points" field="expeditionPoints" draft={draft} setDraft={setDraft} /></section><section className="daily-editor-card expedition-card"><span>Expedition rank</span><label>Tier<input value={draft.expeditionName} onChange={(event) => setDraft({ ...draft, expeditionName: event.target.value })} /></label><label>Rank<input value={draft.expeditionRank} onChange={(event) => setDraft({ ...draft, expeditionRank: event.target.value.toUpperCase() })} /></label></section></div>
+      <div className="daily-editor-tabs" role="tablist"><button type="button" className={tab === "members" ? "active" : ""} onClick={() => setTab("members")} role="tab" aria-selected={tab === "members"}>Members · {memberRows.length}</button><button type="button" className={tab === "boss" ? "active" : ""} onClick={() => setTab("boss")} role="tab" aria-selected={tab === "boss"}>Boss · {bossRows.length}</button></div>
+      <div className="daily-editor-table"><table><thead>{tab === "members" ? <tr><th>Member</th><th>Power</th><th>Contribution</th><th>Boss attacks</th><th>Activity</th></tr> : <tr><th>Member</th><th>Boss damage</th><th>Rank</th><th>Source</th></tr>}</thead><tbody>{tab === "members" ? memberRows.map((row, index) => <tr key={`${row.playerId}-${index}`}><td>{row.name ?? "Unmatched member"}</td><td>{formatOptionalNumber(row.power)}</td><td>{formatOptionalNumber(row.contribution7d)}</td><td>{formatOptionalNumber(row.bossAttacks)}</td><td>{row.lastActivityDays === 0 ? "Today" : `${row.lastActivityDays ?? "—"} days`}</td></tr>) : bossRows.map((row, index) => <tr key={`${row.playerId ?? row.name}-${index}`}><td>{row.name ?? "Unmatched member"}</td><td>{formatOptionalNumber(row.bossDamageToday)}</td><td>{row.bossRank ?? "—"}</td><td>{row.source ?? "Boss capture"}</td></tr>)}</tbody></table></div>{state.message ? <p className="daily-editor-feedback" role="status">{state.message}</p> : null}</form>}
+  </section></div>;
+}
+
+function editorDraft(snapshot) {
+  return Object.fromEntries(["level", "memberCount", "memberCapacity", "totalPower", "xpCurrent", "xpRequired", "expeditionPoints"].map((field) => [field, String(snapshot?.[field] ?? "")]).concat([["expeditionName", snapshot?.expeditionName ?? ""], ["expeditionRank", snapshot?.expeditionRank ?? ""]]));
+}
+
+function numericEditorDraft(draft) {
+  return Object.fromEntries(["level", "memberCount", "memberCapacity", "totalPower", "xpCurrent", "xpRequired", "expeditionPoints"].map((field) => [field, Number(draft[field])]));
+}
+
+function EditorNumber({ label, field, draft, setDraft }) {
+  return <label className="editor-number"><span>{label}</span><input inputMode="numeric" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value.replace(/\D/g, "") })} /></label>;
 }
 
 function DataView() {
