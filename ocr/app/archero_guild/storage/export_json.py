@@ -380,7 +380,7 @@ def _week_start(value: Any) -> date | None:
 def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT capture_date, boss_key, boss_name, weekday, user_id, player_name,
+        SELECT id, capture_date, boss_key, boss_name, weekday, user_id, player_name,
                boss_rank, damage_value, damage_text, row_area, row_index
         FROM v_boss_daily_leaderboard
         ORDER BY capture_date, boss_rank NULLS LAST, damage_value DESC
@@ -405,6 +405,8 @@ def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
         )
         group["rows"].append(
             {
+                "resultId": row["id"],
+                "bossKey": row["boss_key"],
                 "source": f"{row['boss_key']} rank {row['boss_rank'] or row['row_index']}",
                 "rowIndex": row["row_index"],
                 "area": row["row_area"],

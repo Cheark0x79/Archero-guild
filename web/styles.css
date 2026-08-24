@@ -1255,6 +1255,8 @@ h3 {
 .daily-editor-table table { width: 100%; border-collapse: collapse; }
 .daily-editor-table th { padding: 8px; color: var(--muted); font-size: 12px; text-align: left; }
 .daily-editor-table td { padding: 11px 8px; border-top: 1px solid var(--line); }
+.daily-editor-inline { width: 100%; min-width: 74px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 6px 8px; text-align: right; }
+.daily-editor-inline:focus-visible { border-color: var(--accent); outline: 2px solid color-mix(in oklch, var(--accent) 25%, transparent); outline-offset: 1px; }
 .daily-editor-save { display: grid; grid-template-columns: minmax(0, 1.5fr) auto; gap: 16px; align-items: end; padding-top: 16px; border-top: 1px solid var(--line); }
 .daily-editor-save label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .daily-editor-save textarea { min-height: 74px; resize: vertical; }

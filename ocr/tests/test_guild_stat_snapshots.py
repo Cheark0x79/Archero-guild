@@ -28,3 +28,7 @@ class GuildStatSnapshotTests(unittest.TestCase):
             "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II",
         })
         self.assertEqual(edit["reason"], "Manual daily editor correction")
+
+
+if __name__ == "__main__":
+    unittest.main()

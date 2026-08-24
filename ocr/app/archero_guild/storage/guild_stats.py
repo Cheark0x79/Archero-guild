@@ -53,6 +53,8 @@ def normalize_snapshot_edit(value: Any) -> dict[str, Any]:
 
 def update_snapshot(dsn: str, value: Any) -> dict[str, Any]:
     edit = normalize_snapshot_edit(value)
+    member_edits = _normalize_member_edits(value.get("memberEdits"))
+    boss_edits = _normalize_boss_edits(value.get("bossEdits"))
     try:
         import psycopg
         from psycopg.rows import dict_row
@@ -87,8 +89,90 @@ def update_snapshot(dsn: str, value: Any) -> dict[str, Any]:
                 INSERT INTO guild_stat_snapshot_edits (capture_date, previous_payload, updated_payload, reason)
                 VALUES (%s, %s::jsonb, %s::jsonb, %s)
             """, (edit["date"], json.dumps(previous), json.dumps(updated), edit["reason"]))
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_snapshot_row_edits (
+                    id BIGSERIAL PRIMARY KEY,
+                    capture_date DATE NOT NULL,
+                    entity_type TEXT NOT NULL CHECK (entity_type IN ('member', 'boss')),
+                    entity_key TEXT NOT NULL,
+                    previous_payload JSONB NOT NULL,
+                    updated_payload JSONB NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            for member in member_edits:
+                row = cursor.execute("""
+                    SELECT m.power, m.contribution_7d, m.boss_attacks, m.last_activity_days
+                    FROM member_metrics m JOIN guild_snapshots s ON s.id = m.snapshot_id
+                    WHERE s.capture_date = %s AND m.user_id = %s FOR UPDATE
+                """, (edit["date"], member["playerId"])).fetchone()
+                if not row:
+                    raise ValueError(f"member {member['playerId']} was not captured on this date")
+                previous_member = dict(row)
+                cursor.execute("""
+                    UPDATE member_metrics SET power = %s, contribution_7d = %s,
+                        boss_attacks = %s, last_activity_days = %s
+                    FROM guild_snapshots s WHERE member_metrics.snapshot_id = s.id
+                      AND s.capture_date = %s AND member_metrics.user_id = %s
+                """, (member["power"], member["contribution7d"], member["bossAttacks"], member["lastActivityDays"], edit["date"], member["playerId"]))
+                cursor.execute("""INSERT INTO daily_snapshot_row_edits
+                    (capture_date, entity_type, entity_key, previous_payload, updated_payload, reason)
+                    VALUES (%s, 'member', %s, %s::jsonb, %s::jsonb, %s)""",
+                    (edit["date"], member["playerId"], json.dumps(previous_member), json.dumps(member), edit["reason"]))
+            for boss in boss_edits:
+                row = cursor.execute("""SELECT damage_value, boss_rank FROM boss_daily_results
+                    WHERE id = %s AND capture_date = %s FOR UPDATE""", (boss["resultId"], edit["date"])).fetchone()
+                if not row:
+                    raise ValueError("boss result was not captured on this date")
+                previous_boss = dict(row)
+                cursor.execute("UPDATE boss_daily_results SET damage_value = %s, boss_rank = %s WHERE id = %s",
+                               (boss["bossDamageToday"], boss["bossRank"], boss["resultId"]))
+                cursor.execute("""INSERT INTO daily_snapshot_row_edits
+                    (capture_date, entity_type, entity_key, previous_payload, updated_payload, reason)
+                    VALUES (%s, 'boss', %s, %s::jsonb, %s::jsonb, %s)""",
+                    (edit["date"], str(boss["resultId"]), json.dumps(previous_boss), json.dumps(boss), edit["reason"]))
         connection.commit()
-    return {field: edit[field] for field in ("date", *EDITABLE_FIELDS)}
+    return {**{field: edit[field] for field in ("date", *EDITABLE_FIELDS)}, "memberEdits": len(member_edits), "bossEdits": len(boss_edits)}
+
+
+def _normalize_member_edits(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 100:
+        raise ValueError("memberEdits must contain at most 100 captured members")
+    result = []
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("playerId"), str) or not item["playerId"].strip():
+            raise ValueError("each member edit requires a playerId")
+        result.append({"playerId": item["playerId"].strip(), **_integer_fields(item, {
+            "power": (0, 10_000_000_000_000), "contribution7d": (0, 10_000_000_000),
+            "bossAttacks": (0, 1_000_000), "lastActivityDays": (0, 100_000),
+        })})
+    return result
+
+
+def _normalize_boss_edits(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 500:
+        raise ValueError("bossEdits must contain at most 500 captured results")
+    result = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("each boss edit must be an object")
+        result.append(_integer_fields(item, {"resultId": (1, 9_000_000_000_000_000), "bossDamageToday": (0, 10_000_000_000_000), "bossRank": (1, 1_000_000)}))
+    return result
+
+
+def _integer_fields(value: dict[str, Any], limits: dict[str, tuple[int, int]]) -> dict[str, int]:
+    result = {}
+    for field, (minimum, maximum) in limits.items():
+        candidate = value.get(field)
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or not minimum <= candidate <= maximum:
+            raise ValueError(f"{field} must be an integer between {minimum} and {maximum}")
+        result[field] = candidate
+    return result
 
 
 def _valid_date(value: str) -> bool:
