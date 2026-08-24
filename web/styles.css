@@ -53,6 +53,20 @@
 @media (max-width: 760px) {
   .member-history-toolbar { grid-template-columns: 1fr; }
   .member-history-table { max-height: calc(100vh - 270px); }
+  .member-history-table table { min-width: 0; }
+  .member-history-table thead { display: none; }
+  .member-history-table tbody { display: grid; gap: 8px; }
+  .member-history-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .member-history-table td { display: grid; gap: 2px; border: 0; padding: 0; font-size: 13px; }
+  .member-history-table td::before { color: var(--muted); font-size: 11px; font-weight: 750; }
+  .member-history-table td:nth-child(1)::before { content: "Date"; }
+  .member-history-table td:nth-child(2)::before { content: "Power"; }
+  .member-history-table td:nth-child(3)::before { content: "Contribution"; }
+  .member-history-table td:nth-child(4)::before { content: "Boss"; }
+  .member-history-table td:nth-child(5)::before { content: "Activity"; }
+  .member-history-table td:nth-child(6) { grid-column: 1 / -1; }
+  .member-history-table td:nth-child(6)::before { content: "Status"; }
+  .member-history-row.week-start td { border-bottom: 0; }
 }
 
 * {

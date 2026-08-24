@@ -124,7 +124,9 @@ function memberRowsForDay(members, date, dayIndex, random, scenario) {
       contribution7d: sparse && index === 31 ? null : donation,
       bossAttacks: sparse && index === 34 ? null : attacks,
       bossDamageToday: null,
-      lastActivityDays: index === 35 ? 5 : index % 13 === 0 ? 2 : 0,
+      // Keep exceptions sparse and date-specific so the member-history screen
+      // behaves like a real capture timeline instead of repeating one status.
+      lastActivityDays: index === 35 && dayIndex % 6 === 2 ? 5 : index % 13 === 0 && dayIndex % 9 === 4 ? 2 : 0,
       lastSeenAt: date,
       metricsVerified: !sparse,
       verificationNote: `Synthetic member fixture: day ${dayIndex + 1}, row ${index + 1}.`,
