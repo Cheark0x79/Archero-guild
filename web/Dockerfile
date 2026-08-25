@@ -47,6 +47,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY ocr/app/archero_guild ./archero_guild
 COPY --from=builder /app/web/.next/standalone ./web
+COPY --from=builder /app/web/.next/server ./web/.next/server
 COPY --from=builder /app/web/.next/static ./web/.next/static
 COPY --from=builder /app/web/public ./web/public
 COPY --from=builder /app/web/sample-data.js ./web/sample-data.js

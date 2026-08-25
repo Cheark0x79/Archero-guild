@@ -54,6 +54,7 @@ test("production packaging preserves the database and operational safeguards", (
   assert.match(dockerfile, /ARG STRICT_DATABASE=1/);
   assert.match(dockerfile, /ARG TEST_DATA_ADMIN=0/);
   assert.match(dockerfile, /ARG DEPLOYMENT_ENV=production/);
+  assert.match(dockerfile, /COPY --from=builder \/app\/web\/\.next\/server \.\/web\/\.next\/server/);
   assert.doesNotMatch(dockerfile, /tesseract-ocr/);
   assert.match(ocrCompose, /127\.0\.0\.1:\$\{ARCHERO_OCR_UI_PORT:-5190\}:5190/);
   assert.match(ocrCompose, /image: \$\{ARCHERO_OCR_IMAGE:-ghcr\.io\/cheark0x79\/archero-guild-ocr\}:\$\{ARCHERO_OCR_IMAGE_TAG:-latest\}/);
