@@ -48,24 +48,55 @@
 .member-history-row.absence td:last-child { font-weight: 750; }
 .member-history-row.week-start td { border-bottom: 2px solid var(--accent); }
 .member-history-week { display: block; color: var(--accent-dark); font-size: 11px; font-weight: 800; text-transform: uppercase; }
-.member-history-weekday { display: inline-block; margin-inline-start: 7px; color: var(--muted); font-weight: 700; }
+.member-history-date { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
+.member-history-date strong { white-space: nowrap; }
+.member-history-weekday { color: var(--muted); font-weight: 700; white-space: nowrap; }
 
 @media (max-width: 760px) {
   .member-history-toolbar { grid-template-columns: 1fr; }
-  .member-history-table { max-height: calc(100vh - 270px); }
+  .member-history-panel { grid-template-rows: auto auto auto; }
+  .member-history-table { max-height: none; min-height: 0; overflow: visible; }
   .member-history-table table { min-width: 0; }
   .member-history-table thead { display: none; }
   .member-history-table tbody { display: grid; gap: 8px; }
-  .member-history-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
-  .member-history-table td { display: grid; gap: 2px; border: 0; padding: 0; font-size: 13px; }
-  .member-history-table td::before { color: var(--muted); font-size: 11px; font-weight: 750; }
-  .member-history-table td:nth-child(1)::before { content: "Date"; }
-  .member-history-table td:nth-child(2)::before { content: "Power"; }
-  .member-history-table td:nth-child(3)::before { content: "Contribution"; }
-  .member-history-table td:nth-child(4)::before { content: "Boss"; }
-  .member-history-table td:nth-child(5)::before { content: "Activity"; }
-  .member-history-table td:nth-child(6) { grid-column: 1 / -1; }
-  .member-history-table td:nth-child(6)::before { content: "Status"; }
+  .member-history-table tr {
+    display: grid;
+    grid-template-areas:
+      "date power"
+      "contribution boss"
+      "activity activity"
+      "status status";
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .member-history-table td {
+    display: grid;
+    align-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 54px;
+    border: 0;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .member-history-table td[data-label="Date"] { grid-area: date; border-bottom: 1px solid var(--line); }
+  .member-history-table td[data-label="Power"] { grid-area: power; border-bottom: 1px solid var(--line); text-align: right; }
+  .member-history-table td[data-label="Contribution"] { grid-area: contribution; }
+  .member-history-table td[data-label="Boss"] { grid-area: boss; }
+  .member-history-table td[data-label="Activity"] { grid-area: activity; min-height: 48px; }
+  .member-history-table td[data-label="Status"] {
+    grid-area: status;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 46px;
+    background: rgb(12 28 42 / 0.05);
+  }
+  .member-history-table td::before { color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+  .member-history-table td[data-label="Status"] span { font-weight: 800; }
   .member-history-row.week-start td { border-bottom: 0; }
 }
 
@@ -789,13 +820,17 @@ h3 {
   }
 
   .members-table .member-row td {
-    display: grid;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
     min-width: 0;
+    min-height: 72px;
     height: auto;
-    gap: 4px;
+    gap: 6px;
     border: 0;
-    padding: 9px 12px;
-    text-align: left;
+    padding: 11px 12px;
+    text-align: left !important;
   }
 
   .members-table .member-row td::before {
@@ -803,6 +838,7 @@ h3 {
     content: attr(data-label);
     font-size: 10px;
     font-weight: 800;
+    line-height: 1.2;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -810,6 +846,7 @@ h3 {
   .members-table .member-row td:first-child {
     grid-column: 1 / -1;
     border-bottom: 1px solid var(--line);
+    min-height: 0;
     padding-block: 12px;
   }
 
@@ -821,6 +858,8 @@ h3 {
   .members-table .member-row td:nth-child(7) {
     grid-column: 2;
     grid-row: 2;
+    align-items: flex-end;
+    text-align: right !important;
   }
 
   .members-table .member-row td:nth-child(3) {
@@ -843,13 +882,36 @@ h3 {
     grid-row: 4;
   }
 
+  .members-table .member-row td:nth-child(3),
+  .members-table .member-row td:nth-child(4),
+  .members-table .member-row td:nth-child(5),
+  .members-table .member-row td:nth-child(6) {
+    min-height: 84px;
+    border-top: 1px solid var(--line);
+  }
+
+  .members-table .member-row td:nth-child(3),
+  .members-table .member-row td:nth-child(5) {
+    border-inline-end: 1px solid var(--line);
+  }
+
+  .members-table .member-row td:nth-child(3) .value-stack,
+  .members-table .member-row td:nth-child(4) .value-stack,
+  .members-table .member-row td:nth-child(5) .value-stack,
+  .members-table .member-row td:nth-child(6) .value-stack {
+    font-size: 16px;
+    font-weight: 800;
+  }
+
   .members-table .member-row .value-stack {
     justify-content: flex-start;
-    width: auto;
+    width: fit-content;
+    max-width: 100%;
+    flex-wrap: wrap;
   }
 
   .members-table .member-row .status-pill {
-    justify-self: start;
+    align-self: flex-end;
   }
 
   .members-table .table-empty-state {
@@ -4722,6 +4784,8 @@ th.numeric {
   }
 
   .member-history-table {
+    max-height: none;
+    min-height: 0;
     overflow: visible;
     border: 0;
   }
@@ -4739,21 +4803,42 @@ th.numeric {
 
   .member-history-table tr {
     display: grid;
+    grid-template-areas:
+      "date power"
+      "contribution boss"
+      "activity activity"
+      "status status";
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
     overflow: hidden;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--surface-2);
   }
 
   .member-history-table td {
     display: grid;
+    align-content: center;
     gap: 3px;
     min-width: 0;
+    min-height: 54px;
     border: 0;
     background: transparent;
-    padding: 9px 10px;
+    padding: 10px 14px;
     text-align: left !important;
+  }
+
+  .member-history-table td[data-label="Date"] { grid-area: date; border-bottom: 1px solid var(--line); }
+  .member-history-table td[data-label="Power"] { grid-area: power; border-bottom: 1px solid var(--line); text-align: right !important; }
+  .member-history-table td[data-label="Contribution"] { grid-area: contribution; }
+  .member-history-table td[data-label="Boss"] { grid-area: boss; }
+  .member-history-table td[data-label="Activity"] { grid-area: activity; min-height: 48px; }
+  .member-history-table td[data-label="Status"] {
+    grid-area: status;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 46px;
+    background: rgb(12 28 42 / 0.05);
   }
 
   .member-history-table td::before {
@@ -4765,7 +4850,10 @@ th.numeric {
     text-transform: uppercase;
   }
 
-  .member-history-table td[data-label="Activity"],
+  .member-history-table td[data-label="Status"] span {
+    font-weight: 800;
+  }
+
   .member-history-table td[data-label="Source"] {
     display: none;
   }
