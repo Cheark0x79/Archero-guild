@@ -1855,7 +1855,7 @@ function Dashboard({ rules }) {
   const expeditionRank = formatExpeditionRank(guildStats);
   const expeditionRankTrend = weeklyGuildRankTrend(guildStatsHistory, expeditionRank);
   const bossSummary = buildDashboardBossSummary({
-    today: localIsoDate(),
+    today: localIsoDate(new Date(), "UTC"),
     snapshots: dailyBossRawSnapshots,
     participationSnapshots: dailyRawSnapshots,
     definitions: BOSS_ROTATION,
