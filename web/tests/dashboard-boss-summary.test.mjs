@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { localIsoDate } from "../date.js";
 import { buildDashboardBossSummary } from "../lib/dashboard-boss-summary.js";
 
 const bosses = [
@@ -53,4 +54,31 @@ test("dashboard boss summary falls back to the latest captured result and its ro
   assert.equal(summary.participants, 2);
   assert.equal(summary.resultCaptured, true);
   assert.equal(summary.resultIsYesterday, false);
+});
+
+test("dashboard boss summary keeps the rotation and yesterday label aligned across UTC midnight", () => {
+  const beforeMidnight = new Date("2026-08-09T23:59:00Z");
+  const snapshots = [
+    { date: "2026-08-08", bossKey: "sunday", rows: [] },
+    { date: "2026-08-09", bossKey: "sunday", rows: [] },
+  ];
+  assert.equal(localIsoDate(beforeMidnight, "Europe/Paris"), "2026-08-10");
+  const beforeUtcMidnight = buildDashboardBossSummary({
+    today: localIsoDate(beforeMidnight, "UTC"),
+    definitions: bosses,
+    snapshots,
+  });
+  const afterUtcMidnight = buildDashboardBossSummary({
+    today: localIsoDate(new Date("2026-08-10T00:01:00Z"), "UTC"),
+    definitions: bosses,
+    snapshots,
+  });
+
+  assert.equal(beforeUtcMidnight.todayBoss.key, "sunday");
+  assert.equal(beforeUtcMidnight.resultDate, "2026-08-08");
+  assert.equal(beforeUtcMidnight.resultIsYesterday, true);
+  assert.equal(afterUtcMidnight.todayBoss.key, "monday");
+  assert.equal(afterUtcMidnight.resultDate, "2026-08-09");
+  assert.equal(afterUtcMidnight.resultIsYesterday, true);
+  assert.deepEqual(snapshots.map((snapshot) => snapshot.date), ["2026-08-08", "2026-08-09"]);
 });
