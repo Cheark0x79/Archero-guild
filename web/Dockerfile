@@ -38,6 +38,7 @@ LABEL org.opencontainers.image.title="Archero Guild Web/API" \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
+      perl-base \
       python3 \
       python3-venv \
     && python3 -m venv /opt/archero-venv \
