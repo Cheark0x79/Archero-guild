@@ -160,6 +160,109 @@ class DatabaseContractTests(unittest.TestCase):
                 )
             connection.commit()
 
+    def test_daily_editor_derived_text_and_rank_swaps(self) -> None:
+        from archero_guild.storage.guild_stats import update_snapshot
+        try:
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                connection.execute("UPDATE member_metrics SET last_activity_days = 7, raw_payload = '{\"activity_text\":\"7 days ago\",\"source\":\"synthetic\"}'::jsonb WHERE snapshot_id IN (SELECT id FROM guild_snapshots WHERE capture_date = '2026-07-28')")
+                first = connection.execute("SELECT id FROM boss_daily_results WHERE capture_date = '2026-07-28'").fetchone()[0]
+                second = connection.execute("INSERT INTO boss_daily_results(capture_date,boss_key,player_name,boss_rank,damage_value,damage_text) VALUES ('2026-07-28','fire-dragon','Synthetic Bob',2,1000,'1K') RETURNING id").fetchone()[0]
+            edit = {"date": "2026-07-28", "level": 7, "memberCount": 1, "memberCapacity": 42,
+                    "totalPower": 89760000, "xpCurrent": None, "xpRequired": None,
+                    "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "I",
+                    "memberEdits": [{"playerId": "integration-001", "power": 1300, "contribution7d": 700,
+                                     "bossAttacks": 2, "lastActivityDays": 7}],
+                    "bossEdits": [{"resultId": first, "bossDamageToday": 1234, "bossRank": 2},
+                                  {"resultId": second, "bossDamageToday": 1000, "bossRank": 1}]}
+            update_snapshot(DATABASE_URL, edit)
+            payload = export_dashboard_payload(DATABASE_URL)
+            self.assertEqual(payload["memberSnapshots"][0]["activityText"], "7 days ago")
+            bosses = {r["resultId"]: r for r in payload["dailyBossRawSnapshots"][0]["rows"]}
+            self.assertEqual((bosses[first]["bossRank"], bosses[second]["bossRank"]), (2, 1))
+            self.assertEqual(bosses[first]["damageText"], "1.23K")
+            edit["memberEdits"][0]["lastActivityDays"] = 0
+            edit["bossEdits"][0]["bossDamageToday"] = 2_000_000
+            update_snapshot(DATABASE_URL, edit)
+            payload = export_dashboard_payload(DATABASE_URL)
+            self.assertIsNone(payload["memberSnapshots"][0]["activityText"])
+            self.assertEqual(payload["memberSnapshots"][0]["lastActivityDays"], 0)
+            bosses = {r["resultId"]: r for r in payload["dailyBossRawSnapshots"][0]["rows"]}
+            self.assertEqual(bosses[first]["bossDamageToday"], 2_000_000)
+            self.assertIsNone(bosses[first]["damageText"])
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                before, after = connection.execute("SELECT previous_payload,updated_payload FROM daily_snapshot_row_edits WHERE entity_type='member' ORDER BY id DESC LIMIT 1").fetchone()
+                self.assertEqual(before["raw_payload"]["activity_text"], "7 days ago")
+                self.assertNotIn("activity_text", after["raw_payload"])
+                self.assertEqual(after["raw_payload"]["source"], "synthetic")
+                before, after = connection.execute("SELECT previous_payload,updated_payload FROM daily_snapshot_row_edits WHERE entity_type='boss' AND entity_key=%s ORDER BY id DESC LIMIT 1", (str(first),)).fetchone()
+                self.assertEqual(before["damage_text"], "1.23K")
+                self.assertIsNone(after["damage_text"])
+            edit["bossEdits"][1]["bossRank"] = 2
+            with self.assertRaisesRegex(ValueError, "duplicate.*rank"):
+                update_snapshot(DATABASE_URL, edit)
+            payload = export_dashboard_payload(DATABASE_URL)
+            self.assertEqual([r["bossRank"] for r in payload["dailyBossRawSnapshots"][0]["rows"]], [1, 2])
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM guild_stat_snapshot_edits").fetchone()[0], 2)
+                self.assertEqual(connection.execute("SELECT count(*) FROM daily_snapshot_row_edits").fetchone()[0], 6)
+            # A null correction must also clear imported text, not merely keep already-cleared text absent.
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                connection.execute("UPDATE member_metrics SET last_activity_days=7, raw_payload=jsonb_set(raw_payload,'{activity_text}','\"7 days ago\"') WHERE snapshot_id IN (SELECT id FROM guild_snapshots WHERE capture_date='2026-07-28')")
+                connection.execute("UPDATE boss_daily_results SET damage_text='2M' WHERE id=%s", (first,))
+            edit["bossEdits"][1]["bossRank"] = 1
+            edit["bossEdits"][0]["bossDamageToday"] = None
+            edit["memberEdits"][0]["lastActivityDays"] = None
+            update_snapshot(DATABASE_URL, edit)
+            payload = export_dashboard_payload(DATABASE_URL)
+            self.assertIsNone(payload["memberSnapshots"][0]["activityText"])
+            self.assertIsNone(payload["memberSnapshots"][0]["lastActivityDays"])
+            bosses = {r["resultId"]: r for r in payload["dailyBossRawSnapshots"][0]["rows"]}
+            self.assertIsNone(bosses[first]["bossDamageToday"])
+            self.assertIsNone(bosses[first]["damageText"])
+        finally:
+            self._seed_database()
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                connection.execute("TRUNCATE daily_snapshot_row_edits")
+
+    def test_daily_editor_updates_exports_and_audits_atomically(self) -> None:
+        from archero_guild.storage.guild_stats import update_snapshot
+        try:
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                connection.execute("UPDATE member_metrics SET boss_attacks = NULL WHERE snapshot_id IN (SELECT id FROM guild_snapshots WHERE capture_date = '2026-07-28')")
+                result_id = connection.execute("SELECT id FROM boss_daily_results WHERE capture_date = '2026-07-28'").fetchone()[0]
+            edit = {"date": "2026-07-28", "reason": "Synthetic correction verified",
+                    "level": 7, "memberCount": 1, "memberCapacity": 42, "totalPower": 89760000,
+                    "xpCurrent": None, "xpRequired": None, "expeditionPoints": 826,
+                    "expeditionName": "Firebound Soul", "expeditionRank": "I",
+                    "memberEdits": [{"playerId": "integration-001", "power": 1300,
+                                     "contribution7d": 700, "bossAttacks": None, "lastActivityDays": 0}],
+                    "bossEdits": [{"resultId": result_id, "bossDamageToday": 2345, "bossRank": 1}]}
+            update_snapshot(DATABASE_URL, edit)
+            payload = export_dashboard_payload(DATABASE_URL)
+            self.assertEqual(payload["captures"]["guildStats"]["expeditionPoints"], 826)
+            self.assertEqual(payload["memberSnapshots"][0]["power"], 1300)
+            self.assertIsNone(payload["memberSnapshots"][0]["bossAttacks"])
+            self.assertEqual(payload["dailyBossRawSnapshots"][0]["rows"][0]["bossDamageToday"], 2345)
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                previous, updated, reason = connection.execute("SELECT previous_payload, updated_payload, reason FROM guild_stat_snapshot_edits ORDER BY id DESC LIMIT 1").fetchone()
+                self.assertEqual(previous["expeditionPoints"], 825)
+                self.assertEqual(updated["expeditionPoints"], 826)
+                self.assertEqual(reason, "Synthetic correction verified")
+                self.assertEqual(connection.execute("SELECT count(*) FROM daily_snapshot_row_edits").fetchone()[0], 2)
+            edit["expeditionPoints"] = 999
+            edit["bossEdits"][0]["resultId"] = result_id + 100000
+            with self.assertRaisesRegex(ValueError, "not captured"):
+                update_snapshot(DATABASE_URL, edit)
+            self.assertEqual(export_dashboard_payload(DATABASE_URL)["captures"]["guildStats"]["expeditionPoints"], 826)
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM guild_stat_snapshot_edits").fetchone()[0], 1)
+                self.assertEqual(connection.execute("SELECT count(*) FROM daily_snapshot_row_edits").fetchone()[0], 2)
+        finally:
+            # Synthetic test database only; restore fixtures for other contract checks.
+            self._seed_database()
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                connection.execute("TRUNCATE daily_snapshot_row_edits")
+
     def test_real_database_export_contains_only_seeded_live_data(self) -> None:
         payload = export_dashboard_payload(DATABASE_URL)
 

@@ -70,8 +70,8 @@ def _guild_stats_history(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
         SELECT capture_date, guild_name, guild_id, guild_level, member_count,
-               member_capacity, total_power, donations_value, guild_rank,
-               xp_current, xp_required, raw_payload
+               member_capacity, total_power, expedition_points, expedition_name,
+               expedition_rank, donations_value, guild_rank, xp_current, xp_required, raw_payload
         FROM guild_stat_snapshots
         ORDER BY capture_date
         """
@@ -91,9 +91,9 @@ def _guild_stats_history(connection) -> list[dict[str, Any]]:
             "rank": row.get("guild_rank"),
             "xpCurrent": row.get("xp_current"),
             "xpRequired": row.get("xp_required"),
-            "expeditionPoints": raw_payload.get("expeditionPoints"),
-            "expeditionName": raw_payload.get("expeditionName"),
-            "expeditionRank": raw_payload.get("expeditionRank"),
+            "expeditionPoints": row["expedition_points"] if row.get("expedition_points") is not None else raw_payload.get("expeditionPoints"),
+            "expeditionName": row["expedition_name"] if row.get("expedition_name") is not None else raw_payload.get("expeditionName"),
+            "expeditionRank": row["expedition_rank"] if row.get("expedition_rank") is not None else raw_payload.get("expeditionRank"),
         })
     return history
 
@@ -380,10 +380,13 @@ def _week_start(value: Any) -> date | None:
 def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
     rows = connection.execute(
         """
-        SELECT capture_date, boss_key, boss_name, weekday, user_id, player_name,
-               boss_rank, damage_value, damage_text, row_area, row_index
-        FROM v_boss_daily_leaderboard
-        ORDER BY capture_date, boss_rank NULLS LAST, damage_value DESC
+        SELECT r.id, r.capture_date, r.boss_key, b.name AS boss_name, b.weekday, r.user_id,
+               COALESCE(gm.current_name, r.player_name) AS player_name,
+               r.boss_rank, r.damage_value, r.damage_text, r.row_area, r.row_index
+        FROM boss_daily_results r
+        JOIN boss_definitions b ON b.boss_key = r.boss_key
+        LEFT JOIN guild_members gm ON gm.user_id = r.user_id
+        ORDER BY r.capture_date, r.boss_rank NULLS LAST, r.damage_value DESC
         """
     ).fetchall()
     by_boss_day: dict[tuple[str, str], dict[str, Any]] = {}
@@ -405,6 +408,8 @@ def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
         )
         group["rows"].append(
             {
+                "resultId": row["id"],
+                "bossKey": row["boss_key"],
                 "source": f"{row['boss_key']} rank {row['boss_rank'] or row['row_index']}",
                 "rowIndex": row["row_index"],
                 "area": row["row_area"],
