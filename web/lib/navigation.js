@@ -6,14 +6,30 @@ export const publicNavItems = [
   ["boss", "Boss", "/boss"],
 ];
 
-const adminNavItems = [
-  ["admin", "Overview", "/admin"],
-  ["admin-members", "Member management", "/admin/members"],
-  ["member-history", "Member history", "/admin/member-history"],
-  ["notifications", "Notifications", "/admin/notifications"],
-  ["settings", "Rules", "/admin/rules"],
-  ["api-docs", "API reference", "/api-docs"],
+const adminNavGroups = [
+  { id: "manage-members", label: "Manage members · Admin", items: [
+    ["admin", "Overview", "/admin"],
+    ["admin-members", "Member management", "/admin/members"],
+    ["member-history", "Member history", "/admin/member-history"],
+  ] },
+  { id: "configure-guild", label: "Configure guild · Admin", items: [
+    ["notifications", "Notifications", "/admin/notifications"],
+    ["settings", "Rules", "/admin/rules"],
+  ] },
+  { id: "reference", label: "Reference · Admin", items: [
+    ["api-docs", "API reference", "/api-docs"],
+  ] },
 ];
+const adminNavItems = adminNavGroups.flatMap(({ items }) => items);
+
+export function navigationGroupsForRole(role, options = {}) {
+  const { primary, test } = navigationItemsForRole(role, options);
+  return [
+    { id: "guild", label: "Guild", items: primary },
+    ...(role === ADMIN_ROLE ? adminNavGroups : []),
+    ...(test.length ? [{ id: "development", label: "Development · Admin", items: test }] : []),
+  ];
+}
 
 export function navigationItemsForRole(role, { testToolsEnabled = false } = {}) {
   if (role !== ADMIN_ROLE) return { primary: publicNavItems, admin: [], test: [] };

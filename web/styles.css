@@ -156,6 +156,15 @@ button {
   flex-direction: column;
   gap: 18px;
   min-height: 0;
+  overflow-y: auto;
+}
+
+.sidebar-access-note {
+  margin: 0;
+  padding: 0 10px;
+  color: oklch(76% 0.025 250);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .sidebar-menu-button {
@@ -4406,15 +4415,7 @@ th.numeric {
   }
 }
 
-@media (max-width: 700px) {
-  .chart .chart-svg-wide {
-    display: none;
-  }
-
-  .chart .chart-svg-compact {
-    display: block;
-  }
-
+@media (max-width: 980px) {
   .sidebar {
     position: sticky;
     top: 0;
@@ -4443,6 +4444,17 @@ th.numeric {
 
   .sidebar.mobile-open .sidebar-navigation {
     display: flex;
+  }
+
+}
+
+@media (max-width: 700px) {
+  .chart .chart-svg-wide {
+    display: none;
+  }
+
+  .chart .chart-svg-compact {
+    display: block;
   }
 
   .brand-mark {
