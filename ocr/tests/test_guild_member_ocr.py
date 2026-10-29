@@ -8,6 +8,8 @@ from archero_guild.pipeline.guild_member_ocr import (
     _match_roster_name,
     _parse_visible_activity_days,
     _read_donation,
+    _read_power,
+    _match_by_power,
     _parse_role,
     _raw_name_has_signal,
     _select_observed_name,
@@ -27,6 +29,25 @@ class GuildMemberOcrTests(unittest.TestCase):
     def test_parse_power_reads_game_power_units(self) -> None:
         self.assertEqual(parse_power("481.41K"), 481410)
         self.assertEqual(parse_power("5.01M"), 5_010_000)
+
+    def test_member_power_has_no_magnitude_limit(self) -> None:
+        cases = [("28.29M", 28_290_000), ("1234567890.123456M", 1_234_567_890_123_456), ("0.001K", 1), ("1" + "0" * 303 + "M", 10**309)]
+        image = SimpleNamespace(crop=lambda box: box)
+        row = SimpleNamespace(bounds=Rect(0, 0, 1000, 100))
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse_power(text), expected)
+                with patch("archero_guild.pipeline.guild_member_ocr._ocr_text", return_value=text):
+                    self.assertEqual(_read_power(image, row, object()), expected)
+                roster = [RosterEntry("synthetic", "Synthetic", power_hint=expected)]
+                self.assertEqual(_match_by_power(expected, roster, set()), roster[0])
+                self.assertIsNone(_match_by_power(expected, roster, {"synthetic"}))
+                self.assertEqual(parse_power(format_game_power(expected)), expected)
+
+    def test_invalid_compact_member_power_is_not_accepted(self) -> None:
+        for text in (None, "9" * 5000 + "M", "", "garbage", "0M", "-2M", "- 2M", "1.2.3M", "2Mbad", "0.0000001M"):
+            with self.subTest(text=text):
+                self.assertIsNone(parse_power(text))
 
     def test_select_power_candidate_prefers_repeated_ocr_value_over_average(self) -> None:
         candidates = [481410, 481410, 451410, 481410]

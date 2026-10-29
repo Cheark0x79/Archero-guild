@@ -854,17 +854,13 @@ def _js_string(value: object) -> str:
 
 def _validated_power(candidate: int | None, previous: object) -> int:
     previous_value = int(previous)
-    if candidate is None:
-        return previous_value
-    if candidate < 10_000 or candidate > 20_000_000:
-        return previous_value
-    if previous_value and not (previous_value * 0.75 <= candidate <= previous_value * 1.75):
+    if type(candidate) is not int or candidate <= 0:
         return previous_value
     return candidate
 
 
 def _nullable_valid_power(candidate: int | None) -> int | str:
-    if candidate is None or candidate < 10_000 or candidate > 20_000_000:
+    if type(candidate) is not int or candidate <= 0:
         return "null"
     return candidate
 

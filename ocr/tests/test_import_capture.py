@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from archero_guild.import_capture import (
     ImportedScreenshot,
+    ImportReport,
+    update_sample_data,
     ImportValidationError,
     _upsert_daily_raw_snapshots,
     _unique_boss_rankings,
@@ -71,6 +73,20 @@ export const dailyBossRawSnapshots = [
 
 
 class ImportCaptureTests(unittest.TestCase):
+    def test_all_legacy_snapshot_paths_preserve_positive_integer_power(self) -> None:
+        for power in (28_290_000, 1_234_567_890_123_456, 1, None, 0, -1, 1.5, True, "28.29M"):
+            with self.subTest(power=power), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "sample-data.js"
+                path.write_text(SAMPLE_DATA)
+                metric = ExtractedMemberMetrics("900000110", "Synthetic", "member", power, 100, 1, 0, "synthetic.png row 0", 1, "Synthetic")
+                report = ImportReport("2026-07-29", "2026-07-29T12:00:00Z", directory, [], [], 1, 0, 1, "", True)
+                update_sample_data(path, report, [metric], [metric], "2026-07-28", {"2026-07-29": [metric]})
+                content = path.read_text()
+                valid = type(power) is int and power > 0
+                self.assertIn(f'screenshotMember("900000110", "member", {power if valid else 1300000},', content)
+                for prefix in ("previousSnapshotMember", "rawSnapshotMember"):
+                    self.assertIn(f'{prefix}("900000110", "member", {power if valid else "null"},', content)
+
     def test_capture_paths_reads_legacy_and_uploaded_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             day_dir = Path(directory) / "2026-07-16"
