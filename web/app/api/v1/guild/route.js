@@ -5,6 +5,6 @@ import { apiSuccess, requireApiKey } from "../_lib/responses.js";
 export async function GET(request) {
   const unauthorized = requireApiKey(request);
   if (unauthorized) return unauthorized;
-  const payload = await loadDashboardData();
+  const payload = await loadDashboardData({ includeAttendance: true });
   return apiSuccess(guildSummaryFromData(payload.data), payload);
 }

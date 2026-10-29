@@ -5629,13 +5629,18 @@ th.numeric {
 }
 
 .admin-member-context {
-  grid-template-columns: repeat(2, max-content);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 0.35rem;
 }
 
 .admin-member-context small {
   grid-column: 1 / -1;
+}
+
+.admin-member-context .attendance-detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .admin-member-context em {
