@@ -6904,3 +6904,10 @@ th.numeric {
     justify-content: flex-start;
   }
 }
+
+.mobile-chart-values { display: none; }
+@media (max-width: 600px) {
+  .mobile-chart-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; font-size: 14px; }
+  .mobile-chart-values div { display: flex; justify-content: space-between; gap: 8px; }
+  .mobile-chart-values dd { margin: 0; font-weight: 700; }
+}

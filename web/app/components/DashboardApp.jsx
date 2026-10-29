@@ -2985,17 +2985,7 @@ function MemberDetail({
       });
       const payload = await response.json();
       if (!response.ok || !payload?.url) throw new Error(payload?.error || "Share link creation failed.");
-      try {
-        await navigator.clipboard.writeText(payload.url);
-        setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
-      } catch {
-        setShareState({
-          creating: false,
-          url: payload.url,
-          error: "Automatic copy was blocked. Copy the link manually below.",
-          notice: "",
-        });
-      }
+      setShareState({ creating: false, url: payload.url, imageUrl: payload.imageUrl, expiresAt: payload.expiresAt, error: "", notice: "Temporary share created." });
     } catch (error) {
       setShareState({
         creating: false,
@@ -3010,7 +3000,7 @@ function MemberDetail({
     if (!shareState.url) return;
     try {
       await navigator.clipboard.writeText(shareState.url);
-      setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
+      setShareState((current) => ({ ...current, error: "", notice: "Share link copied." }));
     } catch {
       setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the link manually." }));
     }
@@ -3026,7 +3016,7 @@ function MemberDetail({
           <div className="detail-action-group">
             {member.playerId ? (
               <button className="secondary-button" type="button" onClick={createShareLink} disabled={shareState.creating}>
-                {shareState.creating ? "Creating link…" : "Create and copy link"}
+                {shareState.creating ? "Creating link…" : "Create temporary share"}
               </button>
             ) : null}
             <StatusPill label={evaluation.status} severity={evaluation.severity} />
@@ -3037,8 +3027,17 @@ function MemberDetail({
       {shareState.url ? (
         <div className="share-link-result" role="alert">
           <div>
-            <strong>Copy the temporary link</strong>
+            <strong>Temporary share · expires {new Date(shareState.expiresAt).toLocaleString()}</strong>
+            <span>The profile stays live. The PNG represents this version; create a new share after data changes. Revocation requires an administrator to rotate the share signing secret for all links.</span>
             <span>{shareState.error}</span>
+          </div>
+          <div className="share-link-copy">
+            <input aria-label="Direct PNG share link" readOnly value={shareState.imageUrl ?? ""} onFocus={(event) => event.currentTarget.select()} />
+            <a className="secondary-button" href={shareState.imageUrl} target="_blank" rel="noreferrer">Open PNG</a>
+            <button className="secondary-button" type="button" onClick={async () => {
+              try { await navigator.clipboard.writeText(shareState.imageUrl); setShareState((current) => ({ ...current, notice: "PNG link copied.", error: "" })); }
+              catch { setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the PNG link manually." })); }
+            }}>Copy PNG link</button>
           </div>
           <div className="share-link-copy">
             <input aria-label="Temporary member share link" readOnly value={shareState.url} onFocus={(event) => event.currentTarget.select()} />
@@ -3069,7 +3068,7 @@ function MemberDetail({
           </div>
         </section>
         <section className="panel">
-          <PanelHeading title="Power progression" subtitle="Up to seven evenly spaced captured values" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
+          <PanelHeading title="Power progression" subtitle="Up to seven evenly sampled observations, including endpoints; no averaging" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.progression)} dataKey="power" formatter={formatPowerDetail} emptyText="No power history captured yet." />
         </section>
         <section className="panel">
@@ -3486,6 +3485,9 @@ function HistoryChart({ rows, dataKey, formatter, emptyText }) {
           {rows.at(-1)?.date ?? latest.date}
         </text>
       </svg>
+      <dl className="mobile-chart-values" aria-label="Chart observations">
+        {points.map((point) => <div key={point.date}><dt>{formatShortDate(point.date)}</dt><dd>{formatter(point.value)}</dd></div>)}
+      </dl>
     </div>
   );
 }
