@@ -104,8 +104,8 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
         _ocr_text(_relative_crop(image, row.bounds, 0.20, 0.12, 0.68, 0.40), pytesseract),
     ]
     match = _match_roster_name(raw_names, roster)
-    multilingual_observed_name: str | None = None
-    if match is None and any(re.search(r"[\u0400-\u04ff]", entry.name) for entry in roster):
+    multilingual_observed_names: list[str] = []
+    if match is None and any(re.search(r"[\u0400-\u04ff]", entry.name) for entry in roster) and _ocr_language_is_available(pytesseract, "rus"):
         russian_name = _ocr_text(primary_name_crop, pytesseract, language="rus")
         if russian_name:
             russian_roster = [entry for entry in roster if re.search(r"[\u0400-\u04ff]", entry.name)]
@@ -113,14 +113,23 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     if match is None and _should_try_cjk_ocr(raw_names, roster):
         chinese_roster = [entry for entry in roster if _contains_cjk(entry.name)]
         for language in ("chi_tra", "chi_sim"):
+            if not _ocr_language_is_available(pytesseract, language):
+                continue
             chinese_name = _clean_observed_name(_ocr_text(primary_name_crop, pytesseract, language=language))
             if not _contains_cjk(chinese_name):
                 continue
             match = _match_roster_name([chinese_name], chinese_roster)
             if match is not None:
                 break
-            if multilingual_observed_name is None:
-                multilingual_observed_name = chinese_name
+            if chinese_name not in multilingual_observed_names:
+                multilingual_observed_names.append(chinese_name)
+    if match is None and _should_try_hangul_ocr(roster) and _ocr_language_is_available(pytesseract, "kor"):
+        korean_roster = [entry for entry in roster if _contains_hangul(entry.name)]
+        korean_name = _clean_observed_name(_ocr_text(primary_name_crop, pytesseract, language="kor"))
+        if _contains_hangul(korean_name):
+            match = _match_roster_name([korean_name], korean_roster)
+            if korean_name not in multilingual_observed_names:
+                multilingual_observed_names.append(korean_name)
     parsed_power = _read_power(image, row, pytesseract)
     status_text = _ocr_text(_relative_crop(image, row.bounds, 0.84, 0.04, 0.14, 0.34), pytesseract)
     parsed_role, role_text = _read_role(image, row, pytesseract)
@@ -129,8 +138,8 @@ def _extract_row_metrics(image: object, row: MemberRow, source_name: str, roster
     parsed_activity = _parse_visible_activity_days(status_text)
 
     if match is None:
-        observed_name = multilingual_observed_name or _select_observed_name(raw_names)
-        raw_name_candidates = [multilingual_observed_name, *raw_names] if multilingual_observed_name else raw_names
+        observed_name = multilingual_observed_names[-1] if multilingual_observed_names else _select_observed_name(raw_names)
+        raw_name_candidates = [*multilingual_observed_names, *raw_names]
         return ExtractedMemberMetrics(
             player_id="",
             name=observed_name,
@@ -422,7 +431,7 @@ def _match_roster_name(raw_names: list[str], roster: list[RosterEntry]) -> tuple
 
 
 def _normalize_match_text(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", value.lower())
+    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]+", "", value.lower())
     return normalized.translate(str.maketrans({"1": "l", "i": "l", "o": "0"}))
 
 
@@ -473,13 +482,17 @@ def _clean_observed_name(value: str) -> str:
     cleaned = " ".join(str(value or "").split())
     cleaned = re.sub(r"^[\s'\"`´‘’“”|\\/:;,.+*?_-]*(?:guild\s*members?|members?|bers|ers|pers)\b[\s'\"`´‘’“”|\\/:;,.+*?_-]*", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.replace("|", "").replace("\\", "")
-    cleaned = re.sub(r"^[^\w\u0400-\u04ff\u4e00-\u9fff]+", "", cleaned, flags=re.UNICODE)
-    cleaned = re.sub(r"[^\w\u0400-\u04ff\u4e00-\u9fff]+$", "", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"^[^\w\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]+", "", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"[^\w\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]+$", "", cleaned, flags=re.UNICODE)
     return " ".join(cleaned.split())
 
 
 def _contains_cjk(value: str) -> bool:
     return bool(re.search(r"[\u4e00-\u9fff]", value))
+
+
+def _contains_hangul(value: str) -> bool:
+    return bool(re.search(r"[\uac00-\ud7af]", value))
 
 
 def _should_try_cjk_ocr(raw_names: list[str], roster: list[RosterEntry]) -> bool:
@@ -490,9 +503,30 @@ def _should_try_cjk_ocr(raw_names: list[str], roster: list[RosterEntry]) -> bool
     return any(_contains_cjk(entry.name) for entry in roster)
 
 
+def _should_try_hangul_ocr(roster: list[RosterEntry]) -> bool:
+    return any(_contains_hangul(entry.name) for entry in roster)
+
+
+def _ocr_language_is_available(pytesseract: object, language: str) -> bool:
+    get_languages = getattr(pytesseract, "get_languages", None)
+    if not callable(get_languages):
+        return True
+    try:
+        return language in set(get_languages(config=""))
+    except Exception:
+        return True
+
+
 def _raw_name_has_signal(value: str) -> bool:
     return any(
-        candidates and len(candidates[-1]) >= 3
+        candidates
+        and (
+            len(candidates[-1]) >= 3
+            or (
+                len(candidates[-1]) >= 2
+                and (_contains_cjk(candidates[-1]) or _contains_hangul(candidates[-1]))
+            )
+        )
         for part in value.split("|")
         if (candidates := _normalized_name_candidates(part))
     )

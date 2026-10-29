@@ -173,7 +173,7 @@ def _read_podium_name(image: object, pytesseract: object) -> str:
 
 
 def _ocr_text(image: object, pytesseract: object, *, whitelist: str | None = None) -> str:
-    return _best_text(_ocr_variants(image, pytesseract, whitelist=whitelist, languages=("eng", "eng+chi_tra", "eng+chi_sim")))
+    return _best_text(_ocr_variants(image, pytesseract, whitelist=whitelist, languages=("eng", "eng+chi_tra", "eng+chi_sim", "eng+kor")))
 
 
 def _best_text(values: list[str]) -> str:
@@ -200,6 +200,17 @@ def _best_name_text(values: Sequence[str]) -> str:
         ),
         reverse=True,
     )[0]
+
+
+def _review_raw_name(candidates: Sequence[str], fallback: str) -> str:
+    # Do not hide recognized Han/Hangul behind more frequent Latin OCR noise
+    # when no identity met the confidence threshold. Keep it for human review.
+    unicode_names = list(dict.fromkeys(
+        cleaned for value in candidates
+        if (cleaned := _clean_raw_name(value))
+        and re.search(r"[\u4e00-\u9fff\uac00-\ud7af]", cleaned)
+    ))
+    return " | ".join(unicode_names) if unicode_names else fallback
 
 
 def _ocr_variants(
@@ -291,16 +302,17 @@ def _match_roster_name(raw_name: str | Sequence[str], roster: Sequence[object]) 
 
 def _useful_raw_name(raw_name: str) -> str | None:
     cleaned = _clean_raw_name(raw_name)
-    if _name_signal_length(cleaned) < 3:
+    signal = re.sub(r"\s+", "", cleaned)
+    if _name_signal_length(cleaned) < 3 and re.fullmatch(r"[\u4e00-\u9fff\uac00-\ud7af]{2}", signal) is None:
         return None
-    if re.fullmatch(r"[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff][A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff ]+[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]", cleaned) is None:
+    if _name_signal_length(cleaned) >= 3 and re.fullmatch(r"[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af][A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af ]+[A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]", cleaned) is None:
         return None
     return cleaned
 
 
 def _clean_raw_name(raw_name: str) -> str:
     cleaned = " ".join(raw_name.strip().split())
-    allowed = r"A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff"
+    allowed = r"A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af"
     cleaned = re.sub(rf"^[^{allowed}]+", "", cleaned)
     cleaned = re.sub(rf"[^{allowed}]+$", "", cleaned)
     tokens = re.findall(rf"[{allowed}]+", cleaned)
@@ -351,12 +363,12 @@ def _collapse_repeated_characters(value: str) -> str:
 
 
 def _normalize_match_text(value: str | None) -> str:
-    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", (value or "").lower())
+    normalized = re.sub(r"[^a-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]+", "", (value or "").lower())
     return normalized.translate(str.maketrans({"1": "l", "i": "l", "o": "0"}))
 
 
 def _name_signal_length(value: str) -> int:
-    return len(re.sub(r"[^A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff]+", "", value))
+    return len(re.sub(r"[^A-Za-z0-9\u0400-\u04ff\u4e00-\u9fff\uac00-\ud7af]+", "", value))
 
 
 def _roster_name(entry: object | tuple[object, str] | None) -> str | None:
@@ -464,17 +476,18 @@ def _extract_list_ranking(
     raw_name_candidates = _boss_name_candidates(image, row, pytesseract, languages=("eng",))
     match = _match_roster_name(raw_name_candidates, roster)
     if match is None:
-        raw_name_candidates.extend(
-            _boss_name_candidates(image, row, pytesseract, languages=("chi_tra", "chi_sim", "rus", "eng+chi_tra", "eng+chi_sim", "eng+rus"))
-        )
-        match = _match_roster_name(raw_name_candidates, roster)
+        for language in _roster_ocr_languages(roster, pytesseract):
+            raw_name_candidates.extend(_boss_name_candidates(image, row, pytesseract, languages=(language,)))
+            match = _match_roster_name(raw_name_candidates, roster)
+            if match is not None:
+                break
     raw_name = _best_name_text(raw_name_candidates)
     damage_text = _read_boss_damage_text(_crop(image, row.fields.damage), pytesseract)
     if previous_rank is not None:
         rank = previous_rank + 1
     else:
         rank = _read_boss_rank(_crop(image, row.fields.rank), pytesseract)
-    matched_raw_name = (_clean_raw_name(match[1]) if match is not None else "") or raw_name
+    matched_raw_name = _clean_raw_name(match[1]) if match is not None else _review_raw_name(raw_name_candidates, raw_name)
     return ExtractedBossRanking(
         source=f"{source_name} row {row.index}",
         row_index=row.index,
@@ -732,6 +745,19 @@ def _supported_ocr_languages(pytesseract: object, requested: tuple[str, ...]) ->
     return ("eng",) if "eng" in available else ()
 
 
+def _roster_ocr_languages(roster: Sequence[object], pytesseract: object) -> tuple[str, ...]:
+    names = " ".join(_roster_name(entry) or "" for entry in roster)
+    requested: list[str] = []
+    if re.search(r"[\u4e00-\u9fff]", names):
+        requested.extend(("chi_tra", "chi_sim"))
+    if re.search(r"[\uac00-\ud7af]", names):
+        requested.append("kor")
+    if re.search(r"[\u0400-\u04ff]", names):
+        requested.append("rus")
+    # The shared guard can fall back to English; that stage already ran.
+    return tuple(language for language in _supported_ocr_languages(pytesseract, tuple(requested)) if language in requested)
+
+
 def boss_podium_regions(width: int, height: int, *, list_top: int | None = None) -> list[BossPodiumRegion]:
     scale = width / 1080
     anchor = list_top if list_top is not None else round(height * 0.39)
@@ -784,10 +810,24 @@ def _extract_podium_rankings(
         raw_name_candidates: list[str] = []
         for name_rect in region.name_candidates:
             raw_name_candidates.extend(_ocr_variants(_crop(image, name_rect), pytesseract, psm_values=(7, 8, 13), high_threshold=True))
+        match = _match_roster_name(raw_name_candidates, roster)
+        if match is None:
+            languages = _roster_ocr_languages(roster, pytesseract)
+            # Try each relevant language on the primary crop first. Alternate
+            # crops are a bounded second chance, not a variant/PSM cross-product.
+            for name_rect in region.name_candidates:
+                for language in languages:
+                    raw_name_candidates.extend(_ocr_name_variants(
+                        _crop(image, name_rect), pytesseract, languages=(language,),
+                    ))
+                    match = _match_roster_name(raw_name_candidates, roster)
+                    if match is not None:
+                        break
+                if match is not None:
+                    break
         raw_name = _best_name_text(raw_name_candidates)
         damage_text = _read_boss_damage_text(_crop(image, region.damage), pytesseract)
-        match = _match_roster_name(raw_name_candidates, roster)
-        matched_raw_name = (_clean_raw_name(match[1]) if match is not None else "") or raw_name
+        matched_raw_name = _clean_raw_name(match[1]) if match is not None else _review_raw_name(raw_name_candidates, raw_name)
         rankings.append(
             ExtractedBossRanking(
                 source=f"{source_name} podium {region.rank}",

@@ -5,6 +5,7 @@ from unittest.mock import patch
 from archero_guild.pipeline.guild_member_ocr import (
     RosterEntry,
     _clean_observed_name,
+    _extract_row_metrics,
     _match_roster_name,
     _parse_visible_activity_days,
     _read_donation,
@@ -15,6 +16,7 @@ from archero_guild.pipeline.guild_member_ocr import (
     _select_integer_candidate,
     _select_power_candidate,
     _select_power_cluster,
+    _should_try_hangul_ocr,
     format_activity_text,
     format_game_power,
     format_role_text,
@@ -119,12 +121,132 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match[0].player_id, "900000103")
 
+    def test_matches_a_korean_member_name_and_preserves_its_signal(self) -> None:
+        roster = [RosterEntry("900000104", "한글전사")]
+
+        match = _match_roster_name(["| 한글전사 ."], roster)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match[0].player_id, "900000104")
+        self.assertEqual(_clean_observed_name("| 한글전사 ."), "한글전사")
+        self.assertTrue(_raw_name_has_signal("| 한글전사 ."))
+        self.assertTrue(_raw_name_has_signal("| 한글 |"))
+
     def test_chinese_ocr_runs_for_any_unmatched_row_when_roster_contains_cjk(self) -> None:
         roster = [RosterEntry("900000103", "測試玩家")]
 
         self.assertTrue(_should_try_cjk_ocr(["Bh Bh 28 FA ."], roster))
         self.assertTrue(_should_try_cjk_ocr(["Alco123 |"], roster))
         self.assertFalse(_should_try_cjk_ocr(["Bh Bh 28 FA ."], [RosterEntry("1", "LatinName")]))
+
+    def test_korean_ocr_retries_the_primary_name_crop_for_a_hangul_roster(self) -> None:
+        class FakeImage:
+            def crop(self, _box: object) -> "FakeImage":
+                return self
+
+        row = SimpleNamespace(
+            index=0,
+            bounds=Rect(0, 0, 100, 100),
+            fields=SimpleNamespace(name=Rect(0, 0, 10, 10)),
+        )
+        roster = [RosterEntry("900000104", "한글전사")]
+
+        def fake_ocr_text(_image: object, _pytesseract: object, *, language: str | None = None, **_kwargs: object) -> str:
+            return "한글전사" if language == "kor" else "LatinNoise"
+
+        with (
+            patch("archero_guild.pipeline.guild_member_ocr._ocr_text", side_effect=fake_ocr_text),
+            patch("archero_guild.pipeline.guild_member_ocr._read_power", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_role", return_value=(None, "")),
+            patch("archero_guild.pipeline.guild_member_ocr._read_donation", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_boss_tries", return_value=None),
+        ):
+            metrics = _extract_row_metrics(FakeImage(), row, "members.png", roster, object())
+
+        self.assertEqual(metrics.player_id, "900000104")
+        self.assertEqual(metrics.name, "한글전사")
+        self.assertEqual(metrics.raw_name, "한글전사")
+        self.assertTrue(_should_try_hangul_ocr(roster))
+
+    def test_korean_ocr_skips_an_uninstalled_language_and_leaves_the_row_unresolved(self) -> None:
+        class FakeImage:
+            def crop(self, _box: object) -> "FakeImage":
+                return self
+
+        class FakeTesseract:
+            @staticmethod
+            def get_languages(*, config: str) -> list[str]:
+                self.assertEqual(config, "")
+                return ["eng"]
+
+        row = SimpleNamespace(
+            index=0,
+            bounds=Rect(0, 0, 100, 100),
+            fields=SimpleNamespace(name=Rect(0, 0, 10, 10)),
+        )
+
+        def fake_ocr_text(_image: object, _pytesseract: object, *, language: str | None = None, **_kwargs: object) -> str:
+            self.assertNotEqual(language, "kor")
+            return "LatinNoise"
+
+        with (
+            patch("archero_guild.pipeline.guild_member_ocr._ocr_text", side_effect=fake_ocr_text),
+            patch("archero_guild.pipeline.guild_member_ocr._read_power", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_role", return_value=(None, "")),
+            patch("archero_guild.pipeline.guild_member_ocr._read_donation", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_boss_tries", return_value=None),
+        ):
+            metrics = _extract_row_metrics(
+                FakeImage(),
+                row,
+                "members.png",
+                [RosterEntry("900000104", "한글전사")],
+                FakeTesseract(),
+            )
+
+        self.assertEqual(metrics.player_id, "")
+        self.assertEqual(metrics.name, "LatinNoise")
+
+    def test_unmatched_korean_ocr_is_preserved_alongside_chinese_review_evidence(self) -> None:
+        class FakeImage:
+            def crop(self, _box: object) -> "FakeImage":
+                return self
+
+        class FakeTesseract:
+            @staticmethod
+            def get_languages(*, config: str) -> list[str]:
+                return ["eng", "chi_tra", "chi_sim", "kor"]
+
+        row = SimpleNamespace(
+            index=0,
+            bounds=Rect(0, 0, 100, 100),
+            fields=SimpleNamespace(name=Rect(0, 0, 10, 10)),
+        )
+        roster = [
+            RosterEntry("900000103", "測試玩家"),
+            RosterEntry("900000104", "한글전사"),
+        ]
+
+        def fake_ocr_text(_image: object, _pytesseract: object, *, language: str | None = None, **_kwargs: object) -> str:
+            return {
+                "chi_tra": "未登錄",
+                "chi_sim": "",
+                "kor": "한국이름",
+            }.get(language, "LatinNoise")
+
+        with (
+            patch("archero_guild.pipeline.guild_member_ocr._ocr_text", side_effect=fake_ocr_text),
+            patch("archero_guild.pipeline.guild_member_ocr._read_power", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_role", return_value=(None, "")),
+            patch("archero_guild.pipeline.guild_member_ocr._read_donation", return_value=None),
+            patch("archero_guild.pipeline.guild_member_ocr._read_boss_tries", return_value=None),
+        ):
+            metrics = _extract_row_metrics(FakeImage(), row, "members.png", roster, FakeTesseract())
+
+        self.assertEqual(metrics.player_id, "")
+        self.assertEqual(metrics.name, "한국이름")
+        self.assertIn("未登錄", metrics.raw_name)
+        self.assertIn("한국이름", metrics.raw_name)
 
     def test_readable_unknown_name_is_not_safe_for_power_fallback(self) -> None:
         self.assertTrue(_raw_name_has_signal("Members Brandontrandon"))
