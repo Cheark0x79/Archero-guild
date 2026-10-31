@@ -8,7 +8,7 @@ OCR_COMPOSE = docker compose --env-file $(OCR_ENV_FILE) -f ocr/compose.yml
 OCR_TEST_IMAGE ?= archero-guild-ocr:test
 OCR_IMAGE ?= archero-guild-ocr
 
-.PHONY: help prepare build build-web build-ocr start stop restart update backup status logs test doctor ocr-prepare ocr-start ocr-stop ocr-restart ocr-update ocr-status ocr-logs
+.PHONY: smoke help prepare build build-web build-ocr start stop restart update backup status logs test doctor ocr-prepare ocr-start ocr-stop ocr-restart ocr-update ocr-status ocr-logs
 
 help:
 	@echo "Archero Guild operations"
@@ -57,6 +57,7 @@ logs:
 	@$(COMPOSE) logs --tail=100 app postgres
 
 test:
+	python3 -B -m unittest discover -s scripts/tests
 	python3 scripts/check-repository-hygiene.py
 	python3 scripts/check-configuration-contract.py
 	docker build -f ocr/Dockerfile -t $(OCR_TEST_IMAGE) .
@@ -66,9 +67,12 @@ test:
 	docker run --rm -v "$(CURDIR):/workspace:ro" -w /workspace \
 		-e PYTHONPATH=/workspace/ocr/app --entrypoint python $(OCR_TEST_IMAGE) \
 		-B -m unittest discover -s web/server/tests
-	docker run --rm -v "$(CURDIR):/source:ro" -w /workspace node:22-bookworm-slim \
+	docker run --rm -v "$(CURDIR):/source:ro" -w /workspace node:26-bookworm-slim \
 		sh -c 'cp -a /source/. /workspace/ && npm --prefix web ci >/dev/null && npm --prefix web test && npm --prefix web run docs:check && npm --prefix web audit --omit=dev && npm --prefix web run build && npm --prefix web run check:public-bundle'
 	bash web/scripts/test-env.sh test
+
+smoke:
+	bash scripts/smoke-images.sh archero-guild-web:$(IMAGE_TAG) $(OCR_IMAGE):$(IMAGE_TAG)
 
 doctor:
 	@command -v docker >/dev/null
@@ -78,6 +82,7 @@ doctor:
 	@docker compose --env-file web/.env.dev.example -f web/compose.dev.yml config -q
 	@docker compose --env-file web/.env.prod.example -f web/compose.yml config -q
 	@docker compose --env-file ocr/.env.example -f ocr/compose.yml config -q
+	@python3 scripts/check-compose-security.py
 	@echo "Configuration and release prerequisites are valid."
 
 ocr-prepare:
