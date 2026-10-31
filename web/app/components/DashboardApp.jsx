@@ -3031,14 +3031,14 @@ function MemberDetail({
             <span>The profile stays live. The PNG represents this version; create a new share after data changes. Revocation requires an administrator to rotate the share signing secret for all links.</span>
             <span>{shareState.error}</span>
           </div>
-          <div className="share-link-copy">
+          {shareState.imageUrl ? <div className="share-link-copy">
             <input aria-label="Direct PNG share link" readOnly value={shareState.imageUrl ?? ""} onFocus={(event) => event.currentTarget.select()} />
             <a className="secondary-button" href={shareState.imageUrl} target="_blank" rel="noreferrer">Open PNG</a>
             <button className="secondary-button" type="button" onClick={async () => {
               try { await navigator.clipboard.writeText(shareState.imageUrl); setShareState((current) => ({ ...current, notice: "PNG link copied.", error: "" })); }
               catch { setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the PNG link manually." })); }
             }}>Copy PNG link</button>
-          </div>
+          </div> : null}
           <div className="share-link-copy">
             <input aria-label="Temporary member share link" readOnly value={shareState.url} onFocus={(event) => event.currentTarget.select()} />
             <button className="primary-button" type="button" onClick={copyShareLink}>Copy link</button>
