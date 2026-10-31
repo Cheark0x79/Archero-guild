@@ -1,7 +1,10 @@
 # Repository validation
 
 The `CI / verify` job runs on every branch push, pull request and merge-group
-candidate, including pushes after a merge to `main`. It validates code only;
+candidate, including pushes after a merge to `main`. Plain branch pushes run
+the doctor, test suite and container build; the runtime smoke test and Trivy
+image scans run only for pull requests, merge-group candidates and `main`, so
+PR branches do not repeat them. It validates code only;
 production deployment and backups are separate operations. Container publishing
 remains limited to published releases.
 
