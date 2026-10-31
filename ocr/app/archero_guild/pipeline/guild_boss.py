@@ -300,6 +300,12 @@ def _match_roster_name(raw_name: str | Sequence[str], roster: Sequence[object]) 
     return (best[0], best[1])
 
 
+def _is_exact_roster_match(match: tuple[object, str] | None) -> bool:
+    # A fuzzy match may pick a similar roster name; a later language can still
+    # read the exact one, so only an exact match ends a language fallback.
+    return match is not None and _normalize_match_text(match[1]) == _normalize_match_text(_roster_name(match[0]))
+
+
 def _useful_raw_name(raw_name: str) -> str | None:
     cleaned = _clean_raw_name(raw_name)
     signal = re.sub(r"\s+", "", cleaned)
@@ -479,7 +485,7 @@ def _extract_list_ranking(
         for language in _roster_ocr_languages(roster, pytesseract):
             raw_name_candidates.extend(_boss_name_candidates(image, row, pytesseract, languages=(language,)))
             match = _match_roster_name(raw_name_candidates, roster)
-            if match is not None:
+            if _is_exact_roster_match(match):
                 break
     raw_name = _best_name_text(raw_name_candidates)
     damage_text = _read_boss_damage_text(_crop(image, row.fields.damage), pytesseract)
@@ -821,9 +827,9 @@ def _extract_podium_rankings(
                         _crop(image, name_rect), pytesseract, languages=(language,),
                     ))
                     match = _match_roster_name(raw_name_candidates, roster)
-                    if match is not None:
+                    if _is_exact_roster_match(match):
                         break
-                if match is not None:
+                if _is_exact_roster_match(match):
                     break
         raw_name = _best_name_text(raw_name_candidates)
         damage_text = _read_boss_damage_text(_crop(image, region.damage), pytesseract)
