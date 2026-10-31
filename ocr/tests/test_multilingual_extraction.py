@@ -101,6 +101,26 @@ class MultilingualExtractionTests(unittest.TestCase):
                 self.assertEqual(len(rows), 4)
                 self.assertTrue(all(row.player_id == "synthetic-kr" for row in rows) if recognized == "한글전사" else all(row.player_id is None for row in rows))
 
+    def test_boss_fuzzy_match_keeps_trying_later_languages_for_an_exact_name(self):
+        roster = [RosterEntry("synthetic-toy", "測試玩具"), RosterEntry("synthetic-player", "測試玩家")]
+        readings = {"chi_tra": "測試玩其", "chi_sim": "測試玩家"}
+
+        def recognize(image, *, config, lang=None):
+            if "whitelist" in config:
+                return ""
+            return next((text for language, text in readings.items() if lang and language in lang.split("+")), "UnrelatedNoise")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.png"
+            self._capture(path, boss=True)
+            with (
+                patch("pytesseract.get_languages", return_value=["eng", "chi_tra", "chi_sim"]),
+                patch("pytesseract.image_to_string", side_effect=recognize),
+            ):
+                rows = extract_boss_rankings_from_screenshots([path], roster, include_podium=True)
+        self.assertTrue(rows)
+        self.assertTrue(all(row.player_id == "synthetic-player" for row in rows))
+
     def test_boss_latin_roster_does_not_launch_multilingual_fallback(self):
         rows, calls = self._extract(boss=True, recognized="한글전사", language="kor", podium=True, roster=[RosterEntry("synthetic-latin", "NovaPilot")])
         self.assertTrue(all(row.player_id is None for row in rows))
