@@ -259,7 +259,7 @@ def _read_power(image: object, row: MemberRow, pytesseract: object) -> int | Non
     ]
     candidates: list[tuple[int, bool, bool]] = []
     for crop, is_trusted in crops:
-        text = _ocr_text(_relative_crop(image, row.bounds, *crop), pytesseract, whitelist="0123456789.,-+KMkm")
+        text = _ocr_text(_relative_crop(image, row.bounds, *crop), pytesseract, whitelist="0123456789.,KMkm")
         value = parse_power(text)
         if value is not None and value > 0:
             candidates.append((value, is_trusted, _has_decimal_power_text(text)))
@@ -529,7 +529,7 @@ def parse_power(value: str) -> int | None:
         .replace("I", "1")
         .replace(",", ".")
     )
-    match = re.fullmatch(r"([0-9]+)(?:\.([0-9]+))?\s*([KkMm])", normalized.strip())
+    match = re.fullmatch(r"([0-9]{1,30})(?:\.([0-9]{1,6}))?\s{0,8}([KkMm])", normalized.strip())
     if match is None:
         return None
     whole, fraction, unit = match.groups()

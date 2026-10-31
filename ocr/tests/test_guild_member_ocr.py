@@ -31,7 +31,7 @@ class GuildMemberOcrTests(unittest.TestCase):
         self.assertEqual(parse_power("5.01M"), 5_010_000)
 
     def test_member_power_has_no_magnitude_limit(self) -> None:
-        cases = [("28.29M", 28_290_000), ("1234567890.123456M", 1_234_567_890_123_456), ("0.001K", 1), ("1" + "0" * 303 + "M", 10**309)]
+        cases = [("28.29M", 28_290_000), ("1234567890.123456M", 1_234_567_890_123_456), ("0.001K", 1), ("1" + "0" * 29 + "M", 10**35)]
         image = SimpleNamespace(crop=lambda box: box)
         row = SimpleNamespace(bounds=Rect(0, 0, 1000, 100))
         for text, expected in cases:
@@ -45,7 +45,7 @@ class GuildMemberOcrTests(unittest.TestCase):
                 self.assertEqual(parse_power(format_game_power(expected)), expected)
 
     def test_invalid_compact_member_power_is_not_accepted(self) -> None:
-        for text in (None, "9" * 5000 + "M", "", "garbage", "0M", "-2M", "- 2M", "1.2.3M", "2Mbad", "0.0000001M"):
+        for text in (None, "9" * 5000 + "M", "1" * 31 + "M", "2-3M", "+2M", "", "garbage", "0M", "-2M", "- 2M", "1.2.3M", "2Mbad", "0.0000001M"):
             with self.subTest(text=text):
                 self.assertIsNone(parse_power(text))
 
