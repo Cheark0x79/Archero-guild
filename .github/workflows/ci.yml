@@ -26,8 +26,11 @@ jobs:
       - name: Build both production containers
         run: make build VERSION=${{ github.sha }}
       - name: Smoke-test shipped runtimes
+        # Expensive validation: pull requests, merge queue and main only (issue #8).
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         run: make smoke IMAGE_TAG=${{ github.sha }}
       - name: Report Web/API image vulnerabilities
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           cache: false
@@ -38,6 +41,7 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
       - name: Block critical Web/API image vulnerabilities
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           cache: false
@@ -48,6 +52,7 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
       - name: Report OCR image vulnerabilities
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           cache: false
@@ -58,6 +63,7 @@ jobs:
           ignore-unfixed: true
           scanners: vuln
       - name: Block critical OCR image vulnerabilities
+        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           cache: false
