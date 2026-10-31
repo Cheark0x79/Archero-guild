@@ -1,6 +1,9 @@
 import unittest
+from pathlib import Path
 
-from archero_guild.storage.guild_stats import normalize_snapshot_edit
+from archero_guild.storage.guild_stats import EDIT_TABLES_SQL, normalize_snapshot_edit
+
+SCHEMA = Path(__file__).resolve().parents[1] / "app" / "archero_guild" / "storage" / "schema.sql"
 
 
 class GuildStatSnapshotTests(unittest.TestCase):
@@ -37,6 +40,21 @@ class GuildStatSnapshotTests(unittest.TestCase):
             "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II",
         })
         self.assertEqual(edit["reason"], "Manual daily editor correction")
+
+    def test_rejects_xp_above_the_level_requirement(self):
+        value = {"date": "2026-08-19", "level": 7, "memberCount": 41, "memberCapacity": 42,
+                 "totalPower": 100, "xpCurrent": 800001, "xpRequired": 800000,
+                 "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II"}
+        with self.assertRaisesRegex(ValueError, "xpCurrent"):
+            normalize_snapshot_edit(value)
+        value["xpRequired"] = None
+        self.assertEqual(normalize_snapshot_edit(value)["xpCurrent"], 800001)
+
+    def test_runtime_edit_tables_match_the_schema(self):
+        schema = SCHEMA.read_text(encoding="utf-8")
+        for statement in filter(str.strip, EDIT_TABLES_SQL.split(";")):
+            with self.subTest(statement=statement.split("(")[0].strip()):
+                self.assertIn(statement.strip(), schema)
 
 
 if __name__ == "__main__":

@@ -386,6 +386,8 @@ def _daily_boss_snapshots(connection) -> list[dict[str, Any]]:
         FROM boss_daily_results r
         JOIN boss_definitions b ON b.boss_key = r.boss_key
         LEFT JOIN guild_members gm ON gm.user_id = r.user_id
+        -- Same row filter as v_boss_daily_leaderboard, plus the result id the editor needs.
+        WHERE r.damage_value IS NOT NULL
         ORDER BY r.capture_date, r.boss_rank NULLS LAST, r.damage_value DESC
         """
     ).fetchall()

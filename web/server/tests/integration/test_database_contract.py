@@ -203,7 +203,8 @@ class DatabaseContractTests(unittest.TestCase):
             payload = export_dashboard_payload(DATABASE_URL)
             self.assertEqual([r["bossRank"] for r in payload["dailyBossRawSnapshots"][0]["rows"]], [1, 2])
             with self.psycopg.connect(DATABASE_URL) as connection:
-                self.assertEqual(connection.execute("SELECT count(*) FROM guild_stat_snapshot_edits").fetchone()[0], 2)
+                # Guild fields match the fixture in every save: no guild rewrite or audit row.
+                self.assertEqual(connection.execute("SELECT count(*) FROM guild_stat_snapshot_edits").fetchone()[0], 0)
                 self.assertEqual(connection.execute("SELECT count(*) FROM daily_snapshot_row_edits").fetchone()[0], 6)
             # A null correction must also clear imported text, not merely keep already-cleared text absent.
             with self.psycopg.connect(DATABASE_URL) as connection:
@@ -216,9 +217,11 @@ class DatabaseContractTests(unittest.TestCase):
             payload = export_dashboard_payload(DATABASE_URL)
             self.assertIsNone(payload["memberSnapshots"][0]["activityText"])
             self.assertIsNone(payload["memberSnapshots"][0]["lastActivityDays"])
+            # Like v_boss_daily_leaderboard, the dashboard export skips rows without damage.
             bosses = {r["resultId"]: r for r in payload["dailyBossRawSnapshots"][0]["rows"]}
-            self.assertIsNone(bosses[first]["bossDamageToday"])
-            self.assertIsNone(bosses[first]["damageText"])
+            self.assertNotIn(first, bosses)
+            with self.psycopg.connect(DATABASE_URL) as connection:
+                self.assertEqual(connection.execute("SELECT damage_value, damage_text FROM boss_daily_results WHERE id=%s", (first,)).fetchone(), (None, None))
         finally:
             self._seed_database()
             with self.psycopg.connect(DATABASE_URL) as connection:

@@ -33,7 +33,7 @@ def normalize_snapshot_edit(value: Any) -> dict[str, Any]:
         if field not in value:
             raise ValueError(f"{field} is required")
         candidate = value[field]
-        if candidate is None and field != "resultId":
+        if candidate is None:
             numbers[field] = None
             continue
         if isinstance(candidate, bool) or not isinstance(candidate, int) or not minimum <= candidate <= maximum:
@@ -41,6 +41,8 @@ def normalize_snapshot_edit(value: Any) -> dict[str, Any]:
         numbers[field] = candidate
     if numbers["memberCount"] is not None and numbers["memberCapacity"] is not None and numbers["memberCount"] > numbers["memberCapacity"]:
         raise ValueError("memberCount cannot exceed memberCapacity")
+    if numbers["xpCurrent"] is not None and numbers["xpRequired"] is not None and numbers["xpCurrent"] > numbers["xpRequired"]:
+        raise ValueError("xpCurrent cannot exceed xpRequired")
     name = value.get("expeditionName")
     if name is not None and not isinstance(name, str):
         raise ValueError("expeditionName must be text or null")
@@ -73,16 +75,7 @@ def update_snapshot(dsn: str, value: Any) -> dict[str, Any]:
         raise RuntimeError("psycopg is required to edit guild statistics") from exc
     with psycopg.connect(dsn, row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS guild_stat_snapshot_edits (
-                    id BIGSERIAL PRIMARY KEY,
-                    capture_date DATE NOT NULL REFERENCES guild_stat_snapshots(capture_date) ON DELETE RESTRICT,
-                    previous_payload JSONB NOT NULL,
-                    updated_payload JSONB NOT NULL,
-                    reason TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-            """)
+            _ensure_edit_tables(cursor)
             row = cursor.execute("SELECT * FROM guild_stat_snapshots WHERE capture_date = %s FOR UPDATE", (edit["date"],)).fetchone()
             if not row:
                 raise ValueError("no guild statistics snapshot exists for this date; import the daily capture first")
@@ -93,30 +86,20 @@ def update_snapshot(dsn: str, value: Any) -> dict[str, Any]:
             for field, column in columns.items():
                 previous[field] = row[column] if row[column] is not None else previous.get(field)
             updated = {**previous, **{field: edit[field] for field in EDITABLE_FIELDS}}
-            cursor.execute("""
-                UPDATE guild_stat_snapshots
-                SET guild_level = %s, member_count = %s, member_capacity = %s, total_power = %s,
-                    xp_current = %s, xp_required = %s, expedition_points = %s,
-                    expedition_name = %s, expedition_rank = %s,
-                    raw_payload = %s::jsonb, updated_at = now()
-                WHERE capture_date = %s
-            """, (edit["level"], edit["memberCount"], edit["memberCapacity"], edit["totalPower"], edit["xpCurrent"], edit["xpRequired"], edit["expeditionPoints"], edit["expeditionName"], edit["expeditionRank"], json.dumps(updated), edit["date"]))
-            cursor.execute("""
-                INSERT INTO guild_stat_snapshot_edits (capture_date, previous_payload, updated_payload, reason)
-                VALUES (%s, %s::jsonb, %s::jsonb, %s)
-            """, (edit["date"], json.dumps(previous), json.dumps(updated), edit["reason"]))
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS daily_snapshot_row_edits (
-                    id BIGSERIAL PRIMARY KEY,
-                    capture_date DATE NOT NULL,
-                    entity_type TEXT NOT NULL CHECK (entity_type IN ('member', 'boss')),
-                    entity_key TEXT NOT NULL,
-                    previous_payload JSONB NOT NULL,
-                    updated_payload JSONB NOT NULL,
-                    reason TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-            """)
+            # Member- or boss-only saves resend the unchanged guild fields: no rewrite, no audit row.
+            if any(previous.get(field) != updated[field] for field in EDITABLE_FIELDS):
+                cursor.execute("""
+                    UPDATE guild_stat_snapshots
+                    SET guild_level = %s, member_count = %s, member_capacity = %s, total_power = %s,
+                        xp_current = %s, xp_required = %s, expedition_points = %s,
+                        expedition_name = %s, expedition_rank = %s,
+                        raw_payload = %s::jsonb, updated_at = now()
+                    WHERE capture_date = %s
+                """, (edit["level"], edit["memberCount"], edit["memberCapacity"], edit["totalPower"], edit["xpCurrent"], edit["xpRequired"], edit["expeditionPoints"], edit["expeditionName"], edit["expeditionRank"], json.dumps(updated), edit["date"]))
+                cursor.execute("""
+                    INSERT INTO guild_stat_snapshot_edits (capture_date, previous_payload, updated_payload, reason)
+                    VALUES (%s, %s::jsonb, %s::jsonb, %s)
+                """, (edit["date"], json.dumps(previous), json.dumps(updated), edit["reason"]))
             for member in member_edits:
                 rows = cursor.execute("""
                     SELECT m.power, m.contribution_7d, m.boss_attacks, m.last_activity_days, m.raw_payload
@@ -178,6 +161,35 @@ def update_snapshot(dsn: str, value: Any) -> dict[str, Any]:
                         (edit["date"], str(result_id), json.dumps(previous_boss), json.dumps(updated_boss), edit["reason"]))
         connection.commit()
     return {**{field: edit[field] for field in ("date", *EDITABLE_FIELDS)}, "memberEdits": len(member_edits), "bossEdits": len(boss_edits)}
+
+
+# Mirrors schema.sql for databases created before the editor existed, like the
+# other runtime table guards in this package.
+EDIT_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS guild_stat_snapshot_edits (
+    id BIGSERIAL PRIMARY KEY,
+    capture_date DATE NOT NULL REFERENCES guild_stat_snapshots(capture_date) ON DELETE RESTRICT,
+    previous_payload JSONB NOT NULL,
+    updated_payload JSONB NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS daily_snapshot_row_edits (
+    id BIGSERIAL PRIMARY KEY,
+    capture_date DATE NOT NULL,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('member', 'boss')),
+    entity_key TEXT NOT NULL,
+    previous_payload JSONB NOT NULL,
+    updated_payload JSONB NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+def _ensure_edit_tables(cursor) -> None:
+    for statement in filter(str.strip, EDIT_TABLES_SQL.split(";")):
+        cursor.execute(statement)
 
 
 def _normalize_member_edits(value: Any) -> list[dict[str, Any]]:
