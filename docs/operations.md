@@ -32,6 +32,38 @@ The Docker credential helper, not the application environment file, stores the
 registry credential. Log out with `docker logout ghcr.io` when this host should
 no longer pull private packages.
 
+## Published images and source builds
+
+`make start` pulls the Web/API version recorded in `VERSION` from GHCR and
+waits for the Web/API and PostgreSQL health checks. Published releases provide
+independent images for `linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull ghcr.io/cheark0x79/archero-guild-web:<version>
+docker pull ghcr.io/cheark0x79/archero-guild-ocr:<version>
+```
+
+To build both products from the current checkout, run `make build`. A source
+build is not required to operate published images. Use `make ocr-prepare` and
+`make ocr-start` for the published OCR image after its first configuration.
+The historical `ghcr.io/cheark0x79/archero-guild:0.2.0` image is the Web/API
+artifact for that release.
+
+Public ingress, reverse proxies, DNS, deployment-specific Compose overrides and
+credentials belong in a separate private operations repository. See
+[architecture](architecture.md) for image contents and trust boundaries, and
+[configuration](configuration.md) for environment files and secret rotation.
+
+## Persistent state
+
+- PostgreSQL uses the `archero-guild_postgres-data` Docker volume with the
+  default production Compose project name.
+- Application import state and exports live under `data/`.
+- Raw captures and OCR outbox files remain on the trusted workstation.
+- Backup archives live under `backups/` and must also be copied off the server.
+- Private environment files and OCR targets are ignored by Git; see
+  [configuration files](configuration.md#configuration-files).
+
 ## Start and readiness
 
 ```bash
