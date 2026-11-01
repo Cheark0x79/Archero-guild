@@ -44,7 +44,7 @@ export default function SharedMemberProfile({ profile, expiresAt, lastImportDate
 
         <section className={styles.chartGrid}>
           <ProgressChart title="Power progression" points={profile.powerHistory} valueFormatter={formatCompact} />
-          <ProgressChart title="Boss damage progression" points={profile.bossDamageHistory} valueFormatter={formatDamage} />
+          <BossProgressChart progressions={profile.bossProgressions ?? []} />
         </section>
 
         <section className={styles.panel}>
@@ -92,6 +92,17 @@ export default function SharedMemberProfile({ profile, expiresAt, lastImportDate
   );
 }
 
+function BossProgressChart({ progressions }) {
+  const [selected, setSelected] = useState(progressions[0]?.key ?? "");
+  const boss = progressions.find((item) => item.key === selected);
+  return <div>
+    <label>Boss <select aria-label="Boss progression" value={selected} onChange={(event) => setSelected(event.target.value)}>
+      {progressions.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+    </select></label>
+    <ProgressChart title={`${boss?.name ?? "Boss"} personal record`} points={boss?.points ?? []} valueFormatter={formatDamage} />
+  </div>;
+}
+
 function Stat({ label, value, detail }) {
   return <article className={styles.stat}><span>{label}</span><strong>{value}</strong>{detail ? <small>{detail}</small> : null}</article>;
 }
@@ -119,6 +130,7 @@ function ProgressChart({ title, points, valueFormatter }) {
           ))}
         </div>
       </div>
+      <p className={styles.muted}>Up to 7 evenly sampled observations, including endpoints; no averaging. Boss values show running personal bests.</p>
       {visiblePoints.length ? (
         <>
           <svg className={styles.chart} viewBox="0 0 600 230" role="img" aria-label={`${title}, ${visiblePoints.length} data points`}>
@@ -138,6 +150,9 @@ function ProgressChart({ title, points, valueFormatter }) {
             <text className={styles.chartLabel} x="58" y="218">{formatShortDate(visiblePoints[0].date)}</text>
             <text className={styles.chartLabel} x="570" y="218" textAnchor="end">{formatShortDate(visiblePoints.at(-1).date)}</text>
           </svg>
+          <dl className={styles.chartValues} aria-label={`${title} values`}>
+            {visiblePoints.map((point) => <div key={point.date}><dt>{formatShortDate(point.date)}</dt><dd>{valueFormatter(point.value)}</dd></div>)}
+          </dl>
         </>
       ) : <p className={styles.muted}>No data in this period.</p>}
     </article>

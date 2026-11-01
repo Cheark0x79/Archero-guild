@@ -259,9 +259,9 @@ def _read_power(image: object, row: MemberRow, pytesseract: object) -> int | Non
     ]
     candidates: list[tuple[int, bool, bool]] = []
     for crop, is_trusted in crops:
-        text = _ocr_text(_relative_crop(image, row.bounds, *crop), pytesseract, whitelist="0123456789.KMm")
+        text = _ocr_text(_relative_crop(image, row.bounds, *crop), pytesseract, whitelist="0123456789.,KMkm")
         value = parse_power(text)
-        if value is not None and 10_000 <= value <= 20_000_000:
+        if value is not None and value > 0:
             candidates.append((value, is_trusted, _has_decimal_power_text(text)))
 
     if not candidates:
@@ -274,8 +274,9 @@ def _select_power_cluster(candidates: list[tuple[int, bool, bool]]) -> int:
     clusters: list[list[tuple[int, bool, bool]]] = []
     for candidate in sorted(candidates, key=lambda item: item[0]):
         for cluster in clusters:
-            center = sum(value for value, _, _ in cluster) / len(cluster)
-            if abs(candidate[0] - center) / max(candidate[0], center) <= 0.20:
+            total = sum(value for value, _, _ in cluster)
+            scaled_candidate = candidate[0] * len(cluster)
+            if 5 * abs(scaled_candidate - total) <= max(scaled_candidate, total):
                 cluster.append(candidate)
                 break
         else:
@@ -499,7 +500,7 @@ def _raw_name_has_signal(value: str) -> bool:
 
 
 def _match_by_power(power: int | None, roster: list[RosterEntry], used_player_ids: set[str]) -> RosterEntry | None:
-    if power is None or power < 10_000 or power > 20_000_000:
+    if type(power) is not int or power <= 0:
         return None
 
     candidates: list[tuple[float, RosterEntry]] = []
@@ -519,6 +520,8 @@ def _match_by_power(power: int | None, roster: list[RosterEntry], used_player_id
 
 
 def parse_power(value: str) -> int | None:
+    if not isinstance(value, str):
+        return None
     normalized = (
         value.replace("O", "0")
         .replace("o", "0")
@@ -526,13 +529,20 @@ def parse_power(value: str) -> int | None:
         .replace("I", "1")
         .replace(",", ".")
     )
-    matches = list(re.finditer(r"(\d{1,9}(?:\.\d{1,6})?)\s{0,8}([KkMm])", normalized))
-    if not matches:
+    match = re.fullmatch(r"([0-9]{1,30})(?:\.([0-9]{1,6}))?\s{0,8}([KkMm])", normalized.strip())
+    if match is None:
         return None
-    match = matches[-1]
-    amount = float(match.group(1))
-    unit = match.group(2).upper()
-    return round(amount * (1_000_000 if unit == "M" else 1_000))
+    whole, fraction, unit = match.groups()
+    digits = 6 if unit.upper() == "M" else 3
+    fraction = (fraction or "").rstrip("0")
+    if len(fraction) > digits:
+        return None
+    try:
+        amount = int(whole) * 10**digits + int(fraction.ljust(digits, "0"))
+    except ValueError:
+        # Keep unrepresentable OCR text reviewable under Python's integer safety limit.
+        return None
+    return amount if amount > 0 else None
 
 
 def _has_decimal_power_text(value: str) -> bool:
@@ -605,8 +615,10 @@ def format_game_power(value: int | None) -> str | None:
     if value is None:
         return None
     unit, divisor = ("M", 1_000_000) if value >= 1_000_000 else ("K", 1_000)
-    amount = value / divisor
-    text = f"{amount:.2f}".rstrip("0").rstrip(".")
+    whole, remainder = divmod(value, divisor)
+    digits = 6 if unit == "M" else 3
+    fraction = f"{remainder:0{digits}d}".rstrip("0")
+    text = f"{whole}.{fraction}" if fraction else str(whole)
     return f"{text}{unit}"
 
 
