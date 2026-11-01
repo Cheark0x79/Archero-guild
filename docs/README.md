@@ -7,7 +7,8 @@ for repository, architecture, configuration, operations, and API contracts.
 
 | Document | Audience | Status | Purpose |
 | --- | --- | --- | --- |
-| [`../README.md`](../README.md) | New contributors and operators | Current | Product boundaries, prerequisites, quick start, and common commands |
+| [`../README.md`](../README.md) | New contributors and operators | Current | Project overview, local demo, checks, and task-oriented guide links |
+| [`development.md`](development.md) | Developers | Current | Local PostgreSQL setup, synthetic scenarios, and verification |
 | [`architecture.md`](architecture.md) | Maintainers and operators | Current | Components, data flow, trust boundaries, and ownership |
 | [`configuration.md`](configuration.md) | Developers and operators | Current | Environment settings, defaults, secrets, and rotation |
 | [`ci.md`](ci.md) | Contributors and maintainers | Current | Validation commands, image security policy, and required-check limitations |
@@ -41,3 +42,5 @@ for repository, architecture, configuration, operations, and API contracts.
   consumers must accept unknown fields and evaluation flags.
 - Never put real credentials, production identifiers, or private guild data in
   documentation or examples.
+
+- [Private screenshot evidence](private-evidence.md): administrator access, typed links, retention and privacy.
