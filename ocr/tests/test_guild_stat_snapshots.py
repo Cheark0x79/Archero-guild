@@ -1,0 +1,61 @@
+import unittest
+from pathlib import Path
+
+from archero_guild.storage.guild_stats import EDIT_TABLES_SQL, normalize_snapshot_edit
+
+SCHEMA = Path(__file__).resolve().parents[1] / "app" / "archero_guild" / "storage" / "schema.sql"
+
+
+class GuildStatSnapshotTests(unittest.TestCase):
+    def test_normalizes_an_expedition_snapshot_edit(self):
+        self.assertEqual(normalize_snapshot_edit({
+            "date": "2026-08-19", "reason": "Verified from original capture",
+            "level": 7, "memberCount": 41, "memberCapacity": 42, "totalPower": 89760000,
+            "xpCurrent": 13700, "xpRequired": 800000, "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "ii",
+        }), {
+            "date": "2026-08-19", "reason": "Verified from original capture",
+            "level": 7, "memberCount": 41, "memberCapacity": 42, "totalPower": 89760000,
+            "xpCurrent": 13700, "xpRequired": 800000, "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II",
+        })
+
+    def test_rejects_an_unsafe_or_ambiguous_edit(self):
+        with self.assertRaisesRegex(ValueError, "memberCount"):
+            normalize_snapshot_edit({"date": "2026-08-19", "level": 7, "memberCount": 43, "memberCapacity": 42, "totalPower": 89760000, "xpCurrent": 13700, "xpRequired": 800000, "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II"})
+        with self.assertRaisesRegex(ValueError, "date"):
+            normalize_snapshot_edit({"date": "2026-02-30", "reason": "x", "level": 7, "memberCount": 41, "memberCapacity": 42, "totalPower": 89760000, "xpCurrent": 13700, "xpRequired": 800000, "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II"})
+
+    def test_rejects_malformed_rank_and_preserves_unknown_values(self):
+        value = {"date": "2026-08-19", "level": 7, "memberCount": 41, "memberCapacity": 42,
+                 "totalPower": 100, "xpCurrent": None, "xpRequired": None,
+                 "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "IIIII"}
+        with self.assertRaisesRegex(ValueError, "expeditionRank"):
+            normalize_snapshot_edit(value)
+        value["expeditionRank"] = "II"
+        self.assertIsNone(normalize_snapshot_edit(value)["xpCurrent"])
+
+    def test_adds_the_default_audit_reason_when_the_editor_omits_it(self):
+        edit = normalize_snapshot_edit({
+            "date": "2026-08-19", "level": 7, "memberCount": 41, "memberCapacity": 42,
+            "totalPower": 89760000, "xpCurrent": 13700, "xpRequired": 800000,
+            "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II",
+        })
+        self.assertEqual(edit["reason"], "Manual daily editor correction")
+
+    def test_rejects_xp_above_the_level_requirement(self):
+        value = {"date": "2026-08-19", "level": 7, "memberCount": 41, "memberCapacity": 42,
+                 "totalPower": 100, "xpCurrent": 800001, "xpRequired": 800000,
+                 "expeditionPoints": 825, "expeditionName": "Firebound Soul", "expeditionRank": "II"}
+        with self.assertRaisesRegex(ValueError, "xpCurrent"):
+            normalize_snapshot_edit(value)
+        value["xpRequired"] = None
+        self.assertEqual(normalize_snapshot_edit(value)["xpCurrent"], 800001)
+
+    def test_runtime_edit_tables_match_the_schema(self):
+        schema = SCHEMA.read_text(encoding="utf-8")
+        for statement in filter(str.strip, EDIT_TABLES_SQL.split(";")):
+            with self.subTest(statement=statement.split("(")[0].strip()):
+                self.assertIn(statement.strip(), schema)
+
+
+if __name__ == "__main__":
+    unittest.main()
