@@ -854,17 +854,18 @@ def _js_string(value: object) -> str:
 
 def _validated_power(candidate: int | None, previous: object) -> int:
     previous_value = int(previous)
-    if candidate is None:
+    if type(candidate) is not int or candidate <= 0:
         return previous_value
-    if candidate < 10_000 or candidate > 20_000_000:
-        return previous_value
+    # No absolute ceiling, but a reading far from the stored power is more likely
+    # an OCR misread (a dropped decimal point) than real growth. Keep the stored
+    # value; the raw snapshot still carries the reading for review.
     if previous_value and not (previous_value * 0.75 <= candidate <= previous_value * 1.75):
         return previous_value
     return candidate
 
 
 def _nullable_valid_power(candidate: int | None) -> int | str:
-    if candidate is None or candidate < 10_000 or candidate > 20_000_000:
+    if type(candidate) is not int or candidate <= 0:
         return "null"
     return candidate
 
