@@ -21,6 +21,7 @@ RUN apt-get update \
       tesseract-ocr-chi-sim \
       tesseract-ocr-chi-tra \
       tesseract-ocr-eng \
+      tesseract-ocr-kor \
       tesseract-ocr-rus \
     && pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm -rf /var/lib/apt/lists/*
