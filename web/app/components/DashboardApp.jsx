@@ -232,7 +232,7 @@ const routeMeta = {
 
 export default function DashboardApp({ initialRoute = "dashboard", memberKeyParam = null, initialSessionRole = null }) {
   const [sessionRole, setSessionRole] = useState(initialSessionRole);
-  const [rules, setRules] = useStoredRules();
+  const [rules, setRules] = useStoredRules(sessionRole);
   const [dataVersion, setDataVersion] = useState(0);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataWarning, setDataWarning] = useState("");
@@ -252,7 +252,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         setWarningActions(payload.data.warningActions ?? {});
         setDataWarning(payload.warning ?? "");
         setRules((current) => normalizeRules({
-          ...(window.localStorage.getItem(RULES_STORAGE_KEY) ? current : defaultRules),
+          ...(sessionRole === "admin" && window.localStorage.getItem(RULES_STORAGE_KEY) ? current : defaultRules),
           currentDate: currentImportDate(),
         }));
         setDataVersion((version) => version + 1);
@@ -277,7 +277,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
     return () => {
       cancelled = true;
     };
-  }, [initialRoute]);
+  }, [initialRoute, sessionRole]);
 
   useEffect(() => {
     if (initialSessionRole) return undefined;
@@ -4019,11 +4019,13 @@ function NewMemberBadge({ member, rules }) {
   return day == null ? null : <span className="new-member-tag">New +{day}j</span>;
 }
 
-function useStoredRules() {
+function useStoredRules(sessionRole) {
   const initialRules = useMemo(() => normalizeRules({ ...defaultRules, currentDate: currentImportDate() }), []);
   const [rules, setRules] = useState(initialRules);
   const hydrated = useRef(false);
   useEffect(() => {
+    hydrated.current = false;
+    if (sessionRole !== "admin") return;
     let browserRules = initialRules;
     try {
       const stored = JSON.parse(localStorage.getItem(RULES_STORAGE_KEY) ?? "{}");
@@ -4061,9 +4063,9 @@ function useStoredRules() {
     return () => {
       active = false;
     };
-  }, [initialRules]);
+  }, [initialRules, sessionRole]);
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (sessionRole !== "admin" || !hydrated.current) return;
     const { currentDate, ...persistedRules } = rules;
     localStorage.setItem(RULES_STORAGE_KEY, JSON.stringify(persistedRules));
     if (window.location.pathname.startsWith("/admin")) {
@@ -4073,7 +4075,7 @@ function useStoredRules() {
         body: JSON.stringify({ rules: persistedRules }),
       }).catch(() => {});
     }
-  }, [rules]);
+  }, [rules, sessionRole]);
   return [rules, setRules];
 }
 
