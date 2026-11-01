@@ -196,27 +196,30 @@ class OcrReviewTests(unittest.TestCase):
         self.assertEqual(updated["members"][0]["activityText"], "1 d 10 h")
         self.assertEqual(updated["members"][0]["lastActivityDays"], 1)
 
+    def test_review_keeps_exact_positive_power_in_exported_batch(self) -> None:
+        for text, expected in (("28.29M", 28_290_000), ("1234567890.123456M", 1_234_567_890_123_456), ("0.001K", 1)):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "batch.json"
+                path.write_text(json.dumps(sample_batch()))
+                updated, _ = apply_batch_edit(path, Path(directory) / "corrections.json", capture_date="2026-07-29", category="members", row_index=0, field="powerText", value=text)
+                exported = prepare_export_batch(updated, "2026-07-29")
+                self.assertEqual(exported["members"][0]["power"], expected)
+                self.assertIs(type(exported["members"][0]["power"]), int)
+                self.assertEqual(exported["members"][0]["powerText"], text)
+
     def test_rejects_invalid_power_without_changing_the_batch(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            batch_path = Path(directory) / "2026-07-29.json"
-            corrections_path = Path(directory) / "corrections.json"
-            original = sample_batch()
-            batch_path.write_text(json.dumps(original), encoding="utf-8")
-
-            with self.assertRaises(ReviewError):
-                apply_batch_edit(
-                    batch_path,
-                    corrections_path,
-                    capture_date="2026-07-29",
-                    category="members",
-                    row_index=0,
-                    field="powerText",
-                    value="not a power",
-                )
-
-            stored = json.loads(batch_path.read_text(encoding="utf-8"))
-
-        self.assertEqual(stored, original)
+        for value in ("not a power", "", "0M", "-2M", "1.2.3M"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                batch_path = Path(directory) / "2026-07-29.json"
+                corrections_path = Path(directory) / "corrections.json"
+                original = sample_batch()
+                batch_path.write_text(json.dumps(original), encoding="utf-8")
+                with self.assertRaises(ReviewError):
+                    apply_batch_edit(
+                        batch_path, corrections_path, capture_date="2026-07-29",
+                        category="members", row_index=0, field="powerText", value=value,
+                    )
+                self.assertEqual(json.loads(batch_path.read_text()), original)
 
     def test_rejects_editing_a_member_to_a_duplicate_player_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
