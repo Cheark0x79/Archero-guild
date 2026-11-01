@@ -47,6 +47,9 @@ make doctor
 make test
 ```
 
+`make test` runs the Python and Web unit tests, documentation checks, and the
+disposable PostgreSQL integration tests. See [CI validation and security policy](docs/ci.md)
+for image smoke checks, vulnerability gates and required-check limitations.
 See [Contributing](CONTRIBUTING.md) for the workflow and full check coverage.
 Repository documentation and API contracts are maintained in English.
 

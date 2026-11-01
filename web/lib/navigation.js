@@ -10,6 +10,7 @@ const adminNavItems = [
   ["admin", "Overview", "/admin"],
   ["admin-members", "Member management", "/admin/members"],
   ["member-history", "Member history", "/admin/member-history"],
+  ["daily-editor", "Daily data editor", "/admin/data-editor"],
   ["notifications", "Notifications", "/admin/notifications"],
   ["settings", "Rules", "/admin/rules"],
   ["api-docs", "API reference", "/api-docs"],
