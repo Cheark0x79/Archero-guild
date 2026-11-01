@@ -60,6 +60,18 @@ export function sharedMemberProfileFromData(data, playerId, publicOrigin = "") {
     powerRank: { rank: powerRank, total: powerRanking.total ?? 0 },
     powerHistory,
     bossDamageHistory: bossResults.map((row) => ({ date: row.date, value: row.damage, bossName: row.boss?.name ?? "Boss" })),
+    bossProgressions: [...new Set([...bossResults].reverse().map((row) => row.boss?.key))].map((key) => {
+      let record = 0;
+      const results = bossResults.filter((row) => row.boss?.key === key);
+      return {
+        key,
+        name: results[0]?.boss?.name ?? "Boss",
+        points: results.filter((row) => Number.isFinite(row.damage)).map((row) => {
+          record = Math.max(record, row.damage);
+          return { date: row.date, value: record };
+        }),
+      };
+    }),
     recentBossResults: [...bossResults].sort((left, right) => right.date.localeCompare(left.date)).slice(0, 5),
     personalBests: (bossProfile?.recordsByBoss ?? []).map((record) => ({
       boss: record.boss,
