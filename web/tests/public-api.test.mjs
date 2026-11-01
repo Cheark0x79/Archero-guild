@@ -488,3 +488,23 @@ test("member boss profile returns records and guild ranks for every boss", () =>
   assert.equal(result.recordsByBoss.find((item) => item.boss.key === "fire-dragon").guildRank, 1);
   assert.equal(memberBossesFromData(data, "missing"), null);
 });
+
+test('public member and summary evaluate the metrics capture date, never wall-clock leave', () => {
+  const captured = '2025-01-05';
+  const fixture = {
+    ...data,
+    guildRoster: [{ playerId:'900000110',name:'Synthetic attendance',status:'active',absenceFrom:captured,absenceUntil:captured }],
+    memberSnapshots: [{playerId:'900000110',metricsVerified:true,contribution7d:0,bossAttacks:0,lastActivityDays:5,lastSeenAt:captured}],
+    dailyRawSnapshots:[{date:captured,rows:[{playerId:'900000110',contribution7d:0,bossAttacks:0,lastActivityDays:5}]}],
+  };
+  assert.equal(membersFromData(fixture)[0].evaluation.status, 'Excused');
+  assert.equal(guildSummaryFromData(fixture).watchCount, 0);
+  assert.deepEqual(memberHistoryFromData(fixture,'900000110',new URLSearchParams()).items[0].warnings, []);
+  fixture.guildRoster[0].absenceFrom = new Date().toISOString().slice(0,10);
+  fixture.guildRoster[0].absenceUntil = fixture.guildRoster[0].absenceFrom;
+  assert.equal(membersFromData(fixture)[0].evaluation.status,'Absent');
+  assert.equal(guildSummaryFromData(fixture).watchCount,1);
+  fixture.guildRoster[0].absenceFrom = '2099-01-01';
+  fixture.guildRoster[0].absenceUntil = '2099-01-02';
+  assert.equal(membersFromData(fixture)[0].evaluation.status,'Absent');
+});

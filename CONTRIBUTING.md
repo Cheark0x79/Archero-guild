@@ -12,6 +12,21 @@ reviewable, and free of private guild data.
 - Never commit real screenshots, player identities, credentials, database
   exports, backups, or generated OCR data.
 
+## Game assets and trademarks
+
+Archero Guild is an independent community project. It is not affiliated with,
+endorsed by, or supported by Habby or the Archero games.
+
+This repository intentionally does not distribute official game artwork,
+screenshots, or other game assets. The interface uses non-official illustrative
+artwork only. Archero, Archero 2, Habby, and related names and marks belong to
+their respective owners.
+
+Contributors must submit only artwork, media, and data that they created
+themselves or are explicitly allowed to redistribute under terms compatible
+with this repository. Do not add official game assets without written
+permission from the rights holder.
+
 ## Development workflow
 
 Docker with Compose v2 is the supported development boundary. From the

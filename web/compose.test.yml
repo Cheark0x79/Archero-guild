@@ -38,7 +38,7 @@ services:
     volumes:
       - ..:/workspace:ro
     working_dir: /workspace
-    command: ["python", "-B", "-m", "unittest", "web.server.tests.integration.test_database_contract", "-v"]
+    command: ["python", "-B", "-m", "unittest", "web.server.tests.integration.test_database_contract", "web.server.tests.integration.test_private_evidence", "-v"]
     cpus: "0.75"
     mem_limit: 384m
     pids_limit: 128

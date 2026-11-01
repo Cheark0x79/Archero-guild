@@ -8,7 +8,7 @@ export async function GET(request, { params }) {
   if (unauthorized) return unauthorized;
 
   const { playerId } = await params;
-  const payload = await loadDashboardData();
+  const payload = await loadDashboardData({ includeAttendance: true });
   const member = findMember(membersFromData(payload.data, publicApiOrigin(request)), decodeURIComponent(playerId));
   if (!member) return apiError(404, "member_not_found", "No member matches this player ID.");
   return apiSuccess(member, payload);
