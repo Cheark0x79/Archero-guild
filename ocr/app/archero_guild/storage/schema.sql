@@ -151,6 +151,26 @@ CREATE TABLE IF NOT EXISTS guild_stat_snapshots (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Audit trail of manual daily snapshot editor corrections.
+CREATE TABLE IF NOT EXISTS guild_stat_snapshot_edits (
+    id BIGSERIAL PRIMARY KEY,
+    capture_date DATE NOT NULL REFERENCES guild_stat_snapshots(capture_date) ON DELETE RESTRICT,
+    previous_payload JSONB NOT NULL,
+    updated_payload JSONB NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS daily_snapshot_row_edits (
+    id BIGSERIAL PRIMARY KEY,
+    capture_date DATE NOT NULL,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('member', 'boss')),
+    entity_key TEXT NOT NULL,
+    previous_payload JSONB NOT NULL,
+    updated_payload JSONB NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS guild_snapshots (
     id                BIGSERIAL PRIMARY KEY,
     batch_id          BIGINT REFERENCES capture_batches(id) ON DELETE SET NULL,

@@ -93,3 +93,10 @@
   .sectionHeading { align-items: flex-start; flex-direction: column; }
   .recentRow { grid-template-columns: 1fr 1fr; }
 }
+
+.chartValues { display: none; }
+@media (max-width: 600px) {
+  .chartValues { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; font-size: 14px; }
+  .chartValues div { display: flex; justify-content: space-between; gap: 8px; }
+  .chartValues dd { margin: 0; font-weight: 700; }
+}
