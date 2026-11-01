@@ -41,3 +41,5 @@ for repository, architecture, configuration, operations, and API contracts.
   consumers must accept unknown fields and evaluation flags.
 - Never put real credentials, production identifiers, or private guild data in
   documentation or examples.
+
+- [Private screenshot evidence](private-evidence.md): administrator access, typed links, retention and privacy.

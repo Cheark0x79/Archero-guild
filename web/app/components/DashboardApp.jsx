@@ -22,6 +22,7 @@ import {
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
 import { bossDefinitionForDate, bossDefinitionForSnapshot } from "../../lib/boss-identity.js";
 import { adaptiveChartDomain, chartPointsForRange, completedSundayPoints, weeklyPowerDelta } from "../../lib/chart-points.js";
+import { guildExperienceDetail } from "../../lib/guild-xp.js";
 import { buildDashboardBossSummary } from "../../lib/dashboard-boss-summary.js";
 import { buildDonationChartDays, latestDonationWeekPoints } from "../../lib/donation-chart.js";
 import {
@@ -1920,7 +1921,7 @@ function Dashboard({ rules }) {
       key: "level",
       label: "Guild level",
       value: formatOptionalNumber(guildStats.level),
-      detail: formatGuildExperience(guildStats.xpCurrent, guildStats.xpRequired),
+      detail: guildExperienceDetail(guildStats, guildStatsHistory),
     },
     {
       key: "members",
@@ -4301,11 +4302,6 @@ function numericValue(primary, fallback = null) {
 function formatRatio(value, total) {
   if (typeof value !== "number" || typeof total !== "number") return "Not captured";
   return `${formatNumber(value)}/${formatNumber(total)}`;
-}
-
-function formatGuildExperience(current, required) {
-  if (typeof current !== "number" || typeof required !== "number") return "Experience not captured";
-  return `${formatNumber(current)} / ${formatNumber(required)} XP`;
 }
 
 function chartAccessibleSummary(rows, valueKey, formatter) {
