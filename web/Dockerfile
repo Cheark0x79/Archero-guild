@@ -42,7 +42,7 @@ RUN apt-get update \
       python3 \
       python3-venv \
     && python3 -m venv /opt/archero-venv \
-    && /opt/archero-venv/bin/pip install --no-cache-dir "psycopg[binary]" \
+    && /opt/archero-venv/bin/pip install --no-cache-dir "psycopg[binary]" "pillow==13.0.0" \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

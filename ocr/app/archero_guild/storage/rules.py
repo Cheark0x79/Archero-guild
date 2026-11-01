@@ -13,6 +13,9 @@ RULE_LIMITS = {
     "minContribution7d": (0, 1_000_000),
     "minPowerGrowth14dPercent": (0, 1_000),
     "minBossTries": (0, 100),
+    "attendanceWindowDays": (1, 365),
+    "attendanceRepeatThreshold": (2, 365),
+    "attendanceStreakThreshold": (2, 365),
     "newMemberGraceDays": (0, 365),
     "memberCapacity": (1, 1_000),
 }
@@ -85,9 +88,13 @@ def _read_legacy_rules() -> dict[str, Any]:
 def _normalize_rules(value: dict[str, Any]) -> dict[str, int | float]:
     normalized: dict[str, int | float] = {}
     for key, (minimum, maximum) in RULE_LIMITS.items():
+        if key.startswith("attendance") and key not in value:
+            continue
         candidate = value.get(key)
         if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
             raise ValueError(f"{key} must be numeric")
+        if key.startswith("attendance") and candidate != int(candidate):
+            raise ValueError(f"{key} must be an integer")
         if candidate < minimum or candidate > maximum:
             raise ValueError(f"{key} must be between {minimum} and {maximum}")
         normalized[key] = candidate

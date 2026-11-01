@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { navigationItemsForRole, sessionRoleLabel } from "../../lib/navigation.js";
+import { USER_ROLE } from "../../lib/auth.js";
+import { navigationGroupsForRole, sessionRoleLabel } from "../../lib/navigation.js";
 
 export default function AppSidebar({
   activeRoute,
@@ -14,7 +15,7 @@ export default function AppSidebar({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const navRoute = activeRoute === "member" ? "members" : activeRoute;
-  const navigation = navigationItemsForRole(sessionRole, {
+  const navigation = navigationGroupsForRole(sessionRole, {
     testToolsEnabled: process.env.NEXT_PUBLIC_TEST_DATA_ADMIN === "1"
       && ["development", "test"].includes(process.env.NEXT_PUBLIC_DEPLOYMENT_ENV),
   });
@@ -41,33 +42,20 @@ export default function AppSidebar({
         </button>
       </div>
       <div className="sidebar-navigation" id="sidebar-navigation">
-        <nav className="nav-list" aria-label="Pages">
-          <span className="nav-section-label">Guild</span>
-          {navigation.primary.map(([key, label, href]) => (
-            <SidebarNavLink active={navRoute === key} href={href} icon={key} key={key} label={label} route={key} />
-          ))}
-        </nav>
-        {navigation.admin.length > 0 ? (
-          <nav className="nav-list admin-nav-list" aria-label="Admin pages">
-            <span className="nav-section-label">Administration</span>
-            {navigation.admin.map(([key, label, href]) => (
-              <SidebarNavLink active={navRoute === key} href={href} icon={key} key={key} label={label} route={key} />
+        {navigation.map(({ id, label: groupLabel, items }) => (
+          <nav className={`nav-list ${id === "guild" ? "" : "admin-nav-list"}`} aria-label={groupLabel} key={id}>
+            <span className="nav-section-label">{groupLabel}</span>
+            {items.map(([key, label, href]) => (
+              <SidebarNavLink active={navRoute === key} href={href} icon={key} key={key} label={label} route={key} onNavigate={() => setMobileOpen(false)} />
             ))}
           </nav>
-        ) : null}
-        {navigation.test.length > 0 ? (
-          <nav className="nav-list test-nav-list" aria-label="Test pages">
-            <span className="nav-section-label">Development</span>
-            {navigation.test.map(([key, label, href]) => (
-              <SidebarNavLink active={navRoute === key} href={href} icon={key} key={key} label={label} route={key} />
-            ))}
-          </nav>
-        ) : null}
+        ))}
         <div className="sidebar-footer">
           <div className="sidebar-note">
             <SidebarIcon type="checkpoint" />
             <span><small>{checkpointLabel}</small><strong>{checkpointValue}</strong></span>
           </div>
+          {sessionRole === USER_ROLE ? <p className="sidebar-access-note">Need to manage members or guild settings? Contact your guild administrator.</p> : null}
           <div className="sidebar-account">
             {roleLabel ? (
               <div className="session-role" aria-label={`Signed in as ${roleLabel}`}>
@@ -84,9 +72,9 @@ export default function AppSidebar({
   );
 }
 
-function SidebarNavLink({ active, href, icon, label, route }) {
+function SidebarNavLink({ active, href, icon, label, route, onNavigate }) {
   return (
-    <Link href={href} data-route={route} className={active ? "active" : ""} aria-current={active ? "page" : undefined}>
+    <Link href={href} onClick={onNavigate} data-route={route} className={active ? "active" : ""} aria-current={active ? "page" : undefined}>
       <SidebarIcon type={icon} />
       <span>{label}</span>
     </Link>
@@ -100,6 +88,7 @@ function SidebarIcon({ type }) {
     boss: <><path d="m6 3 12 12M18 3 6 15M8 13l3 3-4 4-3-3 4-4ZM16 13l-3 3 4 4 3-3-4-4Z" /></>,
     admin: <><path d="M12 3 4 7v5c0 5 3.4 8 8 9 4.6-1 8-4 8-9V7l-8-4Z" /><path d="m9 12 2 2 4-4" /></>,
     "admin-members": <><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M8.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M18 8v6M15 11h6" /></>,
+    "member-history": <><path d="M3 12a9 9 0 1 0 3-6.7M3 3v5h5M12 7v5l3 2" /></>,
     notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
     settings: <><path d="M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4" /></>,
     "api-docs": <><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" /></>,

@@ -22,6 +22,7 @@ import {
 import { acceptedSnapshotDates, latestDataDate, localIsoDate } from "../../date.js";
 import { bossDefinitionForDate, bossDefinitionForSnapshot } from "../../lib/boss-identity.js";
 import { adaptiveChartDomain, chartPointsForRange, completedSundayPoints, weeklyPowerDelta } from "../../lib/chart-points.js";
+import { guildExperienceDetail } from "../../lib/guild-xp.js";
 import { buildDashboardBossSummary } from "../../lib/dashboard-boss-summary.js";
 import { buildDonationChartDays, latestDonationWeekPoints } from "../../lib/donation-chart.js";
 import {
@@ -29,6 +30,7 @@ import {
   expeditionRankScore,
   formatExpeditionRank,
 } from "../../lib/expedition-rank.js";
+import { attendanceSummary, compareAttendance, isDeclaredAbsent } from "../../attendance.js";
 import { evaluateWarningHistory, warningHistoryEvents } from "../../warning-history.js";
 import AppSidebar from "./AppSidebar.jsx";
 
@@ -249,9 +251,10 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         applyDashboardData(payload.data);
         setWarningActions(payload.data.warningActions ?? {});
         setDataWarning(payload.warning ?? "");
-        if (!window.localStorage.getItem(RULES_STORAGE_KEY)) {
-          setRules(normalizeRules({ ...defaultRules, currentDate: currentImportDate() }));
-        }
+        setRules((current) => normalizeRules({
+          ...(window.localStorage.getItem(RULES_STORAGE_KEY) ? current : defaultRules),
+          currentDate: currentImportDate(),
+        }));
         setDataVersion((version) => version + 1);
         setDataLoading(false);
       })
@@ -1049,7 +1052,7 @@ function AdminView({ rules, pendingDepartureCount, openWarnings }) {
   const currentMembers = currentMembersList();
   const membersToReview = new Set(openWarnings.map((warning) => memberKey(warning.member))).size;
   const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
-  const excusedMembers = currentMembers.filter((member) => member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate).length;
+  const excusedMembers = currentMembers.filter((member) => isDeclaredAbsent(member, evaluationDate)).length;
   const memberCapacity = numericValue(captures.guildStats?.memberCapacity);
   const adminSpaces = [
     { href: "/admin/members", title: "Member management", detail: "Notes, absences, status and manual warnings.", icon: "members" },
@@ -1100,7 +1103,7 @@ function AdminNotificationsView({ rules, pendingDepartures, onDepartureReviewed,
   const [filter, setFilter] = useState("all");
   const { records, loadState } = useMemberAdminRecords();
   const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
-  const excusedMembers = Object.values(records).filter((record) => record.absenceUntil && evaluationDate && record.absenceUntil >= evaluationDate).length;
+  const excusedMembers = Object.values(records).filter((record) => isDeclaredAbsent(record, evaluationDate)).length;
   const allGroupedNews = useMemo(() => {
     const grouped = new Map();
     openWarnings.forEach((warning) => {
@@ -1112,7 +1115,7 @@ function AdminNotificationsView({ rules, pendingDepartures, onDepartureReviewed,
     return [...grouped.values()]
       .map((item) => ({
         ...item,
-        excused: Boolean(records[item.playerId]?.absenceUntil && records[item.playerId].absenceUntil >= item.date),
+        excused: isDeclaredAbsent(records[item.playerId], item.date),
         absenceUntil: records[item.playerId]?.absenceUntil ?? null,
       }))
       .sort((left, right) => right.date.localeCompare(left.date) || left.member.name.localeCompare(right.member.name));
@@ -1294,14 +1297,16 @@ function AdminMembersView({ dataVersion, rules, openWarnings }) {
     const record = member.playerId ? records[member.playerId] : null;
     const automaticWarnings = openWarnings.filter((warning) => warning.playerId === member.playerId);
     const manualWarningCount = record?.warnings?.length ?? 0;
-    const evaluation = evaluateMember(member, rules);
+    const evaluation = evaluateMember({ ...member, ...record }, rules);
+    const attendance = attendanceSummary(dailyHistory(member), rules, { ...member, ...record }, rules.currentDate ?? today);
     return {
+      attendance,
       member,
       record,
       evaluation,
       automaticWarnings,
       warningCount: automaticWarnings.length + manualWarningCount,
-      isAbsent: Boolean(record?.absenceUntil && record.absenceUntil >= today),
+      isAbsent: isDeclaredAbsent(record, rules.currentDate ?? today),
     };
   });
   const filteredMembers = decoratedMembers
@@ -1314,7 +1319,7 @@ function AdminMembersView({ dataVersion, rules, openWarnings }) {
         || (filter === "missing-id" && !member.playerId);
       return matchesQuery && matchesFilter;
     })
-    .sort((left, right) => right.warningCount - left.warningCount || left.member.name.localeCompare(right.member.name));
+    .sort((left, right) => compareAttendance(left.attendance, right.attendance) || right.warningCount - left.warningCount || left.member.name.localeCompare(right.member.name));
   const currentMembers = decoratedMembers.filter(({ member }) => !isFormerStatus(member.status));
   const warningMembers = decoratedMembers.filter(({ warningCount }) => warningCount > 0).length;
   const absentMembers = decoratedMembers.filter(({ isAbsent }) => isAbsent).length;
@@ -1338,12 +1343,12 @@ function AdminMembersView({ dataVersion, rules, openWarnings }) {
         {loadState.loading ? <p className="muted">Loading private member data...</p> : null}
         {!loadState.loading ? (
           <div className="admin-member-rows">
-            {filteredMembers.map(({ member, record, evaluation, warningCount, automaticWarnings, isAbsent }) => (
+            {filteredMembers.map(({ member, record, evaluation, warningCount, automaticWarnings, isAbsent, attendance }) => (
               <a href={`/admin/members/${encodeURIComponent(memberKey(member))}`} className="admin-member-row" key={memberKey(member)}>
                 <span className="admin-member-identity"><strong>{member.name}</strong><small>{member.playerId ?? "Missing player ID"} · {roleLabel(member.role)}</small></span>
                 <span className="admin-member-context">
                   {warningCount > 0 ? <em className="warning">{warningCount} warning{warningCount === 1 ? "" : "s"}</em> : <em>Clear</em>}
-                  {isAbsent ? <em>Leave until {record.absenceUntil}</em> : null}
+                  <small className="attendance-detail">{attendance.status} · {attendance.pattern}</small><small className="attendance-detail">{attendance.detail}</small>
                   {automaticWarnings.length > 0 ? <small>{automaticWarnings.map((warning) => warning.label).join(" · ")}</small> : null}
                 </span>
                 <StatusPill label={evaluation.status} severity={evaluation.severity} />
@@ -1383,12 +1388,12 @@ function MemberHistoryView({ rules }) {
   const history = member ? dailyHistory(member).slice().reverse() : [];
   const visibleHistory = range === "all" ? history : history.slice(0, Number(range));
   const memberOptions = members.slice().sort((a, b) => a.name.localeCompare(b.name)).filter((item) => normalizedMemberName(`${item.name} ${item.playerId ?? ""}`).includes(normalizedMemberName(query)));
-  const absenceUntil = member?.playerId ? records[member.playerId]?.absenceUntil : "";
-  const warningRows = evaluateWarningHistory(history, rules, member).reduce((map, item) => map.set(item.date, item), new Map());
+  const absenceRecord = records[member?.playerId] ?? member;
+  const warningRows = evaluateWarningHistory(history, rules, { ...member, ...absenceRecord }).reduce((map, item) => map.set(item.date, item), new Map());
   return <div className="member-history-page"><section className="panel member-history-panel"><PanelHeading title="Member daily history" subtitle="Read-only day-by-day progression. Status explains what needs attention." />
     <div className="member-history-toolbar"><label className="member-history-picker"><span>Member</span><input role="combobox" aria-expanded={pickerOpen} aria-controls="member-history-options" value={pickerOpen ? query : member?.name ?? ""} onFocus={() => { setQuery(""); setPickerOpen(true); }} onChange={(event) => { setQuery(event.target.value); setPickerOpen(true); }} placeholder="Search member" />{pickerOpen ? <div className="member-history-options" id="member-history-options" role="listbox">{memberOptions.map((item) => <button type="button" role="option" aria-selected={memberKey(item) === memberKey(member ?? {})} onMouseDown={(event) => event.preventDefault()} onClick={() => { setSelectedKey(memberKey(item)); setQuery(""); setPickerOpen(false); }} key={memberKey(item)}><strong>{item.name}</strong><small>{item.playerId ?? "No player ID"}</small></button>)}{memberOptions.length === 0 ? <p>No member matches this search.</p> : null}</div> : null}</label><label className="select-field"><span>Period</span><select value={range} onChange={(event) => setRange(event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="all">All history</option></select></label></div>
     {loadState.loading ? <p className="muted">Loading absence information...</p> : null}
-    <div className="member-history-table"><table><thead><tr><th>Date</th><th>Power</th><th>Contribution</th><th>Boss</th><th>Activity</th><th>Status</th></tr></thead><tbody>{visibleHistory.map((row) => { const evaluation = warningRows.get(row.date); const absent = Boolean(absenceUntil && row.date <= absenceUntil); const inactive = !absent && Number(row.lastActivityDays) > 0; const warnings = evaluation?.warnings ?? []; const critical = !absent && (inactive || warnings.some((item) => item.type === "missed_boss")); const state = absent ? "absence" : critical ? "critical" : warnings.length ? "attention" : "clear"; const labels = absent ? ["Declared absence"] : inactive ? ["Inactive"] : warnings.map((item) => item.label); const weekday = new Date(`${row.date}T12:00:00`).toLocaleDateString("en", { weekday: "short" }); const weekStart = weekday === "Mon"; return <tr className={`member-history-row ${state} ${weekStart ? "week-start" : ""}`} key={row.date}><td data-label="Date">{weekStart ? <span className="member-history-week">New week</span> : null}<span className="member-history-date"><strong>{row.date}</strong><small className="member-history-weekday">{weekday}</small></span></td><td data-label="Power">{formatOptionalCompact(row.power)}</td><td data-label="Contribution">{formatOptionalNumber(row.donation)}</td><td data-label="Boss">{formatOptionalNumber(row.bossAttacks)}</td><td data-label="Activity">{row.lastActivityDays === 0 ? "Active" : `${row.lastActivityDays ?? "—"}d ago`}</td><td data-label="Status"><span>{labels.length ? labels.join(" · ") : "All clear"}</span></td></tr>; })}</tbody></table></div>
+    <div className="member-history-table"><table><thead><tr><th>Date</th><th>Power</th><th>Contribution</th><th>Boss</th><th>Activity</th><th>Status</th></tr></thead><tbody>{visibleHistory.map((row) => { const evaluation = warningRows.get(row.date); const absent = isDeclaredAbsent(absenceRecord, row.date); const inactive = !absent && Number.isFinite(row.lastActivityDays) && row.lastActivityDays >= rules.maxInactiveDays; const warnings = evaluation?.warnings ?? []; const critical = !absent && (inactive || warnings.some((item) => item.type === "missed_boss")); const state = absent ? "absence" : critical ? "critical" : warnings.length ? "attention" : "clear"; const labels = absent ? ["Declared absence"] : inactive ? ["Inactive"] : warnings.map((item) => item.label); const weekday = new Date(`${row.date}T12:00:00`).toLocaleDateString("en", { weekday: "short" }); const weekStart = weekday === "Mon"; return <tr className={`member-history-row ${state} ${weekStart ? "week-start" : ""}`} key={row.date}><td data-label="Date">{weekStart ? <span className="member-history-week">New week</span> : null}<span className="member-history-date"><strong>{row.date}</strong><small className="member-history-weekday">{weekday}</small></span></td><td data-label="Power">{formatOptionalCompact(row.power)}</td><td data-label="Contribution">{formatOptionalNumber(row.donation)}</td><td data-label="Boss">{formatOptionalNumber(row.bossAttacks)}</td><td data-label="Activity">{row.lastActivityDays === 0 ? "Active" : `${row.lastActivityDays ?? "—"}d ago`}</td><td data-label="Status"><span>{labels.length ? labels.join(" · ") : "All clear"}</span></td></tr>; })}</tbody></table></div>
     {history.length === 0 ? <p className="admin-module-empty">No daily history is available for this member yet.</p> : null}
   </section></div>;
 }
@@ -1478,6 +1483,7 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
   const [playerIdDraft, setPlayerIdDraft] = useState(member.playerId ?? "");
   const [editingField, setEditingField] = useState("");
   const [currentStatus, setCurrentStatus] = useState(member.status ?? "active");
+  const [absenceFrom, setAbsenceFrom] = useState(record?.absenceFrom ?? todayLabel());
   const [absenceUntil, setAbsenceUntil] = useState(record?.absenceUntil ?? "");
   const [absenceReason, setAbsenceReason] = useState(record?.absenceReason ?? "");
   const [warnings, setWarnings] = useState(record?.warnings ?? []);
@@ -1487,7 +1493,7 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [ignoredWarningKeys, setIgnoredWarningKeys] = useState(() => new Set());
   const [saveState, setSaveState] = useState({ saving: false, error: "", success: "" });
-  const automaticWarnings = warningHistoryEvents(dailyHistory(member), rules, member)
+  const automaticWarnings = warningHistoryEvents(dailyHistory(member), rules, { ...member, ...record })
     .map((warning) => ({
       ...warning,
       playerId: member.playerId,
@@ -1565,6 +1571,7 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
     if (!member.playerId) return;
     setSaveState({ saving: true, error: "", success: "" });
     const nextRecord = {
+      absenceFrom: nextValues.absenceUntil ? absenceFrom : null,
       absenceUntil: nextValues.absenceUntil || null,
       absenceReason: nextValues.absenceReason,
       warnings: nextValues.warnings,
@@ -1579,6 +1586,7 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.record) throw new Error(payload?.error ?? "Private member data save failed.");
       onSaved(member.playerId, payload.record);
+      setAbsenceFrom(payload.record.absenceFrom ?? todayLabel());
       setAbsenceUntil(payload.record.absenceUntil ?? "");
       setAbsenceReason(payload.record.absenceReason ?? "");
       setWarnings(payload.record.warnings ?? []);
@@ -1696,7 +1704,7 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
             <section className="admin-member-module">
               <header><div><h3>Officer notes</h3><p>Private context and announced absence.</p></div><button className="primary-button compact-action" type="button" onClick={() => setFollowUpOpen(true)}>Add</button></header>
               <div className="admin-notes-list">
-                {absenceUntil ? <div className="admin-note-line absence"><WarningTypeIcon type="absence" /><span><strong>Absent until {absenceUntil}</strong><small>{absenceReason || "No context provided."}</small></span><button className="admin-row-action" type="button" onClick={() => savePrivateData({ absenceUntil: "", absenceReason: "", warnings, notes }, "Absence removed.")}>Remove</button></div> : null}
+                {absenceUntil ? <div className="admin-note-line absence"><WarningTypeIcon type="absence" /><span><strong>Absent {absenceFrom} to {absenceUntil}</strong><small>{absenceReason || "No context provided."}</small></span><button className="admin-row-action" type="button" onClick={() => savePrivateData({ absenceUntil: "", absenceReason: "", warnings, notes }, "Absence removed.")}>Remove</button></div> : null}
                 {notes.slice().reverse().map((note, reverseIndex) => {
                   const index = notes.length - 1 - reverseIndex;
                   return <div className="admin-note-line" key={`${note.at}-${index}`}><WarningTypeIcon type="note" /><span><strong>{note.note}</strong><small>{note.at}</small></span><button className="admin-row-action" type="button" onClick={() => removeManualItem("note", index)}>Remove</button></div>;
@@ -1708,6 +1716,10 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
         </>
       )}
 
+      <section className="panel"><PanelHeading title="Attendance audit" subtitle="Saved absence and follow-up changes; historical absence dates remain excused." />
+        {(record?.audit ?? []).slice().reverse().map((event, index) => <details key={`${event.at}-${index}`}><summary>{event.at} · {event.actor}</summary><p>Before: {event.before.absenceFrom ?? "—"} to {event.before.absenceUntil ?? "—"} · {event.before.absenceReason || "No absence note"}</p><p>After: {event.after.absenceFrom ?? "—"} to {event.after.absenceUntil ?? "—"} · {event.after.absenceReason || "No absence note"}</p><p>Warnings: {event.before.warnings.length} → {event.after.warnings.length}; notes: {event.before.notes.length} → {event.after.notes.length}</p></details>)}
+        {!record?.audit?.length ? <p>No recorded changes yet.</p> : null}
+      </section>
       <div className="admin-member-save-feedback" aria-live="polite">
         {saveState.error ? <span className="form-error" role="alert">{saveState.error}</span> : null}
         {saveState.success ? <span className="form-success" role="status">{saveState.success}</span> : null}
@@ -1721,7 +1733,8 @@ function AdminMemberEditor({ member, record, rules, warningActions, updateWarnin
               {["warning", "note", "absence"].map((type) => <button className={followUpType === type ? "active" : ""} type="button" key={type} onClick={() => setFollowUpType(type)}>{displayLabel(type)}</button>)}
             </div>
             {followUpType === "absence" ? <>
-              <label><span>Until</span><input type="date" value={absenceUntil} onChange={(event) => setAbsenceUntil(event.target.value)} /></label>
+              <label><span>From</span><input type="date" required value={absenceFrom} onChange={(event) => setAbsenceFrom(event.target.value)} /></label>
+              <label><span>Until</span><input type="date" required min={absenceFrom} value={absenceUntil} onChange={(event) => setAbsenceUntil(event.target.value)} /></label>
               <div className="admin-quick-days">{[7, 14, 30].map((days) => <button className="secondary-button compact-action" type="button" key={days} onClick={() => setAbsenceDays(days)}>{days} days</button>)}</div>
               <label><span>Context</span><textarea value={absenceReason} onChange={(event) => setAbsenceReason(event.target.value)} placeholder="Holiday, exams, travel…" /></label>
             </> : <label><span>{followUpType === "warning" ? "Warning reason" : "Private note"}</span><textarea autoFocus value={followUpDraft} onChange={(event) => setFollowUpDraft(event.target.value)} placeholder={followUpType === "warning" ? "What needs attention?" : "Useful context for officers…"} /></label>}
@@ -1920,7 +1933,7 @@ function Dashboard({ rules }) {
       key: "level",
       label: "Guild level",
       value: formatOptionalNumber(guildStats.level),
-      detail: formatGuildExperience(guildStats.xpCurrent, guildStats.xpRequired),
+      detail: guildExperienceDetail(guildStats, guildStatsHistory),
     },
     {
       key: "members",
@@ -2114,6 +2127,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
     setSelectedMembersDate(latestHistoryDate);
   }, [latestHistoryDate]);
   const selectedMembersDateIndex = Math.max(0, historyDates.indexOf(selectedMembersDate));
+  const datedRules = { ...rules, currentDate: selectedMembersDate };
   const datedMembers = members.map((member) => memberSnapshotForDate(member, selectedMembersDate));
   const currentDatedMembers = datedMembers.filter((member) => !isFormerStatus(member.status));
   const memberCapacity = numericValue(captures.guildStats?.memberCapacity);
@@ -2121,16 +2135,16 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
   const weeklyDonationTarget = numericValue(rules.minContribution7d, null);
   const memberOverview = currentDatedMembers.reduce(
     (overview, member) => {
-      const evaluation = evaluateMember(member, rules);
+      const evaluation = evaluateMember(member, datedRules);
       if (evaluation.status === "Absent") overview.absent += 1;
-      if (requiredBossTries != null && typeof member.bossAttacks === "number" && member.bossAttacks < requiredBossTries) overview.bossIncomplete += 1;
-      if (weeklyDonationTarget != null && typeof member.contribution7d === "number" && member.contribution7d < weeklyDonationTarget) overview.donationBelowTarget += 1;
+      if (!isDeclaredAbsent(member, selectedMembersDate) && requiredBossTries != null && typeof member.bossAttacks === "number" && member.bossAttacks < requiredBossTries) overview.bossIncomplete += 1;
+      if (!isDeclaredAbsent(member, selectedMembersDate) && weeklyDonationTarget != null && typeof member.contribution7d === "number" && member.contribution7d < weeklyDonationTarget) overview.donationBelowTarget += 1;
       return overview;
     },
     { bossIncomplete: 0, donationBelowTarget: 0, absent: 0 },
   );
   const membersForView = datedMembers.filter((member) => statusFilter === "former" || !isFormerStatus(member.status));
-  const visibleMembers = sortMembers(filterMembers(membersForView, rules, query, statusFilter), rules, sort);
+  const visibleMembers = sortMembers(filterMembers(membersForView, datedRules, query, statusFilter), datedRules, sort);
 
   function toggleSort(key) {
     setSort((current) =>
@@ -2153,7 +2167,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
   async function exportMembers() {
     setExporting(true);
     try {
-      await exportMembersImage(visibleMembers, rules, {
+      await exportMembersImage(visibleMembers, datedRules, {
         selectedDate: selectedMembersDate,
         query,
         statusFilter,
@@ -2262,7 +2276,7 @@ function MembersView({ query, setQuery, statusFilter, setStatusFilter, sort, set
             </thead>
             <tbody>
               {visibleMembers.map((member) => (
-                <MemberRow member={member} rules={rules} key={memberKey(member)} />
+                <MemberRow member={member} rules={datedRules} key={memberKey(member)} />
               ))}
               {visibleMembers.length === 0 ? <tr><td colSpan="7" className="table-empty-state">No members match this view.</td></tr> : null}
             </tbody>
@@ -3280,6 +3294,9 @@ function RulesView({ rules, setRules }) {
     ["minContribution7d", "Weekly donation", "Minimum donation expected over seven days", "points", "Medium alert", "monitoring", "donation"],
     ["minPowerGrowth14dPercent", "Weekly power progression", "Minimum power growth expected each week", "%", "Medium alert", "monitoring", "progress"],
     ["minBossTries", "Boss participation", "Minimum tries expected per event day", "tries", "High alert", "monitoring", "boss"],
+    ["attendanceWindowDays", "Attendance window", "Calendar days included in recurrence counts", "days", "Medium alert", "monitoring", "inactive"],
+    ["attendanceRepeatThreshold", "Repeated misses", "Missed days in the attendance window before a recurrent alert", "days", "Medium alert", "monitoring", "inactive"],
+    ["attendanceStreakThreshold", "Consecutive misses", "Consecutive missed days before a high priority alert", "days", "High alert", "monitoring", "inactive"],
     ["newMemberGraceDays", "New member grace", "Days before monitoring rules start applying", "days", "Rule pause", "guild", "members"],
   ];
   const renderRule = ([key, name, label, unit, effect, , icon]) => (
@@ -3294,7 +3311,8 @@ function RulesView({ rules, setRules }) {
         <input
           className="rule-input"
           type="number"
-          min="0"
+          min={key.startsWith("attendance") ? (key === "attendanceWindowDays" ? 1 : 2) : 0}
+          max={key.startsWith("attendance") ? 365 : undefined}
           step={key === "minPowerGrowth14dPercent" ? "0.1" : "1"}
           value={rules[key]}
           aria-label={`${name} threshold in ${unit}`}
@@ -4302,11 +4320,6 @@ function numericValue(primary, fallback = null) {
 function formatRatio(value, total) {
   if (typeof value !== "number" || typeof total !== "number") return "Not captured";
   return `${formatNumber(value)}/${formatNumber(total)}`;
-}
-
-function formatGuildExperience(current, required) {
-  if (typeof current !== "number" || typeof required !== "number") return "Experience not captured";
-  return `${formatNumber(current)} / ${formatNumber(required)} XP`;
 }
 
 function chartAccessibleSummary(rows, valueKey, formatter) {

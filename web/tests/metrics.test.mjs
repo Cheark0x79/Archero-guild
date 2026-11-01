@@ -412,3 +412,18 @@ test("mergeRosterMetrics preserves former roster status", () => {
   assert.equal(rows[0].status, "kicked");
   assert.equal(rows[0].leftAt, "2026-07-15");
 });
+
+test('declared absence status remains explicit during new-member grace and without metrics', () => {
+  const absent = { ...member, joinedAt:'2026-08-04', absenceFrom:'2026-08-04', absenceUntil:'2026-08-06', metricsCaptured:false };
+  assert.equal(evaluateMember(absent, {...rules,currentDate:'2026-08-05',newMemberGraceDays:7}).status, 'Excused');
+});
+
+test('selected historical date controls absence status and filtering without changing stored rules', () => {
+  const storedRules={...rules,currentDate:'2025-01-05'};
+  const historical={...member,lastSeenAt:'2025-01-04',absenceFrom:'2025-01-05',absenceUntil:'2025-01-05',lastActivityDays:5};
+  assert.equal(evaluateMember(historical,{...storedRules,currentDate:'2025-01-04'}).status,'Absent');
+  assert.equal(evaluateMember(historical,{...storedRules,currentDate:'2025-01-05'}).status,'Excused');
+  assert.equal(filterMembers([historical],{...storedRules,currentDate:'2025-01-04'},'','absent').length,1);
+  assert.equal(filterMembers([historical],{...storedRules,currentDate:'2025-01-05'},'','absent').length,0);
+  assert.equal(storedRules.currentDate,'2025-01-05');
+});

@@ -1,3 +1,4 @@
+import { defaultRules } from "../../../../default-rules.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -9,6 +10,9 @@ const LIMITS = {
   minContribution7d: [0, 1_000_000],
   minPowerGrowth14dPercent: [0, 1_000],
   minBossTries: [0, 100],
+  attendanceWindowDays: [1, 365],
+  attendanceRepeatThreshold: [2, 365],
+  attendanceStreakThreshold: [2, 365],
   newMemberGraceDays: [0, 365],
   memberCapacity: [1, 1_000],
 };
@@ -25,8 +29,8 @@ function normalizeRules(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("rules must be an object");
   const rules = {};
   for (const [key, [minimum, maximum]] of Object.entries(LIMITS)) {
-    const candidate = Number(value[key]);
-    if (!Number.isFinite(candidate) || candidate < minimum || candidate > maximum) {
+    const candidate = Number(value[key] ?? (key.startsWith("attendance") ? defaultRules[key] : undefined));
+    if (!Number.isFinite(candidate) || candidate < minimum || candidate > maximum || (key.startsWith("attendance") && !Number.isInteger(candidate))) {
       throw new Error(`${key} must be between ${minimum} and ${maximum}`);
     }
     rules[key] = candidate;
@@ -41,7 +45,7 @@ function normalizePartialRules(value) {
     if (!(key in LIMITS)) continue;
     const [minimum, maximum] = LIMITS[key];
     const candidate = Number(candidateValue);
-    if (!Number.isFinite(candidate) || candidate < minimum || candidate > maximum) {
+    if (!Number.isFinite(candidate) || candidate < minimum || candidate > maximum || (key.startsWith("attendance") && !Number.isInteger(candidate))) {
       throw new Error(`${key} must be between ${minimum} and ${maximum}`);
     }
     rules[key] = candidate;

@@ -7,7 +7,7 @@ export async function GET(request) {
   const unauthorized = requireApiKey(request);
   if (unauthorized) return unauthorized;
 
-  const payload = await loadDashboardData();
+  const payload = await loadDashboardData({ includeAttendance: true });
   const result = queryMembers(membersFromData(payload.data, publicApiOrigin(request)), request.nextUrl.searchParams);
   if (result.error) return apiError(400, result.error.code, result.error.message);
   return apiSuccess(result.items, { ...payload, pagination: result.pagination });
