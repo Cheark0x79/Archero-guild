@@ -24,6 +24,22 @@ class StorageRulesTests(unittest.TestCase):
             with patch.dict(os.environ, {"ARCHERO_RULES_FILE": str(path)}):
                 self.assertEqual(_read_legacy_rules(), rules)
 
+    def test_attendance_settings_survive_storage_and_require_whole_days(self) -> None:
+        rules = {
+            "maxInactiveDays": 3, "minContribution7d": 500,
+            "minPowerGrowth14dPercent": 1, "minBossTries": 2,
+            "newMemberGraceDays": 7, "memberCapacity": 40,
+            "attendanceWindowDays": 21, "attendanceRepeatThreshold": 4,
+            "attendanceStreakThreshold": 2,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.json"
+            with patch.dict(os.environ, {"ARCHERO_RULES_FILE": str(path)}):
+                path.write_text(json.dumps(rules), encoding="utf-8")
+                self.assertEqual(_read_legacy_rules(), rules)
+                path.write_text(json.dumps({**rules, "attendanceWindowDays": 1.5}), encoding="utf-8")
+                self.assertEqual(_read_legacy_rules(), {})
+
     def test_invalid_legacy_rules_are_not_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "rules.json"

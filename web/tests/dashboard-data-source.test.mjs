@@ -229,3 +229,31 @@ test("database exports are cached and concurrent requests share one process", as
   assert.equal(calls, 2);
   resetDashboardDataCacheForTest();
 });
+
+test('public data loading supplies absence dates without private audit or notes', async () => {
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { saveMemberAdminRecord } = await import('../lib/member-admin.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'archero-public-absence-'));
+  const previous = process.cwd();
+  const previousSecret = process.env.ARCHERO_SHARE_LINK_SECRET;
+  process.env.ARCHERO_SHARE_LINK_SECRET = "ticket50-synthetic-share-secret-32-bytes";
+  try {
+    await saveMemberAdminRecord(root, '900000001', { absenceFrom: '2026-08-08', absenceUntil: '2026-08-09', absenceReason: 'Private synthetic note' });
+    process.chdir(root);
+    const result = await loadDashboardData({includeAttendance:true,environment:{ARCHERO_DATA_MODE:'demo',ARCHERO_PUBLIC_ORIGIN:'http://127.0.0.1:5250'}});
+    const member = result.data.guildRoster.find(row => row.playerId === '900000001');
+    assert.equal(member.absenceFrom, '2026-08-08');
+    assert.equal(member.absenceUntil, '2026-08-09');
+    assert.equal(member.absenceReason, undefined);
+    assert.equal(member.audit, undefined);
+    assert.equal(member.notes, undefined);
+    const { membersFromData, memberHistoryFromData } = await import('../app/api/v1/_lib/domain.js');
+    const publicMember = membersFromData(result.data).find(row => row.playerId === '900000001');
+    const publicHistory = memberHistoryFromData(result.data, '900000001', new URLSearchParams());
+    const serialized = JSON.stringify({publicMember, publicHistory});
+    for (const key of ['absenceFrom', 'absenceUntil', 'absenceReason', 'absences', 'audit', 'notes']) assert.equal(serialized.includes(`"${key}"`), false);
+    assert.deepEqual(publicHistory.items.filter(row => ['2026-08-08','2026-08-09'].includes(row.date)).map(row => row.warnings), [[], []]);
+  } finally { process.chdir(previous); if (previousSecret === undefined) delete process.env.ARCHERO_SHARE_LINK_SECRET; else process.env.ARCHERO_SHARE_LINK_SECRET = previousSecret; await fs.rm(root,{recursive:true,force:true}); }
+});

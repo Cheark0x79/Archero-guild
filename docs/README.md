@@ -29,6 +29,7 @@ for repository, architecture, configuration, operations, and API contracts.
 | Document | Audience | Status | Purpose |
 | --- | --- | --- | --- |
 | [`../ocr/README.md`](../ocr/README.md) | OCR operator | Current | Local capture, review, local simulation, and publication |
+| [`guides/attendance.md`](guides/attendance.md) | Guild administrators | Current guide | Attendance recurrence, declared absences, and audit history |
 | [`guides/discord-warnings.md`](guides/discord-warnings.md) | Bot operator | Current guide | Practical warning API examples; `api.md` remains canonical |
 
 ## Documentation contract
