@@ -2648,6 +2648,7 @@ function BossAllTimePanel({ allRows, records }) {
 
 async function exportBossAllTimeRanking(rows, scopeLabel = "All bosses", bossKey = "all") {
   const exportRows = rows.map((row, index) => ({ ...row, rank: index + 1 }));
+  const remaining = exportRows.slice(3);
   const width = 1800;
   const margin = 64;
   const rowHeight = 70;
@@ -2657,7 +2658,7 @@ async function exportBossAllTimeRanking(rows, scopeLabel = "All bosses", bossKey
   const tableTop = podiumTop + podiumHeight + 54;
   const tableHeaderHeight = 58;
   const footerHeight = 56;
-  const height = tableTop + tableHeaderHeight + exportRows.length * rowHeight + footerHeight + margin;
+  const height = tableTop + tableHeaderHeight + remaining.length * rowHeight + footerHeight + margin;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -2678,7 +2679,7 @@ async function exportBossAllTimeRanking(rows, scopeLabel = "All bosses", bossKey
     if (card.row) drawExportPodiumCard(ctx, card, images.get(card.row.bossKey));
   }
 
-  drawExportTable(ctx, exportRows, images, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
+  drawExportTable(ctx, remaining, images, margin, tableTop, width - margin * 2, tableHeaderHeight, rowHeight);
   downloadCanvas(canvas, `archero-boss-ranking-${bossKey}-${currentIsoDate()}.png`);
 }
 
