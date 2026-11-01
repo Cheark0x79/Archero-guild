@@ -107,3 +107,7 @@ ocr-status:
 
 ocr-logs:
 	$(OCR_COMPOSE) logs --tail=100 ui
+
+.PHONY: test-e2e
+test-e2e:
+	npm --prefix web run test:e2e

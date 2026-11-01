@@ -33,7 +33,7 @@ export async function loadDashboardData(options = {}) {
       : unavailableDatabasePayload("Synthetic demonstration data is restricted to loopback test environments without strict database mode.");
     return includePrivateDashboardData
       ? decorateDashboardPayload(payload, options.includeWarningActions)
-      : payload;
+      : options.includeAttendance ? decorateAttendancePayload(payload) : payload;
   }
   if (!environment.ARCHERO_DATABASE_URL && !environment.DATABASE_URL) {
     const payload = requiresDatabase(environment)
@@ -48,7 +48,7 @@ export async function loadDashboardData(options = {}) {
         };
     return includePrivateDashboardData
       ? decorateDashboardPayload(payload, options.includeWarningActions)
-      : payload;
+      : options.includeAttendance ? decorateAttendancePayload(payload) : payload;
   }
 
   const cache = dashboardCache();
@@ -56,13 +56,13 @@ export async function loadDashboardData(options = {}) {
   if (!options.bypassCache && cache.value && cache.expiresAt > now) {
     return includePrivateDashboardData
       ? decorateDashboardPayload(cache.value, options.includeWarningActions)
-      : cache.value;
+      : options.includeAttendance ? decorateAttendancePayload(cache.value) : cache.value;
   }
   if (cache.inFlight) {
     const payload = await cache.inFlight;
     return includePrivateDashboardData
       ? decorateDashboardPayload(payload, options.includeWarningActions)
-      : payload;
+      : options.includeAttendance ? decorateAttendancePayload(payload) : payload;
   }
 
   const runExport = options.runExport ?? (() => runObserverModule("archero_guild.storage.export_json"));
@@ -89,7 +89,7 @@ export async function loadDashboardData(options = {}) {
   const payload = await request;
   return includePrivateDashboardData
     ? decorateDashboardPayload(payload, options.includeWarningActions)
-    : payload;
+    : options.includeAttendance ? decorateAttendancePayload(payload) : payload;
 }
 
 export function requiresDatabase(environment = process.env) {
@@ -333,6 +333,12 @@ export function normalizeDatabasePayload(data) {
   };
 }
 
+async function decorateAttendancePayload(payload) {
+  if (!payload?.data || typeof payload.data !== "object") return payload;
+  const records = await readMemberAdminRecords(projectRoot());
+  return { ...payload, data: { ...payload.data, guildRoster: rosterWithAbsences(payload.data.guildRoster, records) } };
+}
+
 async function decorateDashboardPayload(payload, includeWarningActions) {
   if (!payload?.data || typeof payload.data !== "object") return payload;
   const memberAdminRecords = await readMemberAdminRecords(projectRoot());
@@ -387,7 +393,8 @@ export function selectWarningActions(actions, includeWarningActions) {
 function rosterWithAbsences(roster, records) {
   return arrayOrEmpty(roster).map((member) => {
     const absenceUntil = member?.playerId ? records[member.playerId]?.absenceUntil : null;
-    return absenceUntil ? { ...member, absenceUntil } : member;
+    const record = records[member?.playerId];
+    return record ? { ...member, absenceUntil, absenceFrom: record.absenceFrom, absences: record.absences.map(({ from, until }) => ({ from, until })) } : member;
   });
 }
 

@@ -6,7 +6,7 @@ export async function GET(request, { params }) {
   const unauthorized = requireApiKey(request);
   if (unauthorized) return unauthorized;
   const { playerId } = await params;
-  const payload = await loadDashboardData();
+  const payload = await loadDashboardData({ includeAttendance: true });
   if (!findMember(membersFromData(payload.data), playerId)) {
     return apiError(404, "member_not_found", "No member matches this player ID.");
   }

@@ -1,3 +1,4 @@
+import { isDeclaredAbsent } from "./absence.js";
 const DAY_MS = 86_400_000;
 
 export function evaluateWarningHistory(rows, rules, member = {}) {
@@ -34,6 +35,7 @@ export function warningHistorySummary(events) {
 }
 
 function warningsForRow(row, previousRows, rules, member) {
+  if (isDeclaredAbsent(member, row.date)) return [];
   if (isInGracePeriod(row.date, member.joinedAt, rules.newMemberGraceDays)) return [];
 
   const warnings = [];

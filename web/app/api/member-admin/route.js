@@ -32,6 +32,6 @@ export async function PUT(request) {
     const record = await saveMemberAdminRecord(projectRoot(), playerId, payload?.record);
     return NextResponse.json({ ok: true, playerId, record });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "save failed" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "save failed" }, { status: error?.code === "MEMBER_ADMIN_BUSY" ? 409 : 400 });
   }
 }

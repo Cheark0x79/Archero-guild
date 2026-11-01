@@ -1,3 +1,4 @@
+import { isDeclaredAbsent } from "./absence.js";
 export function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -127,12 +128,17 @@ export function dateOnly(value, fallback = null) {
 }
 
 export function evaluateMember(member, rules) {
+  rules = { ...rules, currentDate: dateOnly(rules.currentDate, member.lastSeenAt) };
   if (isFormerMember(member)) {
     return {
       status: member.status === "kicked" ? "Kicked" : "Left",
       flags: ["Not in current guild"],
       severity: "neutral",
     };
+  }
+
+  if (isDeclaredAbsent(member, rules.currentDate)) {
+    return { status: "Excused", flags: ["Excused absence"], severity: "positive" };
   }
 
   if (!member.metricsCaptured) {
@@ -160,8 +166,8 @@ export function evaluateMember(member, rules) {
   }
 
   const flags = [];
-  const evaluationDate = dateOnly(rules.currentDate, new Date().toISOString());
-  const isExcused = Boolean(member.absenceUntil && evaluationDate && member.absenceUntil >= evaluationDate);
+  const evaluationDate = rules.currentDate;
+  const isExcused = isDeclaredAbsent(member, evaluationDate);
 
   if (!isExcused && member.lastActivityDays != null && member.lastActivityDays >= rules.maxInactiveDays) {
     flags.push("Game absence");
@@ -171,11 +177,11 @@ export function evaluateMember(member, rules) {
     flags.push("Low contribution");
   }
 
-  if (typeof member.power14dPercent === "number" && member.power14dPercent < rules.minPowerGrowth14dPercent) {
+  if (!isExcused && typeof member.power14dPercent === "number" && member.power14dPercent < rules.minPowerGrowth14dPercent) {
     flags.push("Low progression");
   }
 
-  if (typeof member.bossAttacks === "number" && member.bossAttacks < bossTriesRequired(rules)) {
+  if (!isExcused && typeof member.bossAttacks === "number" && member.bossAttacks < bossTriesRequired(rules)) {
     flags.push("Missed boss");
   }
 
@@ -438,6 +444,8 @@ export function mergeRosterMetrics(roster, snapshots) {
       joinedAt: entry.joinedAt ?? snapshot?.joinedAt ?? null,
       leftAt: entry.leftAt ?? snapshot?.leftAt ?? null,
       status: entry.status ?? snapshot?.status ?? "active",
+      absenceFrom: entry.absenceFrom ?? snapshot?.absenceFrom ?? null,
+      absences: entry.absences ?? snapshot?.absences ?? [],
       absenceUntil: entry.absenceUntil ?? snapshot?.absenceUntil ?? null,
       absenceReason: entry.absenceReason ?? snapshot?.absenceReason ?? "",
       warnings: entry.warnings ?? snapshot?.warnings ?? [],
