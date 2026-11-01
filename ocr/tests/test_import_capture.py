@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from archero_guild.import_capture import (
     ImportedScreenshot,
+    ImportReport,
+    update_sample_data,
     ImportValidationError,
     _upsert_daily_raw_snapshots,
     _unique_boss_rankings,
@@ -71,6 +73,38 @@ export const dailyBossRawSnapshots = [
 
 
 class ImportCaptureTests(unittest.TestCase):
+    def test_all_legacy_snapshot_paths_preserve_positive_integer_power(self) -> None:
+        for power in (28_290_000, 1_234_567_890_123_456, 1, None, 0, -1, 1.5, True, "28.29M"):
+            with self.subTest(power=power), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "sample-data.js"
+                path.write_text(SAMPLE_DATA)
+                metric = ExtractedMemberMetrics("900000110", "Synthetic", "member", power, 100, 1, 0, "synthetic.png row 0", 1, "Synthetic")
+                report = ImportReport("2026-07-29", "2026-07-29T12:00:00Z", directory, [], [], 1, 0, 1, "", True)
+                update_sample_data(path, report, [metric], [metric], "2026-07-28", {"2026-07-29": [metric]})
+                content = path.read_text()
+                valid = type(power) is int and power > 0
+                # The current snapshot also keeps the stored 1.3M when the reading is far from it.
+                current = power if valid and 975_000 <= power <= 2_275_000 else 1300000
+                self.assertIn(f'screenshotMember("900000110", "member", {current},', content)
+                for prefix in ("previousSnapshotMember", "rawSnapshotMember"):
+                    self.assertIn(f'{prefix}("900000110", "member", {power if valid else "null"},', content)
+
+    def test_current_snapshot_keeps_stored_power_for_far_readings(self) -> None:
+        for power, expected in ((2_200_000, 2_200_000), (13_000_000, 1300000), (130_000, 1300000)):
+            with self.subTest(power=power), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "sample-data.js"
+                path.write_text(SAMPLE_DATA)
+                metric = ExtractedMemberMetrics("900000110", "Synthetic", "member", power, 100, 1, 0, "synthetic.png row 0", 1, "Synthetic")
+                report = ImportReport("2026-07-29", "2026-07-29T12:00:00Z", directory, [], [], 1, 0, 1, "", True)
+                update_sample_data(path, report, [metric], [metric], "2026-07-28", {"2026-07-29": [metric]})
+                self.assertIn(f'screenshotMember("900000110", "member", {expected},', path.read_text())
+
+    def test_power_above_former_cap_is_kept_when_close_to_stored_value(self) -> None:
+        from archero_guild.import_capture import _validated_power
+        self.assertEqual(_validated_power(28_290_000, 25_000_000), 28_290_000)
+        self.assertEqual(_validated_power(2_829_000_000, 28_290_000), 28_290_000)
+        self.assertEqual(_validated_power(28_290_000, 0), 28_290_000)
+
     def test_capture_paths_reads_legacy_and_uploaded_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             day_dir = Path(directory) / "2026-07-16"
