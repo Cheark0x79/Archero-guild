@@ -215,6 +215,7 @@ const routeMeta = {
   members: ["Members", "Search, status, and individual progression."],
   boss: ["Boss", "Compare weekly damage and explore guild records."],
   data: ["Data", "Manual ADB screenshots and imports for the current capture workflow."],
+  "daily-editor": ["Daily data editor", "Correct verified historical values for one captured day."],
   admin: ["Admin overview", "Operational status and administration tasks."],
   "admin-members": ["Member management", "Private notes, absences, identities, and roster status."],
   "member-history": ["Member history", "Daily member progression and explainable warning states."],
@@ -391,6 +392,7 @@ export default function DashboardApp({ initialRoute = "dashboard", memberKeyPara
         )}
         {!dataLoading && activeRoute === "boss" && <BossView />}
         {!dataLoading && activeRoute === "data" && <DataView />}
+        {!dataLoading && activeRoute === "daily-editor" && <DailyDataEditor />}
         {!dataLoading && activeRoute === "admin" && (
           <AdminView
             rules={rules}
@@ -558,6 +560,57 @@ function MembershipReview({ membersToReview, onReviewed, compact = false }) {
       {error ? <p className="membership-review-error" role="alert">{error} Try again.</p> : null}
     </section>
   );
+}
+
+function DailyDataEditor() {
+  const history = (captures.guildStatsHistory ?? []).filter((item) => item?.date).slice().sort((left, right) => right.date.localeCompare(left.date));
+  const [date, setDate] = useState(history[0]?.date ?? "");
+  const [tab, setTab] = useState("members");
+  const selected = history.find((item) => item.date === date) ?? null;
+  const memberRows = dailyRawSnapshots.find((item) => item.date === date)?.rows ?? [];
+  const bossRows = dailyBossRawSnapshots.filter((item) => item.date === date).flatMap((item) => item.rows ?? []);
+  const [draft, setDraft] = useState(() => editorDraft(selected));
+  const [memberEdits, setMemberEdits] = useState({});
+  const [bossEdits, setBossEdits] = useState({});
+  const [state, setState] = useState({ saving: false, message: "" });
+  useEffect(() => { if (!date && history[0]?.date) setDate(history[0].date); }, [date, history]);
+  useEffect(() => { setDraft(editorDraft(history.find((item) => item.date === date) ?? null)); setMemberEdits({}); setBossEdits({}); setState({ saving: false, message: "" }); }, [date]);
+  async function save(event) {
+    event.preventDefault();
+    setState({ saving: true, message: "" });
+    try {
+      const response = await fetch("/api/guild-stats", { method: "PUT", headers: { "content-type": "application/json", "x-archero-dashboard-action": "1" }, body: JSON.stringify({ date, ...numericEditorDraft(draft), expeditionName: draft.expeditionName || null, expeditionRank: draft.expeditionRank || null, memberEdits: Object.values(memberEdits), bossEdits: Object.values(bossEdits) }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save this correction.");
+      const refreshed = await loadDashboardData({ force: true });
+      applyDashboardData(refreshed.data);
+      setMemberEdits({});
+      setBossEdits({});
+      setState({ saving: false, message: "Correction saved and recorded in the audit history." });
+    } catch (error) { setState({ saving: false, message: error instanceof Error ? error.message : "Unable to save this correction." }); }
+  }
+  return <div className="admin-management daily-editor"><section className="panel daily-editor-panel"><div className="daily-editor-heading"><PanelHeading title="Daily data editor" subtitle="Correct all values from one captured day. Changes are kept in the audit history." /><button className="primary-button" type="submit" form="daily-editor-form" disabled={state.saving || !selected}>{state.saving ? "Saving…" : "Save changes"}</button></div>
+    {history.length === 0 ? <p className="admin-module-empty">No daily guild snapshot is available yet.</p> : <form id="daily-editor-form" onSubmit={save}><fieldset disabled={state.saving} style={{ border: 0, padding: 0, minWidth: 0 }}><label>Capture date<select aria-label="Capture date" value={date} onChange={(event) => setDate(event.target.value)}>{history.map((item) => <option key={item.date} value={item.date}>{item.date}</option>)}</select></label><div className="daily-editor-dates" aria-label="Available capture dates">{history.slice(0, 7).reverse().map((item) => <button type="button" className={item.date === date ? "active" : ""} onClick={() => setDate(item.date)} key={item.date}><strong>{item.date.slice(-2)}</strong><span>{new Date(`${item.date}T12:00:00Z`).toLocaleDateString("en", { weekday: "short" })}</span></button>)}</div>
+      <div className="daily-editor-summary"><section className="daily-editor-card guild-card"><span>Guild level</span><EditorNumber label="Level" field="level" draft={draft} setDraft={setDraft} /><div className="editor-pair"><EditorNumber label="Current XP" field="xpCurrent" draft={draft} setDraft={setDraft} /><EditorNumber label="Required XP" field="xpRequired" draft={draft} setDraft={setDraft} /></div></section><section className="daily-editor-card"><span>Members</span><div className="editor-pair"><EditorNumber label="Current" field="memberCount" draft={draft} setDraft={setDraft} /><EditorNumber label="Capacity" field="memberCapacity" draft={draft} setDraft={setDraft} /></div></section><section className="daily-editor-card"><span>Guild power</span><EditorNumber label="Total power" field="totalPower" draft={draft} setDraft={setDraft} /></section><section className="daily-editor-card"><span>Expedition points</span><EditorNumber label="Points" field="expeditionPoints" draft={draft} setDraft={setDraft} /></section><section className="daily-editor-card expedition-card"><span>Expedition rank</span><label>Tier<input value={draft.expeditionName} onChange={(event) => setDraft({ ...draft, expeditionName: event.target.value })} /></label><label>Rank<input value={draft.expeditionRank} onChange={(event) => setDraft({ ...draft, expeditionRank: event.target.value.toUpperCase() })} /></label></section></div>
+      <div className="daily-editor-tabs" role="tablist"><button type="button" className={tab === "members" ? "active" : ""} onClick={() => setTab("members")} role="tab" aria-selected={tab === "members"}>Members · {memberRows.length}</button><button type="button" className={tab === "boss" ? "active" : ""} onClick={() => setTab("boss")} role="tab" aria-selected={tab === "boss"}>Boss · {bossRows.length}</button></div>
+      <div className="daily-editor-table"><table><thead>{tab === "members" ? <tr><th>Member</th><th>Power</th><th>Contribution</th><th>Boss attacks</th><th>Activity</th></tr> : <tr><th>Member</th><th>Boss damage</th><th>Rank</th><th>Source</th></tr>}</thead><tbody>{tab === "members" ? memberRows.map((row, index) => { const edit = memberEdits[row.playerId]; const set = (field, value) => row.playerId && setMemberEdits((current) => ({ ...current, [row.playerId]: { playerId: row.playerId, power: Object.hasOwn(edit ?? {}, "power") ? edit.power : row.power ?? null, contribution7d: Object.hasOwn(edit ?? {}, "contribution7d") ? edit.contribution7d : row.contribution7d ?? null, bossAttacks: Object.hasOwn(edit ?? {}, "bossAttacks") ? edit.bossAttacks : row.bossAttacks ?? null, lastActivityDays: Object.hasOwn(edit ?? {}, "lastActivityDays") ? edit.lastActivityDays : row.lastActivityDays ?? null, [field]: value === "" ? null : Number(value) } })); return <tr key={`${row.playerId}-${index}`}><td>{row.name ?? "Unmatched member"}</td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "power") ? edit.power : row.power} onChange={(value) => set("power", value)} disabled={!row.playerId} /></td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "contribution7d") ? edit.contribution7d : row.contribution7d} onChange={(value) => set("contribution7d", value)} disabled={!row.playerId} /></td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "bossAttacks") ? edit.bossAttacks : row.bossAttacks} onChange={(value) => set("bossAttacks", value)} disabled={!row.playerId} /></td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "lastActivityDays") ? edit.lastActivityDays : row.lastActivityDays} onChange={(value) => set("lastActivityDays", value)} disabled={!row.playerId} /></td></tr>; }) : bossRows.map((row, index) => { const edit = bossEdits[row.resultId]; const set = (field, value) => row.resultId && setBossEdits((current) => ({ ...current, [row.resultId]: { resultId: row.resultId, bossDamageToday: Object.hasOwn(edit ?? {}, "bossDamageToday") ? edit.bossDamageToday : row.bossDamageToday ?? null, bossRank: Object.hasOwn(edit ?? {}, "bossRank") ? edit.bossRank : row.bossRank ?? null, [field]: value === "" ? null : Number(value) } })); return <tr key={`${row.resultId ?? row.playerId ?? row.name}-${index}`}><td>{row.name ?? "Unmatched member"}</td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "bossDamageToday") ? edit.bossDamageToday : row.bossDamageToday} onChange={(value) => set("bossDamageToday", value)} disabled={!row.resultId} /></td><td><InlineEditor label="Captured value" value={Object.hasOwn(edit ?? {}, "bossRank") ? edit.bossRank : row.bossRank} onChange={(value) => set("bossRank", value)} disabled={!row.resultId} /></td><td>{row.source ?? "Boss capture"}</td></tr>; })}</tbody></table></div></fieldset>{state.message ? <p className="daily-editor-feedback" role="status">{state.message}</p> : null}</form>}
+  </section></div>;
+}
+
+function editorDraft(snapshot) {
+  return Object.fromEntries(["level", "memberCount", "memberCapacity", "totalPower", "xpCurrent", "xpRequired", "expeditionPoints"].map((field) => [field, String(snapshot?.[field] ?? "")]).concat([["expeditionName", snapshot?.expeditionName ?? ""], ["expeditionRank", snapshot?.expeditionRank ?? ""]]));
+}
+
+function numericEditorDraft(draft) {
+  return Object.fromEntries(["level", "memberCount", "memberCapacity", "totalPower", "xpCurrent", "xpRequired", "expeditionPoints"].map((field) => [field, draft[field] === "" ? null : Number(draft[field])]));
+}
+
+function EditorNumber({ label, field, draft, setDraft }) {
+  return <label className="editor-number"><span>{label}</span><input inputMode="numeric" value={draft[field]} onChange={(event) => setDraft({ ...draft, [field]: event.target.value.replace(/\D/g, "") })} /></label>;
+}
+
+function InlineEditor({ label, value, onChange, disabled }) {
+  return <input aria-label={label} className="daily-editor-inline" inputMode="numeric" value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))} />;
 }
 
 function DataView() {
@@ -2998,17 +3051,7 @@ function MemberDetail({
       });
       const payload = await response.json();
       if (!response.ok || !payload?.url) throw new Error(payload?.error || "Share link creation failed.");
-      try {
-        await navigator.clipboard.writeText(payload.url);
-        setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
-      } catch {
-        setShareState({
-          creating: false,
-          url: payload.url,
-          error: "Automatic copy was blocked. Copy the link manually below.",
-          notice: "",
-        });
-      }
+      setShareState({ creating: false, url: payload.url, imageUrl: payload.imageUrl, expiresAt: payload.expiresAt, error: "", notice: "Temporary share created." });
     } catch (error) {
       setShareState({
         creating: false,
@@ -3023,7 +3066,7 @@ function MemberDetail({
     if (!shareState.url) return;
     try {
       await navigator.clipboard.writeText(shareState.url);
-      setShareState({ creating: false, url: "", error: "", notice: "Share link copied. It stays valid for 12 hours." });
+      setShareState((current) => ({ ...current, error: "", notice: "Share link copied." }));
     } catch {
       setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the link manually." }));
     }
@@ -3039,7 +3082,7 @@ function MemberDetail({
           <div className="detail-action-group">
             {member.playerId ? (
               <button className="secondary-button" type="button" onClick={createShareLink} disabled={shareState.creating}>
-                {shareState.creating ? "Creating link…" : "Create and copy link"}
+                {shareState.creating ? "Creating link…" : "Create temporary share"}
               </button>
             ) : null}
             <StatusPill label={evaluation.status} severity={evaluation.severity} />
@@ -3050,9 +3093,18 @@ function MemberDetail({
       {shareState.url ? (
         <div className="share-link-result" role="alert">
           <div>
-            <strong>Copy the temporary link</strong>
+            <strong>Temporary share · expires {new Date(shareState.expiresAt).toLocaleString()}</strong>
+            <span>The profile stays live. The PNG represents this version; create a new share after data changes. Revocation requires an administrator to rotate the share signing secret for all links.</span>
             <span>{shareState.error}</span>
           </div>
+          {shareState.imageUrl ? <div className="share-link-copy">
+            <input aria-label="Direct PNG share link" readOnly value={shareState.imageUrl ?? ""} onFocus={(event) => event.currentTarget.select()} />
+            <a className="secondary-button" href={shareState.imageUrl} target="_blank" rel="noreferrer">Open PNG</a>
+            <button className="secondary-button" type="button" onClick={async () => {
+              try { await navigator.clipboard.writeText(shareState.imageUrl); setShareState((current) => ({ ...current, notice: "PNG link copied.", error: "" })); }
+              catch { setShareState((current) => ({ ...current, error: "Copy failed. Select and copy the PNG link manually." })); }
+            }}>Copy PNG link</button>
+          </div> : null}
           <div className="share-link-copy">
             <input aria-label="Temporary member share link" readOnly value={shareState.url} onFocus={(event) => event.currentTarget.select()} />
             <button className="primary-button" type="button" onClick={copyShareLink}>Copy link</button>
@@ -3082,7 +3134,7 @@ function MemberDetail({
           </div>
         </section>
         <section className="panel">
-          <PanelHeading title="Power progression" subtitle="Up to seven evenly spaced captured values" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
+          <PanelHeading title="Power progression" subtitle="Up to seven evenly sampled observations, including endpoints; no averaging" action={<RangeSelector chart="progression" ranges={ranges} setRange={setRange} />} />
           <HistoryChart rows={filterHistoryByRange(history, ranges.progression)} dataKey="power" formatter={formatPowerDetail} emptyText="No power history captured yet." />
         </section>
         <section className="panel">
@@ -3503,6 +3555,9 @@ function HistoryChart({ rows, dataKey, formatter, emptyText }) {
           {rows.at(-1)?.date ?? latest.date}
         </text>
       </svg>
+      <dl className="mobile-chart-values" aria-label="Chart observations">
+        {points.map((point) => <div key={point.date}><dt>{formatShortDate(point.date)}</dt><dd>{formatter(point.value)}</dd></div>)}
+      </dl>
     </div>
   );
 }

@@ -10,6 +10,7 @@ for repository, architecture, configuration, operations, and API contracts.
 | [`../README.md`](../README.md) | New contributors and operators | Current | Product boundaries, prerequisites, quick start, and common commands |
 | [`architecture.md`](architecture.md) | Maintainers and operators | Current | Components, data flow, trust boundaries, and ownership |
 | [`configuration.md`](configuration.md) | Developers and operators | Current | Environment settings, defaults, secrets, and rotation |
+| [`ci.md`](ci.md) | Contributors and maintainers | Current | Validation commands, image security policy, and required-check limitations |
 | [`operations.md`](operations.md) | Server operator | Current | Status, logs, backup, restore, update, rollback, and incidents |
 
 ## API and shared contracts
