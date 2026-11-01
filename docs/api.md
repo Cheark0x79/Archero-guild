@@ -71,6 +71,50 @@ These URLs are bearer grants: do not log, expand, or publish them outside the
 intended Discord conversation. Rotating `ARCHERO_SHARE_LINK_SECRET`
 invalidates every outstanding share link.
 
+## Direct member PNG shares
+
+Administrators can use **Create temporary share** on Member Details, or
+`POST /api/member-share` with their browser session, the dashboard action header,
+and `{ "playerId": "12345678" }`. The response contains `url`, `imageUrl` and
+`expiresAt`. Both URLs expire after 12 hours. Creation is limited to 10 requests
+per minute per application process and a 1 KiB JSON body; unknown members are
+rejected. The UI keeps both links visible, supports copying each, and shows errors
+and expiration. Creating another share renews the expiration without revoking older
+links. Compact statistic cards are reused in the shared profile; character art is
+not added because it is not consistently available in the public member data.
+
+`GET /s/<signed-code>/image?version=<sha256>` returns a fixed 1200 × 900
+`image/png` without login or cookies. Attach the downloaded PNG to Discord or
+paste this direct image URL, rather than the HTML profile URL. It contains only
+an allowlisted member name/ID, checkpoint, power, sampled power progression,
+most-recently encountered boss's running personal-record progression, and up to
+seven personal bests by boss. PNG names use the bundled Latin font: accents are
+transliterated, and names requiring other scripts/emoji use the stable player ID
+instead. The HTML profile preserves the full name. This avoids sending names to
+external font or emoji services and keeps rendering independent of the network.
+Charts retain at most seven evenly sampled
+observations including endpoints, without averaging. Shared profile boss charts
+provide a boss selector; records from different bosses are never combined.
+
+This is a **regenerated, versioned image**, not a stored immutable snapshot.
+The version hashes the entire public image model (including the renderer contract
+version). The HTML profile stays live. Each image request reloads the source;
+if any exported value has changed, it returns `410` instead of serving different
+content under the old URL. Generate a new share to obtain the current image.
+Renderer changes must increment the image model version. No PNG files or snapshots
+are persisted; responses use `Cache-Control: no-store`, and generation is bounded
+at 30 requests per minute and two concurrent renders per application process,
+with a 5 MiB output ceiling. Limits are global to avoid
+trusting caller-controlled proxy headers; they reset when the process restarts.
+Invalid/expired grants return `410`, unavailable data `503`, and rate limits `429`
+with `Retry-After`.
+
+Revocation retains the existing **global signing-secret rotation** contract:
+it revokes all outstanding profile and PNG links, not an individual link.
+An already downloaded attachment or Discord's own cached copy cannot be revoked.
+The application does not promise control of Discord caching. The versioned URL
+prevents a cached image from being mistaken for a newer export.
+
 ## Endpoint reference
 
 | Method and path | Parameters | Purpose |

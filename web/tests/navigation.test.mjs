@@ -6,7 +6,7 @@ import { navigationGroupsForRole } from '../lib/navigation.js';
 test('administrators discover history alongside member management in intentional groups', () => {
   const groups = navigationGroupsForRole(ADMIN_ROLE);
   assert.deepEqual(groups.map(({ label }) => label), ['Guild', 'Manage members · Admin', 'Configure guild · Admin', 'Reference · Admin']);
-  assert.deepEqual(groups[1].items.map(item => item[2]), ['/admin', '/admin/members', '/admin/member-history']);
+  assert.deepEqual(groups[1].items.map(item => item[2]), ['/admin', '/admin/members', '/admin/member-history', '/admin/data-editor']);
   assert.deepEqual(groups[2].items.map(item => item[2]), ['/admin/notifications', '/admin/rules']);
   assert.deepEqual(groups[3].items.map(item => item[2]), ['/api-docs']);
   const links = groups.flatMap(group => group.items);

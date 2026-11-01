@@ -11,6 +11,7 @@ const adminNavGroups = [
     ["admin", "Overview", "/admin"],
     ["admin-members", "Member management", "/admin/members"],
     ["member-history", "Member history", "/admin/member-history"],
+    ["daily-editor", "Daily data editor", "/admin/data-editor"],
   ] },
   { id: "configure-guild", label: "Configure guild · Admin", items: [
     ["notifications", "Notifications", "/admin/notifications"],
