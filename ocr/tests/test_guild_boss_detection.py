@@ -1,11 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from archero_guild.pipeline.guild_boss import ExtractedBossRanking
 from archero_guild.pipeline.guild_boss import detect_boss_ranking_rows
 from archero_guild.pipeline.guild_boss import _damage_text_from_ocr
 from archero_guild.pipeline.guild_boss import _display_name_for_match
+from archero_guild.pipeline.guild_boss import _extract_list_ranking
 from archero_guild.pipeline.guild_boss import _match_roster_name
 from archero_guild.pipeline.guild_boss import _repair_rank_damage_order
 from archero_guild.pipeline.guild_boss import _supported_ocr_languages
@@ -45,6 +47,17 @@ class GuildBossDamageTests(unittest.TestCase):
         self.assertEqual(
             _supported_ocr_languages(FakeTesseract(), ("chi_tra", "chi_sim", "rus")),
             ("eng",),
+        )
+
+    def test_keeps_korean_when_the_language_data_is_installed(self) -> None:
+        class FakeTesseract:
+            @staticmethod
+            def get_languages(*, config: str) -> list[str]:
+                return ["eng", "kor"]
+
+        self.assertEqual(
+            _supported_ocr_languages(FakeTesseract(), ("eng", "kor", "eng+kor")),
+            ("eng", "kor", "eng+kor"),
         )
 
     def test_parses_boss_damage_units(self) -> None:
@@ -178,6 +191,32 @@ class GuildBossDamageTests(unittest.TestCase):
             name = "Искатель"
 
         self.assertIsNotNone(_match_roster_name("! ИСКАТЕЛЬ 4", [Entry()]))
+
+    def test_matches_korean_roster_names(self) -> None:
+        class Entry:
+            player_id = "1"
+            name = "한글전사"
+
+        self.assertIsNotNone(_match_roster_name("| 한 글 전 사 .", [Entry()]))
+        self.assertEqual(_useful_raw_name("| 한글 |"), "한글")
+
+    def test_list_fallback_uses_korean_ocr_for_hangul_roster_names(self) -> None:
+        class Entry:
+            player_id = "1"
+            name = "한글전사"
+
+        row = type("Row", (), {"index": 0, "fields": type("Fields", (), {"damage": object(), "rank": object()})()})()
+        with (
+            patch("archero_guild.pipeline.guild_boss._boss_name_candidates", side_effect=[["LatinNoise"], ["한글전사"]]) as candidates,
+            patch("archero_guild.pipeline.guild_boss._crop", return_value=object()),
+            patch("archero_guild.pipeline.guild_boss._read_boss_damage_text", return_value="1M"),
+            patch("archero_guild.pipeline.guild_boss._read_boss_rank", return_value=1),
+        ):
+            ranking = _extract_list_ranking(object(), row, "boss.png", [Entry()], object(), None)
+
+        self.assertEqual(ranking.player_id, "1")
+        self.assertEqual(ranking.name, "한글전사")
+        self.assertIn("kor", candidates.call_args_list[1].kwargs["languages"])
 
     def test_rejects_weak_latin_false_positive(self) -> None:
         class Entry:
